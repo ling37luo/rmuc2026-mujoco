@@ -33,12 +33,15 @@ or generated run directories are present.
 
 ## Runtime accuracy boundary
 
-The currently recognized local asset manifest uses an unofficial,
-conservative 2.5-D top-surface heightfield for collision. It cannot represent
-overhangs, tunnels, stacked surfaces, vertical walls, moving mechanisms, or
-the open space below bridges. It may therefore seal a route that is visibly
-open in the CAD-derived mesh. A manifest whose validation scope is
-`DRAFT_BLOCKED` remains a draft even when every file hash passes.
+The currently recognized local asset manifest uses an unofficial 2.5-D
+top-surface heightfield proxy for collision. Downward-ray locations with no
+geometry hit are filled with ground height, and the artifact has no validity
+mask that distinguishes measured hits from those filled samples. It therefore
+must not be described as conservative. It cannot represent overhangs, tunnels,
+stacked surfaces, vertical walls, moving mechanisms, or the open space below
+bridges, and it may seal a route that is visibly open in the CAD-derived mesh.
+A manifest whose validation scope is `DRAFT_BLOCKED` remains a draft even when
+every file hash passes.
 
 Hash verification means only that a local asset pack is the expected pack. It
 does not turn the pack into an official RoboMaster simulator, establish legal

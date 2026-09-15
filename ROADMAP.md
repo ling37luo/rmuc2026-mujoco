@@ -15,13 +15,24 @@ Completing a code item never upgrades a geometry-validation status by itself.
 
 ## 0.2 — validated static interaction
 
-- add a versioned registry of safe spawn poses and static routes;
-- add query APIs for unsupported or unverified zones;
+- expose deterministic terrain-surface and candidate-spawn screening while
+  preserving an explicit non-topology-verified claim boundary; **implemented**
+- add a versioned registry of robot-validated spawn poses and static routes;
+- add query APIs for semantic, unsupported, or unverified zones;
+- add multi-hit vertical and horizontal-blocker audits before any multi-level
+  structure can be promoted;
 - replace only independently accepted ramp footprints with mutually exclusive
-  static mesh collision while preserving the remaining heightfield bit-for-bit;
+  primitive or convex collision while preserving the remaining heightfield
+  bit-for-bit;
 - validate contact ownership so one XY location cannot accidentally collide
-  with both the heightfield and its replacement mesh;
+  with both the heightfield and its replacement geometry;
 - add visual LODs with geometry-coverage and silhouette regression gates.
+
+The intended collision profiles are `fast_heightfield` (current heightfield),
+`hybrid_static` (connected base heightfield plus accepted regular/convex static
+geometry), and eventually `dynamic_facilities` (explicit moving bodies and
+joints). These are design targets, distinct from the current `full` visual and
+`collision_only` loading profiles, not current validation claims.
 
 Coordinates and meshes for these features must be generated locally unless
 the upstream rightsholder grants written redistribution permission.

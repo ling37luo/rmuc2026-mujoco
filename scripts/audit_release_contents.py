@@ -28,7 +28,9 @@ FORBIDDEN_ASSET_SUFFIXES = frozenset(
         ".7z",
         ".blend",
         ".bmp",
+        ".ckpt",
         ".dae",
+        ".engine",
         ".exr",
         ".fbx",
         ".glb",
@@ -46,6 +48,8 @@ FORBIDDEN_ASSET_SUFFIXES = frozenset(
         ".pt",
         ".pth",
         ".rar",
+        ".safetensors",
+        ".sdf",
         ".step",
         ".stl",
         ".stp",
@@ -55,9 +59,27 @@ FORBIDDEN_ASSET_SUFFIXES = frozenset(
         ".usda",
         ".usdc",
         ".usdz",
+        ".urdf",
         ".webm",
         ".webp",
+        ".xacro",
         ".zip",
+        ".mjcf",
+    }
+)
+
+# Runtime evidence is never part of a source or binary distribution, even when
+# every file inside happens to use an otherwise harmless text suffix.
+FORBIDDEN_GENERATED_PATH_COMPONENTS = frozenset(
+    {
+        "artifacts",
+        "checkpoints",
+        "logs",
+        "outputs",
+        "runs",
+        "runtime_output",
+        "tensorboard",
+        "wandb",
     }
 )
 
@@ -109,6 +131,20 @@ FORBIDDEN_FILE_SIGNATURES = (
     (b"\xff\xd8\xff", "JPEG"),
     (b"\x93NUMPY", "NumPy array"),
 )
+
+# Robot/scene descriptions are also assets when their extension is the generic
+# ``.xml``. Search the payload rather than trusting the filename. The one
+# repository-authored synthetic example is fixed by content hash so a renamed
+# or modified robot XML cannot silently inherit the exception.
+FORBIDDEN_XML_PAYLOAD = re.compile(
+    rb"<\s*(?:mujoco|robot|sdf|world)(?:\s|/?>)",
+    flags=re.IGNORECASE,
+)
+ALLOWED_ORIGINAL_XML_SUFFIXES = {
+    ("examples", "simple_robot.xml"): (
+        "5af9b0c926f7bbed524ee98e83c7df346534dc8a590238df2ccd87eb347c9eb8"
+    ),
+}
 
 
 @dataclass(frozen=True)
@@ -200,6 +236,25 @@ def _forbidden_imports(source: bytes, member_name: str) -> list[str]:
     return sorted(set(violations))
 
 
+def _forbidden_generated_component(member_name: str) -> str | None:
+    for part in PurePosixPath(member_name).parts:
+        normalized = part.casefold().replace("-", "_")
+        if normalized in FORBIDDEN_GENERATED_PATH_COMPONENTS:
+            return part
+    return None
+
+
+def _allowed_original_xml(member_name: str, data: bytes) -> bool:
+    parts = PurePosixPath(member_name).parts
+    digest = hashlib.sha256(data).hexdigest()
+    return any(
+        len(parts) >= len(suffix_parts)
+        and parts[-len(suffix_parts) :] == suffix_parts
+        and digest == expected_digest
+        for suffix_parts, expected_digest in ALLOWED_ORIGINAL_XML_SUFFIXES.items()
+    )
+
+
 def audit_archive(path: Path) -> dict[str, object]:
     archive = path.expanduser().resolve()
     if not archive.is_file():
@@ -219,6 +274,13 @@ def audit_archive(path: Path) -> dict[str, object]:
             raise ReleaseAuditError(
                 f"archive exceeds {MAX_ARCHIVE_CONTENT_BYTES} uncompressed bytes"
             )
+        generated_component = _forbidden_generated_component(member.name)
+        if generated_component is not None:
+            violations.append(
+                f"generated runtime directory {generated_component!r} in archive member: "
+                f"{member.name}"
+            )
+            continue
         suffix = PurePosixPath(member.name).suffix.lower()
         if suffix in FORBIDDEN_ASSET_SUFFIXES:
             violations.append(f"forbidden asset member: {member.name}")
@@ -231,7 +293,16 @@ def audit_archive(path: Path) -> dict[str, object]:
                 )
                 break
 
+        if (
+            suffix == ".xml"
+            and FORBIDDEN_XML_PAYLOAD.search(member.data)
+            and not _allowed_original_xml(member.name, member.data)
+        ):
+            violations.append(f"forbidden robot/scene XML payload: {member.name}")
+            continue
+
         if suffix not in TEXT_SUFFIXES:
+            violations.append(f"unsupported non-text archive member: {member.name}")
             continue
         for match in POSIX_HOST_PATH.finditer(member.data):
             value = match.group(0).decode("utf-8", errors="replace")

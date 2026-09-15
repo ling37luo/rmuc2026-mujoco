@@ -3,7 +3,9 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
+import struct
 import xml.etree.ElementTree as ET
+import zlib
 
 import numpy as np
 
@@ -14,6 +16,21 @@ from rmuc2026_mujoco.pack import export_runtime_asset_pack
 
 def _sha(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _grayscale16_png(width: int, height: int) -> bytes:
+    def chunk(kind: bytes, data: bytes) -> bytes:
+        crc = zlib.crc32(data, zlib.crc32(kind)) & 0xFFFFFFFF
+        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", crc)
+
+    ihdr = struct.pack(">IIBBBBB", width, height, 16, 0, 0, 0, 0)
+    scanlines = b"".join(b"\x00" + b"\x00\x00" * width for _ in range(height))
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + chunk(b"IHDR", ihdr)
+        + chunk(b"IDAT", zlib.compress(scanlines))
+        + chunk(b"IEND", b"")
+    )
 
 
 def _synthetic_source_build(root: Path) -> Path:
@@ -50,7 +67,7 @@ def _synthetic_source_build(root: Path) -> Path:
             }
         )
     image = collision_dir / "heightfield.png"
-    image.write_bytes(b"synthetic bootstrap image")
+    image.write_bytes(_grayscale16_png(2, 2))
     samples = collision_dir / "heightfield.npz"
     np.savez_compressed(
         samples,
@@ -77,7 +94,7 @@ def _synthetic_source_build(root: Path) -> Path:
         },
         "visual_meshes": visual_meshes,
         "collision": {
-            "kind": "conservative_top_surface_heightfield",
+            "kind": "top_surface_heightfield_proxy",
             "image_file": "collision/heightfield.png",
             "image_sha256": _sha(image),
             "samples_file": "collision/heightfield.npz",

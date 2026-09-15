@@ -1,7 +1,7 @@
 """Convert the official RMUC 2026 STEP assembly into a bounded MuJoCo asset.
 
 The STEP B-rep remains the source of truth for the visual model.  Real-time
-contact uses a separately recorded conservative height field: feeding the
+contact uses a separately recorded single-valued heightfield proxy: feeding the
 complete CAD triangle soup to MuJoCo would turn every screw, railing and
 decorative part into a convex collision object.
 """
@@ -1243,7 +1243,7 @@ def _ray_heightfield(
     npz_path = collision_dir / "rmuc2026_heightfield.npz"
     np.savez_compressed(npz_path, x_m=x, y_m=y, height_m=height)
     record = {
-        "kind": "conservative_top_surface_heightfield",
+        "kind": "top_surface_heightfield_proxy",
         "image_file": str(image_path.relative_to(output)),
         "image_sha256": sha256_file(image_path),
         "samples_file": str(npz_path.relative_to(output)),
@@ -1263,9 +1263,10 @@ def _ray_heightfield(
         "resolution_quality": _collision_resolution_contract(resolution_m),
         "structural_audit": _heightfield_structural_audit(height),
         "claim_boundary": (
-            "official STEP-derived conservative single-valued 2.5D contact proxy; not exact "
-            "B-rep contact; highest-surface sampling seals underpasses and cannot preserve "
-            "stacked, vertical, or overhanging collision surfaces"
+            "official STEP-derived single-valued 2.5D top-surface contact proxy; not exact "
+            "B-rep contact; ray misses are filled with ground and no validity mask is saved; "
+            "highest-surface sampling seals underpasses and cannot preserve stacked, vertical, "
+            "or overhanging collision surfaces"
         ),
     }
     return record, x, y, height
@@ -1607,7 +1608,7 @@ def repack_field_build(
             ),
             "multilevel_collision_topology_supported": False,
             "realtime_collision": (
-                "raw official GLB-derived conservative 2.5D top-surface heightfield"
+                "raw official GLB-derived single-valued 2.5D top-surface heightfield proxy"
             ),
             "movable_props_dynamic": False,
             "rulebook_surface_guide_present": False,
@@ -1756,7 +1757,7 @@ def build_field(
                 collision["resolution_quality"]["fine_interaction_spatial_sampling_ready"]
             ),
             "multilevel_collision_topology_supported": False,
-            "realtime_collision": "STEP-derived conservative 2.5D heightfield",
+            "realtime_collision": "STEP-derived single-valued 2.5D heightfield proxy",
             "movable_props_dynamic": False,
         },
     }

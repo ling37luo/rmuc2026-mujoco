@@ -66,6 +66,77 @@ def test_rejects_packaged_field_assets(
 
 
 @pytest.mark.parametrize(
+    "asset",
+    [
+        "robot.urdf",
+        "robot.xacro",
+        "world.sdf",
+        "robot.mjcf",
+        "policy.ckpt",
+        "policy.safetensors",
+        "policy.engine",
+    ],
+)
+def test_rejects_mechanical_and_model_files(
+    tmp_path: Path, audit_module: ModuleType, asset: str
+) -> None:
+    wheel = _wheel(tmp_path / "unsafe.whl", {f"package/data/{asset}": b"payload"})
+
+    with pytest.raises(audit_module.ReleaseAuditError, match="forbidden asset member"):
+        audit_module.audit_archive(wheel)
+
+
+@pytest.mark.parametrize(
+    "directory",
+    ["runs", "artifacts", "checkpoints", "logs", "runtime_output", "runtime-output"],
+)
+def test_rejects_generated_runtime_directories(
+    tmp_path: Path, audit_module: ModuleType, directory: str
+) -> None:
+    wheel = _wheel(
+        tmp_path / "unsafe.whl",
+        {f"package/{directory}/evidence.json": b'{"status":"PASS"}\n'},
+    )
+
+    with pytest.raises(audit_module.ReleaseAuditError, match="generated runtime directory"):
+        audit_module.audit_archive(wheel)
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        b'<mujoco model="field"></mujoco>\n',
+        b'<?xml version="1.0"?><robot name="wheel-leg"/>\n',
+        b'<SDF version="1.9"><world name="arena"/></SDF>\n',
+        b'<world name="arena"></world>\n',
+    ],
+)
+def test_rejects_robot_or_scene_payload_hidden_as_xml(
+    tmp_path: Path, audit_module: ModuleType, payload: bytes
+) -> None:
+    wheel = _wheel(tmp_path / "unsafe.whl", {"package/config.xml": payload})
+
+    with pytest.raises(audit_module.ReleaseAuditError, match="robot/scene XML payload"):
+        audit_module.audit_archive(wheel)
+
+
+def test_allows_only_hash_pinned_original_xml_example(
+    tmp_path: Path, audit_module: ModuleType
+) -> None:
+    example = Path(__file__).parents[1] / "examples" / "simple_robot.xml"
+    member = "rmuc2026_mujoco-0.1/examples/simple_robot.xml"
+    safe = _wheel(tmp_path / "safe.whl", {member: example.read_bytes()})
+    tampered = _wheel(
+        tmp_path / "tampered.whl",
+        {member: example.read_bytes().replace(b"demo_robot", b"other_robot", 1)},
+    )
+
+    assert audit_module.audit_archive(safe)["status"] == "PASS"
+    with pytest.raises(audit_module.ReleaseAuditError, match="robot/scene XML payload"):
+        audit_module.audit_archive(tampered)
+
+
+@pytest.mark.parametrize(
     "source",
     [
         b"CACHE = '" + b"/" + b"home/alice/Documents/RL-Lab/runs'\n",
@@ -112,6 +183,15 @@ def test_rejects_asset_payload_renamed_as_data(tmp_path: Path, audit_module: Mod
     )
 
     with pytest.raises(audit_module.ReleaseAuditError, match="forbidden STEP payload"):
+        audit_module.audit_archive(wheel)
+
+
+def test_rejects_unknown_binary_member_even_without_known_signature(
+    tmp_path: Path, audit_module: ModuleType
+) -> None:
+    wheel = _wheel(tmp_path / "unsafe.whl", {"package/policy.bin": b"opaque-model-data"})
+
+    with pytest.raises(audit_module.ReleaseAuditError, match="unsupported non-text"):
         audit_module.audit_archive(wheel)
 
 

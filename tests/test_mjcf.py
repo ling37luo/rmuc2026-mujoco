@@ -14,6 +14,7 @@ from rmuc2026_mujoco import (
     MujocoModelError,
     compose_with_robot,
     load_model,
+    surface_at,
 )
 
 
@@ -40,6 +41,44 @@ def test_collision_only_profile_loads_no_visual_meshes(field_asset_dir: Path) ->
     assert model.nhfield == 1
     actual = np.asarray(model.hfield_data).reshape(3, 4)
     assert np.max(np.abs(actual - _expected_heightfield())) <= 2.0e-7
+
+
+@pytest.mark.parametrize(
+    ("x", "y"),
+    [
+        (-0.5, -0.25),  # interior of one triangle
+        (1.5, 0.5),  # exactly on a cell diagonal
+        (1.0, 0.0),  # internal grid node
+    ],
+)
+def test_surface_query_matches_mujoco_hfield_raycast(
+    field_asset_dir: Path,
+    x: float,
+    y: float,
+) -> None:
+    asset = FieldAsset.open(field_asset_dir)
+    model, data = load_model(asset, profile="collision_only")
+    origin = np.asarray([x, y, 3.0], dtype=np.float64)
+    direction = np.asarray([0.0, 0.0, -1.0], dtype=np.float64)
+    geom_id = np.zeros(1, dtype=np.int32)
+    ray_normal = np.zeros(3, dtype=np.float64)
+
+    distance = mujoco.mj_ray(
+        model,
+        data,
+        origin,
+        direction,
+        None,
+        True,
+        -1,
+        geom_id,
+        ray_normal,
+    )
+    sample = surface_at(asset, origin[0], origin[1], window_radius_m=0.0)
+
+    assert distance > 0.0
+    assert origin[2] - distance == pytest.approx(sample.height_m, abs=1.0e-7)
+    assert tuple(ray_normal) == pytest.approx(sample.normal_xyz, abs=1.0e-7)
 
 
 @pytest.mark.parametrize("preset", ["dry", "low", "high"])

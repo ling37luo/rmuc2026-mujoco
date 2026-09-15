@@ -18,34 +18,53 @@ Fudan robot files, checkpoints, ONNX policies, or RL-Lab run data.
 - explicit, non-official dry/low/high friction sensitivity presets;
 - relative paths and a fail-closed manifest/hash contract;
 - an arena-only viewer and `MjSpec` robot composition;
-- world-space bounds and bilinear terrain-height queries;
+- an automatic whole-field overview camera;
+- world-space height, normal, slope, relief, and runtime-proxy spawn screening;
 - no reinforcement-learning framework in the runtime dependency tree.
 
 ## Quick start
 
-Python 3.10+ and MuJoCo 3.3+ are supported. Building from CAD is much heavier
+Python 3.10–3.12 and MuJoCo 3.3+ are tested. Building from CAD is much heavier
 than loading the result: the official STEP is about 1.25 GB and the local
 conversion requires at least 5 GiB of free disk space.
 
 ```bash
 git clone https://github.com/ling37luo/rmuc2026-mujoco.git
 cd rmuc2026-mujoco
-python -m pip install '.[build]'
+
+# Isolated install; no system `python` alias is required. Minimal Ubuntu images
+# may first need: sudo apt install python3-venv
+python3 -m venv .venv
+.venv/bin/python -m pip install --upgrade pip
+.venv/bin/python -m pip install '.[build]'
 
 # Review the pinned source identity without downloading anything.
-rmuc2026-field source
+.venv/bin/rmuc2026-field source
 
 # Explicitly download from RoboMaster, verify size/SHA-256, and build locally.
-rmuc2026-field setup ./local-rmuc2026-field \
+.venv/bin/rmuc2026-field setup ./local-rmuc2026-field \
   --acknowledge-reference-only
 
-rmuc2026-field verify ./local-rmuc2026-field
-rmuc2026-field view ./local-rmuc2026-field
+.venv/bin/rmuc2026-field verify ./local-rmuc2026-field
+.venv/bin/rmuc2026-field view ./local-rmuc2026-field
 
 # Headless users can skip all CAD visual meshes when composing/loading.
-rmuc2026-field view ./local-rmuc2026-field \
+.venv/bin/rmuc2026-field view ./local-rmuc2026-field \
   --profile collision_only --friction dry
 ```
+
+If [`uv`](https://docs.astral.sh/uv/) is already installed, the first three
+installation commands can instead be:
+
+```bash
+uv venv .venv --python 3.12
+uv pip install --python .venv/bin/python '.[build]'
+```
+
+The executable lives inside `.venv/bin/` unless you activate the environment.
+This avoids both Ubuntu's missing `python` alias and externally-managed system
+Python errors. If `python3 -m venv` reports that `ensurepip` is unavailable,
+install the distribution's `python3-venv` package or use the `uv` route above.
 
 `setup` caches the source at
 `~/.cache/rmuc2026-mujoco/RMUC2026_V2.0.0.stp`. Use `--step-cache PATH` to
@@ -55,9 +74,9 @@ identity check passes; outputs are never silently overwritten.
 If you already have the pinned STEP, the two explicit commands are:
 
 ```bash
-rmuc2026-field download ./RMUC2026_V2.0.0.stp \
+.venv/bin/rmuc2026-field download ./RMUC2026_V2.0.0.stp \
   --acknowledge-reference-only
-rmuc2026-field build \
+.venv/bin/rmuc2026-field build \
   --step ./RMUC2026_V2.0.0.stp \
   --output ./local-rmuc2026-field
 ```
@@ -69,14 +88,50 @@ third-party terms on your behalf.
 ## Use from Python
 
 ```python
-from rmuc2026_mujoco import FieldAsset, field_bounds, height_at, load_model
+from rmuc2026_mujoco import (
+    FieldAsset,
+    field_bounds,
+    find_spawn_candidates,
+    height_at,
+    load_model,
+    surface_at,
+)
 
 field = FieldAsset.open("./local-rmuc2026-field", verify=True)
 model, data = load_model(field, profile="full", friction_preset="dry")
 
 print(field_bounds(field))
+# This preserves v0.1 compatibility and is bilinear by default.
 print(height_at(field, x=0.0, y=0.0))
+# Ask explicitly for MuJoCo's triangular collision surface when needed.
+print(height_at(field, x=0.0, y=0.0, interpolation="mujoco"))
+print(surface_at(field, x=0.0, y=0.0).to_dict())
+for candidate in find_spawn_candidates(field, count=4):
+    print(candidate.to_dict())
 ```
+
+The same terrain diagnostics are available without writing Python:
+
+```bash
+.venv/bin/rmuc2026-field surface ./local-rmuc2026-field 0 0 \
+  --window-radius 0.35
+.venv/bin/rmuc2026-field spawns ./local-rmuc2026-field \
+  --count 4 --footprint-radius 0.35 --minimum-separation 1.5
+```
+
+Spawn results provide the terrain contact height, local normal, centre-face
+slope, maximum footprint slope, relief, and grid-boundary clearance. Surface
+height and slope follow MuJoCo's two-triangle heightfield cells rather than a
+centre-gradient approximation. The filters are deterministic **runtime-proxy
+screening**, not certified robot poses: footprint shape, body clearance,
+semantic zones, underpasses, and dynamic obstacles still need robot- and
+route-specific validation.
+
+The current pack does not include a per-cell ray-hit validity mask. During CAD
+conversion, samples with no vertical ray hit can therefore have a filled ground
+value that is indistinguishable at runtime from a measured top surface. A
+screened result must not be trusted for deployment until the relevant region
+has separate topology, clearance, and robot-specific validation.
 
 To attach a robot that you are allowed to use:
 
@@ -126,11 +181,13 @@ only the field heightfield geom; it does not overwrite robot-side friction.
 
 ## Accuracy boundary
 
-The current collision model is a conservative, single-valued 2.5-D top
-surface. It is useful for flat ground, ramps, steps, and bounded static
-interaction, but it cannot correctly preserve underpasses, stacked surfaces,
-vertical walls, overhangs, or moving field mechanisms. A highest-surface
-heightfield can seal an opening that is visibly open in the CAD mesh.
+The current collision model is a single-valued 2.5-D top-surface proxy. It is
+useful for flat ground, ramps, steps, and bounded static interaction, but it
+cannot correctly preserve underpasses, stacked surfaces, vertical walls,
+overhangs, or moving field mechanisms. A highest-surface heightfield can seal
+an opening that is visibly open in the CAD mesh. Each region therefore needs
+its own multi-hit, horizontal-blocker, and clearance checks before being
+promoted for physical interaction.
 
 For that reason generated manifests deliberately remain `DRAFT_BLOCKED`:
 
@@ -150,9 +207,10 @@ compliance, robot recovery, policy quality, or source-to-target equivalence.
 ## Asset and licensing policy
 
 The original code and documentation are MIT-licensed. That license does not
-cover RoboMaster/RMUC/DJI material or derivatives. The official publication
-does not state a standard asset redistribution license, so this repository
-keeps those files on each user's machine and does not mirror them in source,
+cover RoboMaster/RMUC/DJI material or derivatives. Our review found no explicit
+standard asset-redistribution grant in the official publication. That is not a
+legal determination, so this repository takes the narrower path: it keeps
+those files on each user's machine and does not mirror them in source,
 releases, CI, or package indexes. Read [ASSET_POLICY.md](ASSET_POLICY.md) and
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) before distributing a locally
 generated pack.
@@ -160,16 +218,20 @@ generated pack.
 If written redistribution permission is obtained, a separately licensed
 prebuilt asset release can be added later without changing the Python API.
 The staged geometry and interaction work is tracked in [ROADMAP.md](ROADMAP.md).
+The outside projects and collision-design patterns reviewed for future work are
+listed in [DESIGN_REFERENCES.md](DESIGN_REFERENCES.md); no code or assets from
+those repositories are bundled here.
 
 ## Development
 
 All tests use tiny synthetic geometry and never fetch official assets.
 
 ```bash
-python -m pip install -e '.[test]'
-python -m pytest
-ruff check .
-ruff format --check .
+python3 -m venv .venv
+.venv/bin/python -m pip install -e '.[test]'
+.venv/bin/python -m pytest
+.venv/bin/ruff check .
+.venv/bin/ruff format --check .
 ```
 
 ## 中文说明
@@ -186,6 +248,17 @@ ruff format --check .
 `full` 模式用于看完整 CAD 外观；`collision_only` 不加载 38 组视觉网格，适合
 无界面训练。`dry/low/high` 只是本项目用于敏感性测试的非官方摩擦预设，不是赛事
 材料实测值。
+
+Ubuntu 默认可能没有 `python` 命令，所以快速开始现在固定使用 `python3` 创建
+隔离环境，并从 `.venv/bin/` 调用程序；精简系统还需先安装 `python3-venv`，也可以
+直接采用上面的 `uv` 路线。新增的 `surface` 与 `spawns` 命令可查询
+坡度、法向、局部起伏并筛选较平坦的候选出生点。坡度按 MuJoCo 高度场单元的
+真实三角面计算，而不是中心差分近似；但运行包没有保存逐格射线命中有效掩码，
+因此结果只是运行时代理筛选。它们仍只理解单值高度场，不能证明桥下净空、悬挑
+结构或机器人本体一定安全，相关区域还需要单独验证。
+
+兼容性说明：`height_at()` 默认仍是 v0.1 的双线性插值；`surface_at()` 以及显式
+指定 `height_at(..., interpolation="mujoco")` 时才按 MuJoCo 三角碰撞面计算。
 
 你可以单独打开地图，也可以把自己的 robot-only MJCF 接进去。以后获得明确的
 资产再分发许可后，可以另发预构建地图包，让使用者跳过 1.25 GB STEP 的本地转换；

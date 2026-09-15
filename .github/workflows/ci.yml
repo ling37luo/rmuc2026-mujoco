@@ -26,20 +26,13 @@ jobs:
           python-version: ${{ matrix.python-version }}
           cache: pip
 
-      - name: Reject bundled third-party field assets
+      - name: Reject bundled third-party assets and generated evidence
         shell: bash
         run: |
-          forbidden="$(find . -type f \( \
-            -iname '*.stp' -o -iname '*.step' -o -iname '*.obj' -o \
-            -iname '*.glb' -o -iname '*.gltf' -o -iname '*.npz' -o \
-            -iname '*.png' -o -iname '*.pdf' -o -iname '*.onnx' -o \
-            -iname '*.pt' -o -iname '*.pth' \
-          \) -print)"
-          if [[ -n "${forbidden}" ]]; then
-            echo "Forbidden official-source-derived or model assets are tracked:"
-            echo "${forbidden}"
-            exit 1
-          fi
+          git archive --format=tar \
+            --output="${RUNNER_TEMP}/rmuc2026-source-tree.tar" HEAD
+          python scripts/audit_release_contents.py \
+            "${RUNNER_TEMP}/rmuc2026-source-tree.tar"
 
       - name: Install runtime and test dependencies
         run: python -m pip install -e ".[test]"

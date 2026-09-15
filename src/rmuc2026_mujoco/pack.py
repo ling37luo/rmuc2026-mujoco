@@ -167,6 +167,8 @@ def _build_field_xml(
         {
             "name": "rmuc2026_collision",
             "file": Path(str(collision["image_file"])).as_posix(),
+            "nrow": str(int(collision["rows_y"])),
+            "ncol": str(int(collision["columns_x"])),
             "size": " ".join(f"{value:.9g}" for value in (*half_size, maximum_height, base_depth)),
         },
     )

@@ -24,6 +24,19 @@ OFFICIAL_STEP_SIZE = 1_254_821_405
 OFFICIAL_STEP_SHA256 = "8dfe9ebd761e44d91361b3e593bc05416329112217b58cb35800b3cde2ffae33"
 OFFICIAL_STEP_PRODUCT = "00_RMUC2026_FINALS_ASM"
 OFFICIAL_SOURCE_PAGE = "https://bbs.robomaster.com/article/814728?source=8"
+OFFICIAL_RULE_CENTRE = "https://bbs.robomaster.com/wiki/20204847/809871?source=7"
+LAST_REVIEWED_RULEBOOK_VERSION = "V2.2.0"
+LAST_REVIEWED_RULEBOOK_PUBLICATION_DATE = "2026-08-07"
+LAST_REVIEWED_RULEBOOK_URL = (
+    "https://hz-rm-bbs-web-prod.oss-cn-hangzhou.aliyuncs.com/"
+    "e354d2750e17485e8f67e5b5a9d1a2891786094242879/"
+    "RoboMaster%202026%20%E6%9C%BA%E7%94%B2%E5%A4%A7%E5%B8%88%E8%B6%85%E7%BA%A7"
+    "%E5%AF%B9%E6%8A%97%E8%B5%9B%E6%AF%94%E8%B5%9B%E8%A7%84%E5%88%99%E6%89%8B"
+    "%E5%86%8CV2.2.0%EF%BC%8820260807%EF%BC%89.pdf"
+)
+LAST_REVIEWED_RULEBOOK_SIZE = 21_018_604
+LAST_REVIEWED_RULEBOOK_SHA256 = "88ae3c7d0bbd7312c8095eff2603910437e292a0b53f46c9378f26144c09a6f5"
+LAST_RULE_REVIEW_DATE = "2026-09-15"
 
 
 class DownloadError(RuntimeError):
@@ -104,9 +117,10 @@ def download_official_step(
     """Download the pinned STEP directly from RoboMaster and verify it.
 
     ``acknowledge_reference_only`` must be explicit because the publisher calls
-    the model a reference and does not state a standard redistribution license.
-    This function downloads from the official URL; it never uses a project
-    mirror or silently accepts a different file.
+    the model a reference and this project's review found no explicit standard
+    redistribution grant. This is a conservative distribution policy, not a
+    legal determination. This function downloads from the official URL; it
+    never uses a project mirror or silently accepts a different file.
     """
 
     if not acknowledge_reference_only:
@@ -182,6 +196,13 @@ def download_official_step(
 __all__ = [
     "DownloadedStep",
     "DownloadError",
+    "LAST_REVIEWED_RULEBOOK_PUBLICATION_DATE",
+    "LAST_REVIEWED_RULEBOOK_SHA256",
+    "LAST_REVIEWED_RULEBOOK_SIZE",
+    "LAST_REVIEWED_RULEBOOK_URL",
+    "LAST_REVIEWED_RULEBOOK_VERSION",
+    "LAST_RULE_REVIEW_DATE",
+    "OFFICIAL_RULE_CENTRE",
     "OFFICIAL_SOURCE_PAGE",
     "OFFICIAL_STEP_PRODUCT",
     "OFFICIAL_STEP_SHA256",

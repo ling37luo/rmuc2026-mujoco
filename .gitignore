@@ -25,6 +25,12 @@ wheelhouse/
 .cache/
 runs/
 artifacts/
+checkpoints/
+logs/
+outputs/
+runtime_output/
+tensorboard/
+wandb/
 asset-pack*/
 *.log
 
@@ -41,3 +47,10 @@ asset-pack*/
 *.onnx
 *.pt
 *.pth
+*.ckpt
+*.engine
+*.mjcf
+*.safetensors
+*.sdf
+*.urdf
+*.xacro

@@ -9,6 +9,7 @@ import math
 from pathlib import Path
 from typing import Any, Mapping
 import xml.etree.ElementTree as ET
+import zlib
 
 from .download import OFFICIAL_STEP_SHA256, OFFICIAL_STEP_SIZE
 from .errors import AssetIntegrityError, ManifestError
@@ -19,6 +20,14 @@ SUPPORTED_SCHEMA_VERSION = 1
 SUPPORTED_VALIDATION_STATUS = "DRAFT_BLOCKED"
 DEFAULT_RUNTIME_PROFILE = "full"
 RUNTIME_PROFILE_NAMES = ("full", "collision_only")
+CURRENT_COLLISION_KIND = "top_surface_heightfield_proxy"
+LEGACY_COLLISION_KIND = "conservative_top_surface_heightfield"
+SUPPORTED_COLLISION_KINDS = frozenset({CURRENT_COLLISION_KIND, LEGACY_COLLISION_KIND})
+XML_FLOAT_REL_TOLERANCE = 1e-8
+XML_FLOAT_ABS_TOLERANCE = 1e-10
+MAX_HEIGHTFIELD_SAMPLES = 10_000_000
+MAX_HEIGHTFIELD_PNG_BYTES = 64 * 1024 * 1024
+_GEOM_TRANSFORM_ATTRIBUTES = frozenset({"axisangle", "euler", "fromto", "quat", "xyaxes", "zaxis"})
 
 
 def sha256_file(path: Path, *, chunk_bytes: int = 4 * 1024 * 1024) -> str:
@@ -103,6 +112,20 @@ class ValidationReport:
             "collision_shape": list(self.collision_shape),
             "validation_status": self.validation_status,
         }
+
+
+@dataclass(frozen=True)
+class _RuntimeCollisionContract:
+    """Validated manifest values that every runtime MJCF must preserve."""
+
+    rows: int
+    columns: int
+    half_size_xy_m: tuple[float, float]
+    maximum_height_m: float
+    base_depth_m: float
+    geom_center_m: tuple[float, float, float]
+    image_relative: str
+    image_path: Path
 
 
 @dataclass(frozen=True)
@@ -326,10 +349,8 @@ def _validate_cross_references(
         if any(value < 0.0 or value > 1.0 for value in rgba):
             raise ManifestError(f"visual_meshes[{index}].rgba must be within [0, 1]")
 
-    _validate_runtime_profiles(manifest, files, visual_mesh_count=len(visual))
-
     collision = _mapping(manifest.get("collision"), label="collision")
-    if collision.get("kind") != "conservative_top_surface_heightfield":
+    if collision.get("kind") not in SUPPORTED_COLLISION_KINDS:
         raise ManifestError("unsupported collision.kind")
     for path_key, hash_key in (
         ("image_file", "image_sha256"),
@@ -340,13 +361,18 @@ def _validate_cross_references(
         _require_cross_file(files, manifest, relative, digest, label=f"collision.{path_key}")
     rows = _integer(collision.get("rows_y"), label="collision.rows_y", minimum=2)
     columns = _integer(collision.get("columns_x"), label="collision.columns_x", minimum=2)
-    _number_list(
+    if rows * columns > MAX_HEIGHTFIELD_SAMPLES:
+        raise ManifestError(
+            "collision heightfield exceeds the runtime sample limit: "
+            f"{rows}x{columns} > {MAX_HEIGHTFIELD_SAMPLES} samples"
+        )
+    half_size = _number_list(
         collision.get("half_size_xy_m"),
         label="collision.half_size_xy_m",
         length=2,
         positive=True,
     )
-    _number_list(
+    geom_center = _number_list(
         collision.get("geom_center_after_translation_m"),
         label="collision.geom_center_after_translation_m",
         length=3,
@@ -357,7 +383,9 @@ def _validate_cross_references(
     minimum = _finite_number(collision.get("minimum_height_m"), label="collision.minimum_height_m")
     if minimum < 0.0 or minimum > maximum:
         raise ManifestError("collision minimum/maximum heights are inconsistent")
-    _finite_number(collision.get("base_depth_m"), label="collision.base_depth_m", positive=True)
+    base_depth = _finite_number(
+        collision.get("base_depth_m"), label="collision.base_depth_m", positive=True
+    )
     if collision.get("png_rows") != "flipped_y_for_mujoco_hfield_loader":
         raise ManifestError("unsupported collision PNG row orientation")
 
@@ -385,12 +413,31 @@ def _validate_cross_references(
     if precision.get("float_samples_file") != collision.get("samples_file"):
         raise ManifestError("heightfield_precision sample file disagrees with collision")
 
+    _validate_runtime_profiles(
+        manifest,
+        files,
+        visual_mesh_count=len(visual),
+        visual_mesh_files=tuple(str(record["file"]) for record in visual),
+        collision_contract=_RuntimeCollisionContract(
+            rows=rows,
+            columns=columns,
+            half_size_xy_m=(half_size[0], half_size[1]),
+            maximum_height_m=maximum,
+            base_depth_m=base_depth,
+            geom_center_m=(geom_center[0], geom_center[1], geom_center[2]),
+            image_relative=str(collision["image_file"]),
+            image_path=files[str(collision["image_file"])],
+        ),
+    )
+
 
 def _validate_runtime_profiles(
     manifest: Mapping[str, Any],
     files: Mapping[str, Path],
     *,
     visual_mesh_count: int,
+    visual_mesh_files: tuple[str, ...],
+    collision_contract: _RuntimeCollisionContract,
 ) -> None:
     """Validate the optional schema-1 profile extension and its MJCF semantics.
 
@@ -458,6 +505,8 @@ def _validate_runtime_profiles(
             files[entrypoint],
             profile=name,
             expected_visual_mesh_count=int(wanted["visual_mesh_count"]),
+            expected_visual_mesh_files=(visual_mesh_files if name == "full" else ()),
+            collision_contract=collision_contract,
         )
 
     if manifest["contents"]["entrypoint"] != profiles["full"]["entrypoint"]:
@@ -469,11 +518,25 @@ def _validate_runtime_profile_xml(
     *,
     profile: str,
     expected_visual_mesh_count: int,
+    expected_visual_mesh_files: tuple[str, ...],
+    collision_contract: _RuntimeCollisionContract,
 ) -> None:
     try:
         root = ET.parse(path).getroot()
     except (OSError, ET.ParseError) as exc:
         raise ManifestError(f"runtime profile {profile!r} MJCF is invalid XML: {exc}") from exc
+    if root.findall(".//include"):
+        raise ManifestError(f"runtime profile {profile!r} must not load MJCF include files")
+    for compiler in root.findall("./compiler"):
+        path_attributes = {"assetdir", "meshdir", "strippath", "texturedir"}.intersection(
+            compiler.attrib
+        )
+        if path_attributes:
+            raise ManifestError(
+                f"runtime profile {profile!r} compiler must not redirect asset paths: "
+                f"{sorted(path_attributes)}"
+            )
+
     mesh_assets = root.findall("./asset/mesh")
     mesh_geoms = [geom for geom in root.iter("geom") if geom.get("mesh")]
     if len(mesh_assets) != expected_visual_mesh_count:
@@ -486,6 +549,33 @@ def _validate_runtime_profile_xml(
             f"runtime profile {profile!r} declares {len(mesh_geoms)} mesh geoms; "
             f"expected {expected_visual_mesh_count}"
         )
+    mesh_files = tuple(mesh.get("file") for mesh in mesh_assets)
+    if None in mesh_files or sorted(mesh_files) != sorted(expected_visual_mesh_files):
+        raise ManifestError(
+            f"runtime profile {profile!r} visual mesh files disagree with the manifest"
+        )
+    mesh_names = tuple(mesh.get("name") for mesh in mesh_assets)
+    if None in mesh_names or len(set(mesh_names)) != len(mesh_names):
+        raise ManifestError(f"runtime profile {profile!r} visual mesh names must be unique")
+    if sorted(geom.get("mesh") for geom in mesh_geoms) != sorted(mesh_names):
+        raise ManifestError(
+            f"runtime profile {profile!r} visual geoms must reference every declared mesh once"
+        )
+    for mesh in mesh_assets:
+        altered = {"refpos", "refquat", "scale"}.intersection(mesh.attrib)
+        if altered:
+            raise ManifestError(
+                f"runtime profile {profile!r} visual mesh must retain manifest coordinates: "
+                f"{sorted(altered)}"
+            )
+
+    file_assets = [
+        asset
+        for asset in root.findall("./asset/*")
+        if asset.get("file") is not None and asset.tag not in {"hfield", "mesh"}
+    ]
+    if file_assets:
+        raise ManifestError(f"runtime profile {profile!r} contains unsupported file-backed assets")
     hfields = [
         item for item in root.findall("./asset/hfield") if item.get("name") == "rmuc2026_collision"
     ]
@@ -496,8 +586,330 @@ def _validate_runtime_profile_xml(
         and item.get("type") == "hfield"
         and item.get("hfield") == "rmuc2026_collision"
     ]
-    if len(hfields) != 1 or len(collision_geoms) != 1:
+    if len(root.findall("./asset/hfield")) != 1 or len(hfields) != 1 or len(collision_geoms) != 1:
         raise ManifestError(f"runtime profile {profile!r} lacks the canonical collision hfield")
+
+    worldbodies = root.findall("./worldbody")
+    if len(worldbodies) != 1 or collision_geoms[0] not in worldbodies[0].findall("./geom"):
+        raise ManifestError(
+            f"runtime profile {profile!r} canonical collision geom must be a direct worldbody child"
+        )
+    collision_geom = collision_geoms[0]
+    for mesh_geom in mesh_geoms:
+        if mesh_geom not in worldbodies[0].findall("./geom"):
+            raise ManifestError(
+                f"runtime profile {profile!r} visual mesh geoms must be direct worldbody children"
+            )
+        visual_transforms = {"pos", *_GEOM_TRANSFORM_ATTRIBUTES}.intersection(mesh_geom.attrib)
+        if visual_transforms:
+            raise ManifestError(
+                f"runtime profile {profile!r} visual mesh geom must retain manifest coordinates: "
+                f"{sorted(visual_transforms)}"
+            )
+    if collision_geom.get("class") is not None:
+        raise ManifestError(
+            f"runtime profile {profile!r} canonical collision geom must not use a default class"
+        )
+    transform_attributes = sorted(_GEOM_TRANSFORM_ATTRIBUTES.intersection(collision_geom.attrib))
+    if transform_attributes:
+        raise ManifestError(
+            f"runtime profile {profile!r} canonical collision geom must be axis-aligned; "
+            f"unsupported transform attributes: {transform_attributes}"
+        )
+    inherited_transforms = [
+        attribute
+        for default_geom in root.findall(".//default/geom")
+        for attribute in ("pos", *_GEOM_TRANSFORM_ATTRIBUTES)
+        if attribute in default_geom.attrib
+    ]
+    if inherited_transforms:
+        raise ManifestError(
+            f"runtime profile {profile!r} default geom may transform the canonical collision "
+            f"geom: {sorted(set(inherited_transforms))}"
+        )
+
+    hfield = hfields[0]
+    rows, columns = _runtime_hfield_shape(
+        hfield,
+        profile=profile,
+        collision_contract=collision_contract,
+    )
+    if rows != collision_contract.rows or columns != collision_contract.columns:
+        raise ManifestError(
+            f"runtime profile {profile!r} collision hfield shape "
+            f"({rows}, {columns}) disagrees with manifest "
+            f"({collision_contract.rows}, {collision_contract.columns})"
+        )
+
+    size = _xml_number_list_attribute(
+        hfield,
+        "size",
+        label=f"runtime profile {profile!r} collision hfield size",
+        length=4,
+    )
+    expected_size = (
+        *collision_contract.half_size_xy_m,
+        collision_contract.maximum_height_m,
+        collision_contract.base_depth_m,
+    )
+    _require_xml_numbers_close(
+        size,
+        expected_size,
+        label=f"runtime profile {profile!r} collision hfield size",
+    )
+
+    geom_center = _xml_number_list_attribute(
+        collision_geom,
+        "pos",
+        label=f"runtime profile {profile!r} canonical collision geom pos",
+        length=3,
+    )
+    _require_xml_numbers_close(
+        geom_center,
+        collision_contract.geom_center_m,
+        label=f"runtime profile {profile!r} canonical collision geom pos",
+    )
+
+
+def _runtime_hfield_shape(
+    hfield: ET.Element,
+    *,
+    profile: str,
+    collision_contract: _RuntimeCollisionContract,
+) -> tuple[int, int]:
+    raw_rows = hfield.get("nrow")
+    raw_columns = hfield.get("ncol")
+    image_file = hfield.get("file")
+    if image_file is not None:
+        if Path(image_file).as_posix() != collision_contract.image_relative:
+            raise ManifestError(
+                f"runtime profile {profile!r} collision hfield must reference the "
+                "declared collision image"
+            )
+        columns, rows = _png_ihdr_dimensions(
+            collision_contract.image_path,
+            label=f"runtime profile {profile!r} collision hfield image",
+            expected_rows=collision_contract.rows,
+            expected_columns=collision_contract.columns,
+        )
+        # MuJoCo derives file-backed hfield dimensions from the image and ignores
+        # nrow/ncol. If those redundant attributes are present, require them to
+        # agree as well so the XML never advertises a different grid shape.
+        if raw_rows is not None or raw_columns is not None:
+            if raw_rows is None or raw_columns is None:
+                raise ManifestError(
+                    f"runtime profile {profile!r} collision hfield must declare both nrow and ncol"
+                )
+            declared_rows = _xml_integer_attribute(
+                hfield,
+                "nrow",
+                label=f"runtime profile {profile!r} collision hfield nrow",
+                minimum=2,
+            )
+            declared_columns = _xml_integer_attribute(
+                hfield,
+                "ncol",
+                label=f"runtime profile {profile!r} collision hfield ncol",
+                minimum=2,
+            )
+            if (declared_rows, declared_columns) != (rows, columns):
+                raise ManifestError(
+                    f"runtime profile {profile!r} collision hfield XML shape "
+                    "disagrees with its PNG dimensions"
+                )
+        return rows, columns
+    if raw_rows is None and raw_columns is None:
+        raise ManifestError(
+            f"runtime profile {profile!r} collision hfield has neither file nor shape"
+        )
+    if raw_rows is None or raw_columns is None:
+        raise ManifestError(
+            f"runtime profile {profile!r} collision hfield must declare both nrow and ncol"
+        )
+    return (
+        _xml_integer_attribute(
+            hfield,
+            "nrow",
+            label=f"runtime profile {profile!r} collision hfield nrow",
+            minimum=2,
+        ),
+        _xml_integer_attribute(
+            hfield,
+            "ncol",
+            label=f"runtime profile {profile!r} collision hfield ncol",
+            minimum=2,
+        ),
+    )
+
+
+def _png_ihdr_dimensions(
+    path: Path,
+    *,
+    label: str,
+    expected_rows: int,
+    expected_columns: int,
+) -> tuple[int, int]:
+    """Validate a generated grayscale16 PNG and return its effective dimensions."""
+
+    try:
+        encoded_size = path.stat().st_size
+        if encoded_size > MAX_HEIGHTFIELD_PNG_BYTES:
+            raise ManifestError(
+                f"{label} exceeds the encoded PNG limit: "
+                f"{encoded_size} > {MAX_HEIGHTFIELD_PNG_BYTES} bytes"
+            )
+        payload = path.read_bytes()
+    except OSError as exc:
+        raise ManifestError(f"{label} could not be read: {exc}") from exc
+    if len(payload) < 8 or payload[:8] != b"\x89PNG\r\n\x1a\n":
+        raise ManifestError(f"{label} lacks a valid PNG signature")
+
+    offset = 8
+    width = 0
+    height = 0
+    idat_parts: list[bytes] = []
+    saw_ihdr = False
+    saw_idat = False
+    idat_closed = False
+    saw_iend = False
+    while offset < len(payload):
+        if offset + 12 > len(payload):
+            raise ManifestError(f"{label} contains a truncated PNG chunk")
+        length = int.from_bytes(payload[offset : offset + 4], "big")
+        chunk_type = payload[offset + 4 : offset + 8]
+        data_start = offset + 8
+        data_stop = data_start + length
+        crc_stop = data_stop + 4
+        if crc_stop > len(payload):
+            raise ManifestError(f"{label} contains a truncated PNG chunk")
+        chunk_data = payload[data_start:data_stop]
+        expected_crc = int.from_bytes(payload[data_stop:crc_stop], "big")
+        actual_crc = zlib.crc32(chunk_data, zlib.crc32(chunk_type)) & 0xFFFFFFFF
+        if actual_crc != expected_crc:
+            raise ManifestError(f"{label} contains a PNG chunk with an invalid CRC")
+        offset = crc_stop
+
+        if not saw_ihdr:
+            if chunk_type != b"IHDR" or length != 13:
+                raise ManifestError(f"{label} lacks a valid first PNG IHDR chunk")
+            width = int.from_bytes(chunk_data[0:4], "big")
+            height = int.from_bytes(chunk_data[4:8], "big")
+            if (height, width) != (expected_rows, expected_columns):
+                raise ManifestError(
+                    f"{label} PNG dimensions ({height}, {width}) disagree with manifest "
+                    f"({expected_rows}, {expected_columns})"
+                )
+            bit_depth, colour_type, compression, filtering, interlace = chunk_data[8:13]
+            if (bit_depth, colour_type, compression, filtering, interlace) != (16, 0, 0, 0, 0):
+                raise ManifestError(f"{label} must be a non-interlaced 16-bit grayscale PNG")
+            saw_ihdr = True
+            continue
+        if chunk_type == b"IHDR":
+            raise ManifestError(f"{label} contains more than one PNG IHDR chunk")
+        if chunk_type == b"IDAT":
+            if idat_closed:
+                raise ManifestError(f"{label} contains non-consecutive PNG IDAT chunks")
+            saw_idat = True
+            idat_parts.append(chunk_data)
+            continue
+        if saw_idat:
+            idat_closed = True
+        if chunk_type == b"IEND":
+            if length != 0 or not saw_idat:
+                raise ManifestError(f"{label} contains an invalid PNG IEND chunk")
+            saw_iend = True
+            if offset != len(payload):
+                raise ManifestError(f"{label} contains trailing bytes after PNG IEND")
+            break
+        if chunk_type and chunk_type[0] & 0x20 == 0:
+            raise ManifestError(f"{label} contains unsupported critical PNG chunk {chunk_type!r}")
+
+    if not saw_iend:
+        raise ManifestError(f"{label} lacks a complete PNG IEND chunk")
+    if width < 2 or height < 2:
+        raise ManifestError(f"{label} dimensions must both be >= 2")
+
+    expected_scanline_bytes = 1 + 2 * width
+    expected_payload_bytes = expected_scanline_bytes * height
+    try:
+        decompressor = zlib.decompressobj()
+        decoded = decompressor.decompress(b"".join(idat_parts), expected_payload_bytes + 1)
+    except zlib.error as exc:
+        raise ManifestError(f"{label} contains invalid PNG IDAT zlib data: {exc}") from exc
+    if (
+        len(decoded) != expected_payload_bytes
+        or not decompressor.eof
+        or decompressor.unconsumed_tail
+        or decompressor.unused_data
+    ):
+        raise ManifestError(f"{label} PNG IDAT does not decode to the declared grayscale image")
+    if any(decoded[row * expected_scanline_bytes] > 4 for row in range(height)):
+        raise ManifestError(f"{label} contains an invalid PNG scanline filter")
+    return width, height
+
+
+def _xml_integer_attribute(
+    element: ET.Element,
+    attribute: str,
+    *,
+    label: str,
+    minimum: int,
+) -> int:
+    raw = element.get(attribute)
+    if raw is None:
+        raise ManifestError(f"{label} is missing")
+    try:
+        result = int(raw.strip(), 10)
+    except ValueError as exc:
+        raise ManifestError(f"{label} must be an integer") from exc
+    if result < minimum:
+        raise ManifestError(f"{label} must be an integer >= {minimum}")
+    return result
+
+
+def _xml_number_list_attribute(
+    element: ET.Element,
+    attribute: str,
+    *,
+    label: str,
+    length: int,
+) -> tuple[float, ...]:
+    raw = element.get(attribute)
+    if raw is None:
+        raise ManifestError(f"{label} is missing")
+    parts = raw.split()
+    if len(parts) != length:
+        raise ManifestError(f"{label} must contain {length} finite numbers")
+    result: list[float] = []
+    for part in parts:
+        try:
+            value = float(part)
+        except ValueError as exc:
+            raise ManifestError(f"{label} must contain {length} finite numbers") from exc
+        if not math.isfinite(value):
+            raise ManifestError(f"{label} must contain {length} finite numbers")
+        result.append(value)
+    return tuple(result)
+
+
+def _require_xml_numbers_close(
+    actual: tuple[float, ...],
+    expected: tuple[float, ...],
+    *,
+    label: str,
+) -> None:
+    if len(actual) != len(expected) or any(
+        not math.isclose(
+            observed,
+            wanted,
+            rel_tol=XML_FLOAT_REL_TOLERANCE,
+            abs_tol=XML_FLOAT_ABS_TOLERANCE,
+        )
+        for observed, wanted in zip(actual, expected, strict=True)
+    ):
+        raise ManifestError(
+            f"{label} disagrees with manifest: actual={actual}, expected={expected}"
+        )
 
 
 def _require_cross_file(

@@ -11,7 +11,7 @@ following official-source identity:
 - filename: `RMUC2026_V2.0.0.stp`;
 - size: `1,254,821,405` bytes;
 - SHA-256: `8dfe9ebd761e44d91361b3e593bc05416329112217b58cb35800b3cde2ffae33`;
-- official publication page: <https://bbs.robomaster.com/article/814728?source=4>.
+- official publication page: <https://bbs.robomaster.com/article/814728?source=8>.
 
 No official file or derived binary asset is included in this package. The
 upstream publication being publicly downloadable is not treated here as a

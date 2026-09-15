@@ -3,6 +3,8 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
+import struct
+import zlib
 
 import numpy as np
 import pytest
@@ -14,6 +16,21 @@ OFFICIAL_STEP_SIZE = 1_254_821_405
 
 def _sha(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _grayscale16_png(width: int, height: int) -> bytes:
+    def chunk(kind: bytes, data: bytes) -> bytes:
+        crc = zlib.crc32(data, zlib.crc32(kind)) & 0xFFFFFFFF
+        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", crc)
+
+    ihdr = struct.pack(">IIBBBBB", width, height, 16, 0, 0, 0, 0)
+    scanlines = b"".join(b"\x00" + b"\x00\x00" * width for _ in range(height))
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + chunk(b"IHDR", ihdr)
+        + chunk(b"IDAT", zlib.compress(scanlines))
+        + chunk(b"IEND", b"")
+    )
 
 
 def _file_record(root: Path, relative: str, role: str) -> dict[str, object]:
@@ -51,7 +68,7 @@ def field_asset_dir(tmp_path: Path) -> Path:
         encoding="ascii",
     )
     image = collision / "heightfield.png"
-    image.write_bytes(b"\x89PNG\r\n\x1a\nsynthetic-test-only")
+    image.write_bytes(_grayscale16_png(4, 3))
     samples = collision / "heightfield.npz"
     x = np.asarray([10.0, 11.0, 12.0, 13.0], dtype=np.float64)
     y = np.asarray([20.0, 21.0, 22.0], dtype=np.float64)

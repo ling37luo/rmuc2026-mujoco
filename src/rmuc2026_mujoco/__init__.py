@@ -2,6 +2,13 @@
 
 from .builder import BuilderUnavailable, build_from_official_step, build_runtime_asset_pack
 from .download import (
+    LAST_REVIEWED_RULEBOOK_PUBLICATION_DATE,
+    LAST_REVIEWED_RULEBOOK_SHA256,
+    LAST_REVIEWED_RULEBOOK_SIZE,
+    LAST_REVIEWED_RULEBOOK_URL,
+    LAST_REVIEWED_RULEBOOK_VERSION,
+    LAST_RULE_REVIEW_DATE,
+    OFFICIAL_RULE_CENTRE,
     OFFICIAL_SOURCE_PAGE,
     OFFICIAL_STEP_PRODUCT,
     OFFICIAL_STEP_SHA256,
@@ -37,7 +44,18 @@ from .mjcf import (
     inject_exact_heightfield,
     load_model,
 )
-from .query import HeightFieldData, field_bounds, height_at, load_heightfield
+from .query import (
+    HEIGHTFIELD_CLAIM_BOUNDARY,
+    MAX_SPAWN_CANDIDATES,
+    HeightFieldData,
+    SpawnCandidate,
+    SurfaceSample,
+    field_bounds,
+    find_spawn_candidates,
+    height_at,
+    load_heightfield,
+    surface_at,
+)
 
 __all__ = [
     "AssetIntegrityError",
@@ -48,11 +66,20 @@ __all__ = [
     "FIELD_ATTACH_PREFIX",
     "FIELD_COLLISION_GEOM_NAME",
     "FieldAsset",
+    "HEIGHTFIELD_CLAIM_BOUNDARY",
     "HFIELD_NAME",
     "HeightFieldData",
+    "LAST_REVIEWED_RULEBOOK_PUBLICATION_DATE",
+    "LAST_REVIEWED_RULEBOOK_SHA256",
+    "LAST_REVIEWED_RULEBOOK_SIZE",
+    "LAST_REVIEWED_RULEBOOK_URL",
+    "LAST_REVIEWED_RULEBOOK_VERSION",
+    "LAST_RULE_REVIEW_DATE",
     "ManifestError",
+    "MAX_SPAWN_CANDIDATES",
     "MujocoModelError",
     "OFFICIAL_SOURCE_PAGE",
+    "OFFICIAL_RULE_CENTRE",
     "OFFICIAL_STEP_PRODUCT",
     "OFFICIAL_STEP_SHA256",
     "OFFICIAL_STEP_SIZE",
@@ -61,6 +88,8 @@ __all__ = [
     "RUNTIME_ARTIFACT_TYPE",
     "RUNTIME_PROFILE_NAMES",
     "Rmuc2026Error",
+    "SpawnCandidate",
+    "SurfaceSample",
     "ValidationReport",
     "UNOFFICIAL_FRICTION_PRESETS",
     "apply_friction_preset",
@@ -69,12 +98,14 @@ __all__ = [
     "compose_with_robot",
     "download_official_step",
     "field_bounds",
+    "find_spawn_candidates",
     "height_at",
     "inject_exact_heightfield",
     "load_heightfield",
     "load_model",
+    "surface_at",
     "verify_asset",
     "verify_official_step",
 ]
 
-__version__ = "0.1.0"
+__version__ = "0.2.0.dev0"
