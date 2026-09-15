@@ -1,0 +1,184 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "RMUC 2026 MuJoCo local runtime asset pack",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "artifact_type",
+    "status",
+    "validation_status",
+    "source_identity",
+    "visual_meshes",
+    "collision",
+    "coordinate_frame",
+    "contents",
+    "runtime_profiles",
+    "validation_boundary",
+    "distribution"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "artifact_type": {"const": "rmuc2026_mujoco_runtime_asset_pack"},
+    "status": {"const": "PASS"},
+    "validation_status": {"const": "DRAFT_BLOCKED"},
+    "source_identity": {
+      "type": "object",
+      "required": [
+        "official_step_sha256",
+        "official_step_size_bytes",
+        "license_status",
+        "redistribution_authorized",
+        "asset_included_in_source_repository"
+      ],
+      "properties": {
+        "official_step_sha256": {
+          "const": "8dfe9ebd761e44d91361b3e593bc05416329112217b58cb35800b3cde2ffae33"
+        },
+        "official_step_size_bytes": {"const": 1254821405},
+        "license_status": {"const": "UNSPECIFIED"},
+        "redistribution_authorized": {"const": false},
+        "asset_included_in_source_repository": {"const": false}
+      },
+      "additionalProperties": true
+    },
+    "visual_meshes": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["file", "sha256", "rgba", "visual_role"],
+        "properties": {
+          "file": {"type": "string", "minLength": 1},
+          "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+          "rgba": {
+            "type": "array",
+            "minItems": 4,
+            "maxItems": 4,
+            "items": {"type": "number", "minimum": 0, "maximum": 1}
+          },
+          "visual_role": {"type": "string", "minLength": 1}
+        },
+        "additionalProperties": true
+      }
+    },
+    "collision": {
+      "type": "object",
+      "required": [
+        "image_file",
+        "image_sha256",
+        "samples_file",
+        "samples_sha256",
+        "rows_y",
+        "columns_x",
+        "half_size_xy_m",
+        "geom_center_after_translation_m",
+        "maximum_height_m",
+        "base_depth_m"
+      ],
+      "properties": {
+        "image_file": {"type": "string", "minLength": 1},
+        "image_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "samples_file": {"type": "string", "minLength": 1},
+        "samples_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "rows_y": {"type": "integer", "minimum": 2},
+        "columns_x": {"type": "integer", "minimum": 2},
+        "maximum_height_m": {"type": "number", "exclusiveMinimum": 0},
+        "base_depth_m": {"type": "number", "minimum": 0}
+      },
+      "additionalProperties": true
+    },
+    "coordinate_frame": {
+      "type": "object",
+      "required": ["world_units", "z_up", "recommended_spawn"],
+      "properties": {
+        "world_units": {"const": "metre-radian-kilogram-second"},
+        "z_up": {"const": true},
+        "recommended_spawn": {"type": "object"}
+      },
+      "additionalProperties": true
+    },
+    "contents": {
+      "type": "object",
+      "required": ["entrypoint", "files"],
+      "properties": {
+        "entrypoint": {"const": "rmuc2026_field.xml"},
+        "files": {"type": "array", "minItems": 4}
+      },
+      "additionalProperties": true
+    },
+    "runtime_profiles": {
+      "type": "object",
+      "required": ["default", "profiles"],
+      "properties": {
+        "default": {"const": "full"},
+        "profiles": {
+          "type": "object",
+          "required": ["full", "collision_only"],
+          "properties": {
+            "full": {
+              "type": "object",
+              "required": [
+                "entrypoint",
+                "includes_visual_meshes",
+                "visual_mesh_count",
+                "intended_use"
+              ],
+              "properties": {
+                "entrypoint": {"const": "rmuc2026_field.xml"},
+                "includes_visual_meshes": {"const": true},
+                "visual_mesh_count": {"type": "integer", "minimum": 1},
+                "intended_use": {"const": "interactive_visualization"}
+              },
+              "additionalProperties": false
+            },
+            "collision_only": {
+              "type": "object",
+              "required": [
+                "entrypoint",
+                "includes_visual_meshes",
+                "visual_mesh_count",
+                "intended_use"
+              ],
+              "properties": {
+                "entrypoint": {"const": "rmuc2026_field_collision_only.xml"},
+                "includes_visual_meshes": {"const": false},
+                "visual_mesh_count": {"const": 0},
+                "intended_use": {"const": "headless_physics"}
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "validation_boundary": {
+      "type": "object",
+      "required": ["status", "whole_field_topology_ready", "final_policy_validation_ready"],
+      "properties": {
+        "status": {"const": "DRAFT_BLOCKED"},
+        "whole_field_topology_ready": {"const": false},
+        "final_policy_validation_ready": {"const": false}
+      },
+      "additionalProperties": true
+    },
+    "distribution": {
+      "type": "object",
+      "required": [
+        "generated_locally",
+        "third_party_geometry",
+        "safe_to_publish_without_rightsholder_permission",
+        "code_license_applies_to_asset_pack"
+      ],
+      "properties": {
+        "generated_locally": {"const": true},
+        "third_party_geometry": {"const": true},
+        "safe_to_publish_without_rightsholder_permission": {"const": false},
+        "code_license_applies_to_asset_pack": {"const": false}
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": true
+}

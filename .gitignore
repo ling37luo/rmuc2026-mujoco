@@ -1,0 +1,43 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Environments and builds
+.venv/
+venv/
+build/
+dist/
+wheelhouse/
+
+# Editors and operating systems
+.idea/
+.vscode/
+*~
+.DS_Store
+
+# Local test/output state
+.cache/
+runs/
+artifacts/
+asset-pack*/
+*.log
+
+# Third-party and official-source-derived field material must never be committed.
+*.stp
+*.step
+*.stp.zip
+*.pdf
+*.obj
+*.glb
+*.gltf
+*.npz
+*.png
+*.onnx
+*.pt
+*.pth

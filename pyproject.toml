@@ -1,0 +1,65 @@
+[build-system]
+requires = ["hatchling>=1.27,<2"]
+build-backend = "hatchling.build"
+
+[project]
+name = "rmuc2026-mujoco"
+version = "0.1.0"
+description = "Unofficial, integrity-checked RMUC 2026 field builder and loader for MuJoCo"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.10"
+keywords = ["mujoco", "robomaster", "rmuc", "robotics", "simulation"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "Intended Audience :: Science/Research",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+  "mujoco>=3.3,<4",
+  "numpy>=1.26,<3",
+]
+
+[project.urls]
+Homepage = "https://github.com/ling37luo/rmuc2026-mujoco"
+Issues = "https://github.com/ling37luo/rmuc2026-mujoco/issues"
+Source = "https://github.com/ling37luo/rmuc2026-mujoco"
+
+[project.optional-dependencies]
+build = [
+  "cadquery==2.6.1",
+  "fast-simplification==0.1.12",
+  "pillow>=10,<13",
+  "rtree==1.4.1",
+  "trimesh==4.8.3",
+]
+test = [
+  "pytest>=8,<9",
+  "ruff>=0.12,<0.15",
+]
+
+[project.scripts]
+rmuc2026-field = "rmuc2026_mujoco.cli:main"
+rmuc2026-mujoco = "rmuc2026_mujoco.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/rmuc2026_mujoco"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"ASSET_POLICY.md" = "rmuc2026_mujoco/ASSET_POLICY.md"
+"THIRD_PARTY_NOTICES.md" = "rmuc2026_mujoco/THIRD_PARTY_NOTICES.md"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"

@@ -1,0 +1,10 @@
+<mujoco model="rmuc2026_mujoco_simple_robot_example">
+  <option timestep="0.002" gravity="0 0 -9.81"/>
+  <worldbody>
+    <body name="demo_robot" pos="0 0 0.8">
+      <freejoint/>
+      <geom name="demo_robot_collision" type="sphere" size="0.10" mass="1"
+            rgba="1 0.35 0.05 1"/>
+    </body>
+  </worldbody>
+</mujoco>
