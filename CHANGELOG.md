@@ -6,8 +6,22 @@ project intends to follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.0a1] - 2026-09-15
+
 ### Added
 
+- Runtime-pack schema 2 with named field lights, a public
+  `FieldDisplayController`, and `L` flat/shadow switching.
+- Optional local-only complete rulebook overhead livery and `G` visibility
+  switching; the RGB image retains its baked robots, obstacles, field modules,
+  and shadows, while the group 4 mesh is excluded from collision.
+- A 1 cm collision option plus hash-bound static and 12-trial dynamic evidence
+  for the two fixed 17-degree fly ramps.
+- Optional bounded planar-ramp refinement with unchanged exterior samples and
+  a transition band, without adding overlapping collision geometry.
+- Actual-contact regression tests for low-friction robot/field pairs.
+- Deterministic visual-mesh cleanup for degenerate, repeated, and oppositely
+  wound coincident CAD faces before local OBJ export.
 - Local surface queries for height, normal, slope, grid resolution, and relief.
 - Deterministic runtime-proxy heightfield screening for candidate spawn points.
 - A bounds-aware `overview` camera, plus spawn-centred and unchanged `native`
@@ -17,8 +31,32 @@ project intends to follow [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
-- Development builds now identify as `0.2.0.dev0`; the published `v0.1.0`
-  tag and release artifacts remain unchanged.
+- The runtime documentation now makes the field's 2 ms timestep part of the
+  1 cm integration boundary and calls out that a parent robot specification can
+  replace global MuJoCo options during composition.
+- Interactive viewers now stop and join the keyboard hook before closing the
+  MuJoCo window, then wait for the native render thread to release its GL
+  context. Physics exceptions therefore exit with their Python status instead
+  of racing a daemon thread and producing a later segmentation fault.
+- On Linux/X11, plain `L` and `G` are intercepted only for the unique MuJoCo
+  window owned by the current process, avoiding MuJoCo's built-in lighting and
+  fog shortcuts. Other platforms retain the launch-time display switches.
+- Full-profile rendering now records a separate, deterministic display RGBA,
+  darkens the broad base shell, caps washed-out whites, and defaults to the
+  original even lighting with cast shadows disabled. Display changes do not
+  alter field physics or source-colour provenance.
+- Fine heightfields retain the established 2 cm envelope and spawn anchor, so
+  changing sample spacing does not shift the field coordinate frame.
+- Runtime loading remains backward-compatible with existing schema 1 packs;
+  schema 2 controls are enabled only when their complete contracts are present,
+  including both complete-guide and earlier filtered-marking livery packs.
+- Friction presets now take precedence in generated contacts and update explicit
+  field pairs. Global contact overrides fail closed; robot geom values remain
+  unchanged. Higher field priority also selects field solver parameters.
+- Local surface queries calculate triangle slopes only inside the requested
+  window, avoiding full-field gradient allocations while preserving results.
+- The first 0.2 alpha identifies as `0.2.0a1`; official and derived field assets
+  remain local and are excluded from its code-only tag and release archives.
 - Quick-start commands now use an isolated `python3` environment and work on
   Ubuntu systems without a global `python` alias.
 - Runtime verification now validates the complete heightfield PNG, rejects

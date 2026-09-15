@@ -13,7 +13,7 @@ Fudan robot files, checkpoints, ONNX policies, or RL-Lab run data.
 
 - one-command, direct-from-official-source local setup;
 - CAD-derived visual geometry split into material groups;
-- a 2 cm collision grid with exact floating-point NPZ injection;
+- a configurable 1–10 cm collision grid with exact floating-point NPZ injection;
 - `full` viewing and mesh-free `collision_only` training profiles;
 - explicit, non-official dry/low/high friction sensitivity presets;
 - relative paths and a fail-closed manifest/hash contract;
@@ -36,14 +36,15 @@ cd rmuc2026-mujoco
 # may first need: sudo apt install python3-venv
 python3 -m venv .venv
 .venv/bin/python -m pip install --upgrade pip
-.venv/bin/python -m pip install '.[build]'
+.venv/bin/python -m pip install '.[build,viewer]'
 
 # Review the pinned source identity without downloading anything.
 .venv/bin/rmuc2026-field source
 
 # Explicitly download from RoboMaster, verify size/SHA-256, and build locally.
 .venv/bin/rmuc2026-field setup ./local-rmuc2026-field \
-  --acknowledge-reference-only
+  --heightfield-resolution 0.01 \
+  --include-surface-guide
 
 .venv/bin/rmuc2026-field verify ./local-rmuc2026-field
 .venv/bin/rmuc2026-field view ./local-rmuc2026-field
@@ -58,7 +59,7 @@ installation commands can instead be:
 
 ```bash
 uv venv .venv --python 3.12
-uv pip install --python .venv/bin/python '.[build]'
+uv pip install --python .venv/bin/python '.[build,viewer]'
 ```
 
 The executable lives inside `.venv/bin/` unless you activate the environment.
@@ -78,12 +79,33 @@ If you already have the pinned STEP, the two explicit commands are:
   --acknowledge-reference-only
 .venv/bin/rmuc2026-field build \
   --step ./RMUC2026_V2.0.0.stp \
-  --output ./local-rmuc2026-field
+  --output ./local-rmuc2026-field \
+  --heightfield-resolution 0.01 \
+  --include-surface-guide \
+  --rulebook ./RoboMaster-2026-rulebook-V2.0.0.pdf
 ```
 
 The acknowledgement records that the upstream publication is treated as
 reference material, not as a redistribution license. It does not accept any
 third-party terms on your behalf.
+
+`--include-surface-guide` also downloads and verifies the pinned official
+V2.0.0 rulebook into the local cache and extracts its overhead illustration
+locally. The runtime pack keeps the complete RGB overhead illustration, including
+its floor colours, field modules, obstacles, baked robots, and baked shadows.
+This matches the earlier `visual5` display instead of reducing the image to a
+small set of chromatic markings. The full picture follows the collision
+heightfield on a lightweight 20 cm visual grid; cells crossing sharp height
+discontinuities are omitted so the texture is not drawn vertically across walls.
+The repository never contains the source or generated images. Press `L` in the
+interactive viewer to switch between the default flat lighting and cast shadows.
+Press `G` to show or hide the optional rulebook livery, which starts hidden and
+never participates in contact. The same initial modes can be selected with
+`--lighting flat|shadow` and `--livery off|on`. Without the optional `viewer`
+dependency, use those startup flags; field loading and physics remain available.
+Live `L`/`G` interception is enabled only when Linux/X11 can bind the unique
+MuJoCo window owned by the current process. Other platforms and ambiguous
+window sessions fail closed and keep the launch-time modes.
 
 ## Use from Python
 
@@ -167,7 +189,9 @@ local-rmuc2026-field/
 │   ├── rmuc2026_heightfield.png   # MuJoCo dimensions/bootstrap
 │   └── rmuc2026_heightfield.npz   # exact verified float samples
 └── visual/
-    └── *.obj
+    ├── *.obj
+    ├── rmuc2026_surface_guide.obj                 # optional, local only
+    └── official_rulebook_v2_overhead_surface.png  # optional, local only
 ```
 
 Every referenced path must remain inside the pack, be a regular file, and
@@ -175,9 +199,65 @@ match its declared size and SHA-256. The PNG is not the authoritative contact
 surface: the loader replaces its quantized values with the verified NPZ floats
 before the first simulation step.
 
+New local builds use runtime-pack schema 2 for the named lighting and optional
+livery contracts. The complete livery uses a 20 cm non-contact visual mesh with
+MuJoCo's fixed-diagonal heightfield interpolation. The loader continues to accept
+schema 1 packs and both schema 2 livery forms: the complete baked guide and the
+earlier filtered-marking experiment. Missing schema 2 display controls remain
+unavailable instead of being inferred.
+
+Both field entrypoints declare a 2 ms MuJoCo timestep with the Newton solver.
+Keep that timestep when evaluating the 1 cm collision candidate. In a composed
+model, MuJoCo takes global options from the parent robot specification, so an
+integration that replaces the field option must validate its own timestep. A
+5 ms parent timestep produced repeatable dense mesh-heightfield contact
+instability in the full wheel-legged integration; restoring 2 ms completed a
+20 second run under the same 2 m/s command without a numerical warning. That
+run does not establish 20 seconds of in-field travel: unconstrained straight
+probes reached the finite heightfield boundary after roughly 6.5--8.1 seconds.
+Registered in-bounds routes are still required for a whole-route stability
+claim. The 2 ms setting is an integration requirement, not a claim that the
+current 2.5-D field is competition-ready.
+
+The full profile keeps each original CAD RGBA value in `visual_meshes[*].rgba`
+and records the actual renderer colour separately in `display_rgba`. The
+`cad_source_contrast_v2` display profile lowers the broad base shell, caps very
+bright CAD whites, and preserves colour ordering. Two uniquely named field
+lights use the original even illumination and start with cast shadows disabled,
+which avoids large-scene shadow-map speckles and dark blocks. `L` changes only
+the field key light's `castshadow` flag. `G` changes only display group 4. Both
+controls leave state, contacts, friction, solver parameters, and robot-owned
+lights unchanged.
+
 The `dry`, `low`, and `high` friction values are project-provided sensitivity
-presets, **not** official RoboMaster material measurements. A preset changes
-only the field heightfield geom; it does not overwrite robot-side friction.
+presets, **not** official RoboMaster material measurements. Robot geom values
+are preserved. The field receives higher contact priority, so its friction
+actually reaches contacts even when a robot has higher authored friction.
+This also selects the field's contact solver parameters for automatically
+generated pairs. Explicit pairs involving the field receive the selected
+friction while retaining their other authored parameters. Global contact
+overrides are rejected because they would mask the requested preset.
+
+| Preset | Sliding coefficient | Torsional coefficient (m) | Rolling coefficient (m) |
+| --- | ---: | ---: | ---: |
+| `low` | 0.35 | 0.002 | 0.00005 |
+| `dry` | 1.0 | 0.005 | 0.0001 |
+| `high` | 1.5 | 0.01 | 0.0002 |
+
+Torsional and rolling coefficients only affect enabled contact dimensions.
+These values support sensitivity tests; they do not label CAD colors as PVC,
+rubber, or metal. Actual material calibration needs measured sliding/stopping
+data, with robot mass, wheel material, surface condition, and test speed recorded.
+
+### Optional local planar-ramp correction
+
+`rmuc2026_mujoco.contact.refine_planar_ramps` accepts caller-supplied, audited
+plane records and world-space height samples. It returns a separate candidate
+array and an audit report. It corrects only inset interiors, fades changes
+through a transition band, rejects excessive disagreement or overlapping
+patches, and leaves other samples unchanged. It adds no collision mesh or
+second contact surface. It does not modify or promote a runtime pack; callers
+must bind the geometry evidence to the source and test the candidate before use.
 
 ## Accuracy boundary
 
@@ -195,11 +275,24 @@ For that reason generated manifests deliberately remain `DRAFT_BLOCKED`:
 | --- | --- |
 | Source identity and file integrity | Checked |
 | CAD-derived visual layout | Available, simplified |
-| Static 2 cm heightfield collision | Available |
+| Static 1–10 cm heightfield collision | Available; 1 cm is the fine seam candidate |
+| Fixed 17° fly-ramp interior and seam audit | Bound to parts 392 and 397 |
+| 120 mm wheel dynamics over those two ramps | Separate 12-trial bounded audit |
 | Multi-level / overhanging collision | Not represented |
 | Dynamic facilities | Not modeled |
 | Official simulator status | No; this project is unofficial |
 | Final whole-field policy validation | Not claimed |
+
+Run the fixed-ramp dynamics gate against an exported pack with:
+
+```bash
+.venv/bin/python -m rmuc2026_mujoco.wheel_probe ./local-rmuc2026-field \
+  --output ./runs/wheel-probe-result.json
+```
+
+The 12 trials use the hash-bound CAD seam endpoints for both directions at
+0.3, 0.5, and 1.0 m/s. The nominal part vertex extent is retained as geometry
+metadata, but it is not used as a wheel start point beyond the fly-ramp lip.
 
 Do not use a successful load as proof of official geometry, competition-rule
 compliance, robot recovery, policy quality, or source-to-target equivalence.
@@ -240,14 +333,21 @@ python3 -m venv .venv
 安装 `build` 依赖后，`rmuc2026-field setup` 会直接从 RoboMaster 官方地址
 下载指定 STEP，核对固定大小和 SHA-256，并只在你的电脑上生成可搬运场地包。
 
-现在的视觉模型来自官方 CAD；碰撞采用 2 cm 单值高度场，因此平地、坡道和台阶
-可以直接用于 MuJoCo，但桥下空间、悬空结构、垂直墙面和动态机关还不是精确碰撞。
+现在的视觉模型来自官方 CAD；碰撞采用可配置 1–10 cm 单值高度场，因此平地、坡道和
+台阶可以直接用于 MuJoCo，但桥下空间、悬空结构、垂直墙面和动态机关还不是精确碰撞。
 所以当前版本适合开发、导航和静态交互验证，不冒充官方比赛仿真器，也不把
 `DRAFT_BLOCKED` 写成“全场已精确验收”。
 
 `full` 模式用于看完整 CAD 外观；`collision_only` 不加载 38 组视觉网格，适合
 无界面训练。`dry/low/high` 只是本项目用于敏感性测试的非官方摩擦预设，不是赛事
 材料实测值。
+
+带 `--include-surface-guide` 构建时，规则手册俯视图只在本机处理。运行包完整保存俯视图的
+RGB 内容，包括地面颜色、场地模块、障碍物、图中烘焙的机器人和阴影；不会再把它过滤成
+只有少量红、蓝、橙标线的透明层。视觉曲面使用约 20 cm 网格按 MuJoCo 高度场对角线贴合，
+只在突变高度接缝处断开，避免纹理竖跨墙面。默认是无投影平光和隐藏涂装；窗口内按 `L`
+切换投影阴影，按 `G` 切换组 4 涂装。两项都只改变显示，不会改变机器人状态、场地接触、
+摩擦或求解器参数。读取器仍兼容 schema 1、完整涂装 schema 2 和此前的筛选标线 schema 2。
 
 Ubuntu 默认可能没有 `python` 命令，所以快速开始现在固定使用 `python3` 创建
 隔离环境，并从 `.venv/bin/` 调用程序；精简系统还需先安装 `python3-venv`，也可以

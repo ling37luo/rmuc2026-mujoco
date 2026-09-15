@@ -13,15 +13,36 @@ import tempfile
 from typing import Any
 import xml.etree.ElementTree as ET
 
+import numpy as np
+
+from .livery import (
+    SOURCE_BAKED_SCENE_CONTENT,
+    SOURCE_SURFACE_GUIDE_KIND,
+)
+
 
 EXPECTED_ARTIFACT_TYPE = "rmuc2026_official_field_mujoco_asset"
 EXPECTED_VISUAL_MESH_COUNT = 38
 OUTPUT_ARTIFACT_TYPE = "rmuc2026_mujoco_runtime_asset_pack"
 OUTPUT_XML = "rmuc2026_field.xml"
 OUTPUT_COLLISION_ONLY_XML = "rmuc2026_field_collision_only.xml"
-PUBLIC_DISPLAY_RGB_BLACK_FLOOR = 0.10
-PUBLIC_DISPLAY_RGB_WHITE_CEILING = 0.86
-PUBLIC_DISPLAY_RGB_GAMMA = 0.85
+OUTPUT_SCHEMA_VERSION = 2
+PUBLIC_DISPLAY_RGB_BLACK_FLOOR = 0.06
+PUBLIC_DISPLAY_RGB_WHITE_CEILING = 0.76
+PUBLIC_DISPLAY_RGB_GAMMA = 0.90
+PUBLIC_DISPLAY_BASE_SURFACE_SCALE = 0.64
+PUBLIC_DISPLAY_PROFILE = "cad_source_contrast_v2"
+KEY_LIGHT_NAME = "rmuc2026_key_light"
+FILL_LIGHT_NAME = "rmuc2026_fill_light"
+SURFACE_GUIDE_KIND = SOURCE_SURFACE_GUIDE_KIND
+SURFACE_GUIDE_TEXTURE_FILE = "visual/official_rulebook_v2_overhead_surface.png"
+SURFACE_GUIDE_MESH_FILE = "visual/rmuc2026_surface_guide.obj"
+SURFACE_GUIDE_GEOM_NAME = "rmuc2026_surface_guide"
+SURFACE_GUIDE_GEOM_GROUP = 4
+SURFACE_GUIDE_BAKED_CONTENT = SOURCE_BAKED_SCENE_CONTENT
+SURFACE_GUIDE_SAMPLING_M = 0.20
+SURFACE_GUIDE_CLEARANCE_M = 0.018
+SURFACE_GUIDE_MAXIMUM_CELL_HEIGHT_DELTA_M = 0.20
 
 
 class ExportBlocked(RuntimeError):
@@ -51,8 +72,8 @@ def _finite_numbers(value: object, *, count: int, label: str) -> list[float]:
     return numbers
 
 
-def _display_rgba(source_rgba: list[float]) -> list[float]:
-    """Lift CAD blacks and cap whites for legible, display-only contrast."""
+def _display_rgba(source_rgba: list[float], *, visual_role: str) -> list[float]:
+    """Map source colours to a legible display palette without changing provenance."""
 
     rgb = [
         PUBLIC_DISPLAY_RGB_BLACK_FLOOR
@@ -60,6 +81,8 @@ def _display_rgba(source_rgba: list[float]) -> list[float]:
         * value**PUBLIC_DISPLAY_RGB_GAMMA
         for value in source_rgba[:3]
     ]
+    if visual_role == "base_surface_shell":
+        rgb = [value * PUBLIC_DISPLAY_BASE_SURFACE_SCALE for value in rgb]
     return [*rgb, source_rgba[3]]
 
 
@@ -81,6 +104,271 @@ def _source_file(
     if not isinstance(expected_sha256, str) or actual_sha256 != expected_sha256:
         raise ExportBlocked(f"源文件SHA-256不匹配：{relative}")
     return Path(relative).as_posix(), source, actual_sha256
+
+
+def _png_dimensions(path: Path, *, label: str) -> tuple[int, int]:
+    """Read the mandatory PNG signature and IHDR dimensions without Pillow."""
+
+    try:
+        header = path.read_bytes()[:24]
+    except OSError as exc:
+        raise ExportBlocked(f"{label}无法读取：{exc}") from exc
+    if (
+        len(header) != 24
+        or header[:8] != b"\x89PNG\r\n\x1a\n"
+        or header[8:12] != (13).to_bytes(4, "big")
+        or header[12:16] != b"IHDR"
+    ):
+        raise ExportBlocked(f"{label}不是有效PNG")
+    width = int.from_bytes(header[16:20], "big")
+    height = int.from_bytes(header[20:24], "big")
+    if width <= 0 or height <= 0:
+        raise ExportBlocked(f"{label}尺寸无效")
+    return width, height
+
+
+def _source_surface_guide(
+    field_root: Path,
+    manifest: dict[str, Any],
+) -> dict[str, Any]:
+    """Validate the local rulebook guide and return its bounded world mapping."""
+
+    surface = _json_object(manifest.get("surface_guide"), "surface_guide")
+    if surface.get("kind") != SURFACE_GUIDE_KIND:
+        raise ExportBlocked("surface_guide.kind不是支持的官方规则手册俯视图")
+    if surface.get("physics") is not False:
+        raise ExportBlocked("surface_guide必须明确声明physics=false")
+    relative, source, digest = _source_file(
+        field_root,
+        surface.get("file"),
+        surface.get("sha256"),
+        suffix=".png",
+    )
+    width, height = _png_dimensions(source, label="surface_guide")
+    for key, actual in (("width_px", width), ("height_px", height)):
+        declared = surface.get(key)
+        if isinstance(declared, bool) or not isinstance(declared, int) or declared != actual:
+            raise ExportBlocked(f"surface_guide.{key}与PNG不一致")
+
+    mapping = _json_object(surface.get("world_mapping"), "surface_guide.world_mapping")
+    expected_mapping = {
+        "image_left_to_world": "negative_x_red_side",
+        "image_right_to_world": "positive_x_blue_side",
+        "image_top_to_world": "positive_y",
+        "rectangle": "official_cad_assembly_outer_xy_bounds",
+        "calibration": "diagnostic_outer_bounds_fit_not_survey_homography",
+    }
+    if any(mapping.get(key) != value for key, value in expected_mapping.items()):
+        raise ExportBlocked("surface_guide.world_mapping方向或标定合同损坏")
+    raw_bounds = mapping.get("world_bounds_xy_m")
+    if (
+        not isinstance(raw_bounds, list)
+        or len(raw_bounds) != 2
+        or any(not isinstance(row, list) or len(row) != 2 for row in raw_bounds)
+    ):
+        raise ExportBlocked("surface_guide.world_mapping.world_bounds_xy_m必须是2x2数组")
+    low = np.asarray(raw_bounds[0], dtype=np.float64)
+    high = np.asarray(raw_bounds[1], dtype=np.float64)
+    if not np.isfinite(np.concatenate((low, high))).all() or np.any(high <= low):
+        raise ExportBlocked("surface_guide世界边界无效")
+    size = high - low
+    declared_size = np.asarray(mapping.get("world_size_xy_m"), dtype=np.float64)
+    if declared_size.shape != (2,) or not np.isfinite(declared_size).all():
+        raise ExportBlocked("surface_guide.world_size_xy_m必须含2个有限数")
+    if not np.allclose(declared_size, size, rtol=0.0, atol=1.0e-6):
+        raise ExportBlocked("surface_guide世界尺寸与边界不一致")
+
+    dimensions = _json_object(manifest.get("dimensions"), "dimensions")
+    outer = np.asarray(
+        dimensions.get("cad_assembly_outer_bounds_after_translation_m"),
+        dtype=np.float64,
+    )
+    if outer.shape != (2, 3) or not np.isfinite(outer).all():
+        raise ExportBlocked("dimensions缺少有效的CAD外包围")
+    if not np.allclose(outer[:, :2], np.stack((low, high)), rtol=0.0, atol=1.0e-6):
+        raise ExportBlocked("surface_guide世界边界与CAD外包围不一致")
+    if not math.isclose(width / height, size[0] / size[1], rel_tol=0.02, abs_tol=0.0):
+        raise ExportBlocked("surface_guide像素比例与世界映射不一致")
+    return {
+        "source_relative": relative,
+        "source_path": source,
+        "source_sha256": digest,
+        "world_bounds_xy_m": np.stack((low, high)),
+    }
+
+
+def _bounded_uniform_axis(
+    values: np.ndarray,
+    *,
+    low: float,
+    high: float,
+    sampling_m: float,
+    label: str,
+) -> np.ndarray:
+    if values.ndim != 1 or len(values) < 2 or not np.isfinite(values).all():
+        raise ExportBlocked(f"{label}坐标轴损坏")
+    steps = np.diff(values)
+    if not np.all(steps > 0.0):
+        raise ExportBlocked(f"{label}坐标轴必须严格递增")
+    median_step = float(np.median(steps))
+    tolerance = max(1.0e-6, 0.51 * median_step)
+    if low < values[0] - tolerance or high > values[-1] + tolerance or high <= low:
+        raise ExportBlocked(f"surface_guide与{label}坐标轴没有足够重叠")
+    segment_count = max(1, int(math.ceil((high - low) / sampling_m)))
+    return np.linspace(low, high, segment_count + 1, dtype=np.float64)
+
+
+def _mujoco_triangle_height_samples(
+    x: np.ndarray,
+    y: np.ndarray,
+    height: np.ndarray,
+    selected_x: np.ndarray,
+    selected_y: np.ndarray,
+) -> np.ndarray:
+    """Sample MuJoCo's fixed-diagonal hfield triangles at exact mesh XY coordinates."""
+
+    x_lower = np.clip(np.searchsorted(x, selected_x, side="left") - 1, 0, len(x) - 2)
+    y_lower = np.clip(np.searchsorted(y, selected_y, side="left") - 1, 0, len(y) - 2)
+    x_weight = (selected_x - x[x_lower]) / (x[x_lower + 1] - x[x_lower])
+    y_weight = (selected_y - y[y_lower]) / (y[y_lower + 1] - y[y_lower])
+    lower_left = height[np.ix_(y_lower, x_lower)]
+    lower_right = height[np.ix_(y_lower, x_lower + 1)]
+    upper_left = height[np.ix_(y_lower + 1, x_lower)]
+    upper_right = height[np.ix_(y_lower + 1, x_lower + 1)]
+    u = x_weight[None, :]
+    v = y_weight[:, None]
+    lower_triangle = lower_left + (lower_right - lower_left) * u + (upper_right - lower_right) * v
+    upper_triangle = lower_left + (upper_right - upper_left) * u + (upper_left - lower_left) * v
+    return np.where(v > u, upper_triangle, lower_triangle)
+
+
+def _write_surface_guide_mesh(
+    path: Path,
+    *,
+    samples_path: Path,
+    collision: dict[str, Any],
+    recommended_spawn: dict[str, Any],
+    world_bounds_xy_m: np.ndarray,
+) -> dict[str, Any]:
+    """Write the full non-contact rulebook surface used by the visual5 pack.
+
+    The 20 cm grid follows MuJoCo's fixed-diagonal heightfield surface. Cells
+    that cross a height discontinuity are omitted so the picture is not drawn
+    vertically across a wall, while the complete RGB texture remains available
+    on every retained surface cell. Texture alpha never selects the geometry.
+    """
+
+    try:
+        with np.load(samples_path, allow_pickle=False) as samples:
+            x = np.asarray(samples["x_m"], dtype=np.float64)
+            y = np.asarray(samples["y_m"], dtype=np.float64)
+            height = np.asarray(samples["height_m"], dtype=np.float64)
+    except (OSError, ValueError, KeyError) as exc:
+        raise ExportBlocked(f"surface_guide无法读取高度场样本：{exc}") from exc
+    rows = int(collision["rows_y"])
+    columns = int(collision["columns_x"])
+    if x.shape != (columns,) or y.shape != (rows,) or height.shape != (rows, columns):
+        raise ExportBlocked("surface_guide高度场样本形状与collision合同不一致")
+    if not np.isfinite(height).all():
+        raise ExportBlocked("surface_guide高度场样本含非有限值")
+    x = x - float(recommended_spawn["x_before_translation_m"])
+    y = y - float(recommended_spawn["y_before_translation_m"])
+    height = height - float(recommended_spawn["terrain_height_m"])
+    bounds = np.asarray(world_bounds_xy_m, dtype=np.float64)
+    selected_x = _bounded_uniform_axis(
+        x,
+        low=float(bounds[0, 0]),
+        high=float(bounds[1, 0]),
+        sampling_m=SURFACE_GUIDE_SAMPLING_M,
+        label="X",
+    )
+    selected_y = _bounded_uniform_axis(
+        y,
+        low=float(bounds[0, 1]),
+        high=float(bounds[1, 1]),
+        sampling_m=SURFACE_GUIDE_SAMPLING_M,
+        label="Y",
+    )
+    selected_height = (
+        _mujoco_triangle_height_samples(x, y, height, selected_x, selected_y)
+        + SURFACE_GUIDE_CLEARANCE_M
+    )
+    mesh_rows, mesh_columns = len(selected_y), len(selected_x)
+    cell_maximum = np.maximum.reduce(
+        (
+            selected_height[:-1, :-1],
+            selected_height[:-1, 1:],
+            selected_height[1:, :-1],
+            selected_height[1:, 1:],
+        )
+    )
+    cell_minimum = np.minimum.reduce(
+        (
+            selected_height[:-1, :-1],
+            selected_height[:-1, 1:],
+            selected_height[1:, :-1],
+            selected_height[1:, 1:],
+        )
+    )
+    visible_cells = cell_maximum - cell_minimum <= SURFACE_GUIDE_MAXIMUM_CELL_HEIGHT_DELTA_M
+    if not np.any(visible_cells):
+        raise ExportBlocked("surface_guide跨高度接缝过滤后没有可显示三角面")
+
+    used_vertices = np.zeros((mesh_rows, mesh_columns), dtype=bool)
+    used_vertices[:-1, :-1] |= visible_cells
+    used_vertices[:-1, 1:] |= visible_cells
+    used_vertices[1:, :-1] |= visible_cells
+    used_vertices[1:, 1:] |= visible_cells
+    vertex_indices = np.zeros((mesh_rows, mesh_columns), dtype=np.int64)
+    used_rows, used_columns = np.nonzero(used_vertices)
+    vertex_indices[used_rows, used_columns] = np.arange(1, len(used_rows) + 1)
+
+    lines = ["o rmuc2026_surface_guide"]
+    lines.extend(
+        f"v {selected_x[column]:.9g} {selected_y[row]:.9g} {selected_height[row, column]:.9g}"
+        for row, column in zip(used_rows, used_columns)
+    )
+    span = bounds[1] - bounds[0]
+    lines.extend(
+        f"vt {float(np.clip((selected_x[column] - bounds[0, 0]) / span[0], 0.0, 1.0)):.9g} "
+        f"{float(np.clip((selected_y[row] - bounds[0, 1]) / span[1], 0.0, 1.0)):.9g}"
+        for row, column in zip(used_rows, used_columns)
+    )
+    for row, column in zip(*np.nonzero(visible_cells)):
+        lower_left = int(vertex_indices[row, column])
+        lower_right = int(vertex_indices[row, column + 1])
+        upper_left = int(vertex_indices[row + 1, column])
+        upper_right = int(vertex_indices[row + 1, column + 1])
+        lines.append(
+            f"f {lower_left}/{lower_left} {lower_right}/{lower_right} {upper_right}/{upper_right}"
+        )
+        lines.append(
+            f"f {lower_left}/{lower_left} {upper_right}/{upper_right} {upper_left}/{upper_left}"
+        )
+    visible_cell_count = int(np.count_nonzero(visible_cells))
+    face_count = 2 * visible_cell_count
+    cell_count = (mesh_rows - 1) * (mesh_columns - 1)
+    omitted_cell_count = cell_count - visible_cell_count
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(lines) + "\n", encoding="ascii")
+    return {
+        "method": "full_rulebook_surface_20cm_mujoco_triangle_height_sampling",
+        "target_spacing_m": SURFACE_GUIDE_SAMPLING_M,
+        "actual_max_spacing_xy_m": [
+            float(np.max(np.diff(selected_x))),
+            float(np.max(np.diff(selected_y))),
+        ],
+        "clearance_m": SURFACE_GUIDE_CLEARANCE_M,
+        "maximum_cell_height_delta_m": SURFACE_GUIDE_MAXIMUM_CELL_HEIGHT_DELTA_M,
+        "vertices": int(np.count_nonzero(used_vertices)),
+        "faces": face_count,
+        "omitted_cells": omitted_cell_count,
+        "cell_count": cell_count,
+        "height_discontinuity_filtered_cells": omitted_cell_count,
+        "mesh_size_bytes": path.stat().st_size,
+        "boundary_xy_height_interpolation": True,
+        "source_texture_alpha_drives_topology": False,
+    }
 
 
 def _load_source_contract(field_build: Path) -> tuple[Path, Path, dict[str, Any]]:
@@ -112,6 +400,7 @@ def _build_field_xml(
     manifest: dict[str, Any],
     *,
     include_visual_meshes: bool = True,
+    livery: dict[str, str] | None = None,
 ) -> bytes:
     visual = manifest["visual_meshes"]
     collision = _json_object(manifest.get("collision"), "collision")
@@ -177,6 +466,7 @@ def _build_field_xml(
         worldbody,
         "light",
         {
+            "name": KEY_LIGHT_NAME,
             "directional": "true",
             "castshadow": "false",
             "pos": "0 0 12",
@@ -188,6 +478,7 @@ def _build_field_xml(
         worldbody,
         "light",
         {
+            "name": FILL_LIGHT_NAME,
             "directional": "true",
             "castshadow": "false",
             "pos": "0 0 8",
@@ -203,7 +494,8 @@ def _build_field_xml(
             )
             if not all(0.0 <= value <= 1.0 for value in rgba):
                 raise ExportBlocked(f"visual_meshes[{index}].rgba越界")
-            display_rgba = _display_rgba(rgba)
+            visual_role = str(record.get("visual_role", "cad_structure"))
+            display_rgba = _display_rgba(rgba, visual_role=visual_role)
             material = f"rmuc2026_material_{index}"
             mesh = f"rmuc2026_visual_mesh_{index}"
             ET.SubElement(
@@ -212,8 +504,8 @@ def _build_field_xml(
                 {
                     "name": material,
                     "rgba": " ".join(f"{value:.8g}" for value in display_rgba),
-                    "specular": "0.08",
-                    "shininess": "0.25",
+                    "specular": "0.04",
+                    "shininess": "0.18",
                 },
             )
             ET.SubElement(
@@ -231,7 +523,52 @@ def _build_field_xml(
                     "material": material,
                     "contype": "0",
                     "conaffinity": "0",
-                    "group": "2" if record.get("visual_role") == "base_surface_shell" else "1",
+                    "group": "2" if visual_role == "base_surface_shell" else "1",
+                },
+            )
+        if livery is not None:
+            ET.SubElement(
+                asset,
+                "texture",
+                {
+                    "name": "rmuc2026_surface_guide_texture",
+                    "type": "2d",
+                    "file": livery["texture_file"],
+                },
+            )
+            ET.SubElement(
+                asset,
+                "material",
+                {
+                    "name": "rmuc2026_surface_guide_material",
+                    "texture": "rmuc2026_surface_guide_texture",
+                    "texrepeat": "1 1",
+                    "texuniform": "false",
+                    "rgba": "1 1 1 1",
+                    "specular": "0",
+                    "shininess": "0",
+                    "emission": "0.08",
+                },
+            )
+            ET.SubElement(
+                asset,
+                "mesh",
+                {
+                    "name": "rmuc2026_surface_guide_mesh",
+                    "file": livery["mesh_file"],
+                },
+            )
+            ET.SubElement(
+                worldbody,
+                "geom",
+                {
+                    "name": SURFACE_GUIDE_GEOM_NAME,
+                    "type": "mesh",
+                    "mesh": "rmuc2026_surface_guide_mesh",
+                    "material": "rmuc2026_surface_guide_material",
+                    "contype": "0",
+                    "conaffinity": "0",
+                    "group": str(SURFACE_GUIDE_GEOM_GROUP),
                 },
             )
     ET.SubElement(
@@ -294,7 +631,12 @@ def _file_record(root: Path, relative: str, role: str) -> dict[str, object]:
     }
 
 
-def export_runtime_asset_pack(field_build: Path, output_dir: Path) -> dict[str, Any]:
+def export_runtime_asset_pack(
+    field_build: Path,
+    output_dir: Path,
+    *,
+    include_surface_guide: bool = False,
+) -> dict[str, Any]:
     field_root, source_manifest_path, source_manifest = _load_source_contract(field_build)
     output = output_dir.expanduser().resolve()
     if output.exists():
@@ -308,6 +650,12 @@ def export_runtime_asset_pack(field_build: Path, output_dir: Path) -> dict[str, 
         compact_visual_meshes: list[dict[str, object]] = []
         for index, record_value in enumerate(source_manifest["visual_meshes"]):
             record = _json_object(record_value, f"visual_meshes[{index}]")
+            source_rgba = _finite_numbers(
+                record.get("rgba"),
+                count=4,
+                label=f"visual_meshes[{index}].rgba",
+            )
+            visual_role = str(record.get("visual_role", "cad_structure"))
             relative, source, _digest = _source_file(
                 field_root,
                 record.get("file"),
@@ -323,17 +671,15 @@ def export_runtime_asset_pack(field_build: Path, output_dir: Path) -> dict[str, 
                     "file": relative,
                     "sha256": str(record["sha256"]),
                     "material_id": str(record.get("material_id", f"mesh_{index}")),
-                    "rgba": _finite_numbers(
-                        record.get("rgba"),
-                        count=4,
-                        label=f"visual_meshes[{index}].rgba",
-                    ),
-                    "visual_role": str(record.get("visual_role", "cad_structure")),
+                    "rgba": source_rgba,
+                    "display_rgba": _display_rgba(source_rgba, visual_role=visual_role),
+                    "visual_role": visual_role,
                 }
             )
 
         collision = _json_object(source_manifest.get("collision"), "collision")
         copied_collision: list[tuple[str, str]] = []
+        collision_sources: dict[str, Path] = {}
         for file_key, hash_key, suffix, role in (
             ("image_file", "image_sha256", ".png", "heightfield_bootstrap_png"),
             ("samples_file", "samples_sha256", ".npz", "heightfield_float_samples"),
@@ -348,9 +694,68 @@ def export_runtime_asset_pack(field_build: Path, output_dir: Path) -> dict[str, 
             destination.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(source, destination)
             copied_collision.append((relative, role))
+            collision_sources[file_key] = source
+
+        livery_xml: dict[str, str] | None = None
+        livery_manifest: dict[str, object] | None = None
+        livery_files: list[dict[str, object]] = []
+        if include_surface_guide:
+            source_surface = _source_surface_guide(field_root, source_manifest)
+            texture_destination = staging / SURFACE_GUIDE_TEXTURE_FILE
+            texture_destination.parent.mkdir(parents=True, exist_ok=True)
+            world_bounds = np.asarray(source_surface["world_bounds_xy_m"], dtype=np.float64)
+            # Keep the complete opaque rulebook render. It already has bounded,
+            # neutral edge pixels, so direct byte preservation avoids both the
+            # transparent black fringe seen in filtered overlays and any colour
+            # loss from another image encode.
+            shutil.copyfile(source_surface["source_path"], texture_destination)
+            mesh_destination = staging / SURFACE_GUIDE_MESH_FILE
+            recommended_spawn = _json_object(
+                source_manifest.get("recommended_spawn"), "recommended_spawn"
+            )
+            _write_surface_guide_mesh(
+                mesh_destination,
+                samples_path=collision_sources["samples_file"],
+                collision=collision,
+                recommended_spawn=recommended_spawn,
+                world_bounds_xy_m=world_bounds,
+            )
+            livery_xml = {
+                "mesh_file": SURFACE_GUIDE_MESH_FILE,
+                "texture_file": SURFACE_GUIDE_TEXTURE_FILE,
+            }
+            livery_manifest = {
+                "kind": SURFACE_GUIDE_KIND,
+                "geom_name": SURFACE_GUIDE_GEOM_NAME,
+                "geom_group": SURFACE_GUIDE_GEOM_GROUP,
+                "default_visible": False,
+                "toggle_key": "G",
+                "physics": False,
+                "mesh_file": SURFACE_GUIDE_MESH_FILE,
+                "mesh_sha256": sha256_file(mesh_destination),
+                "texture_file": SURFACE_GUIDE_TEXTURE_FILE,
+                "texture_sha256": sha256_file(texture_destination),
+                "contains_baked_scene_content": list(SURFACE_GUIDE_BAKED_CONTENT),
+            }
+            livery_files.extend(
+                (
+                    _file_record(staging, SURFACE_GUIDE_MESH_FILE, "surface_guide_visual_mesh"),
+                    _file_record(
+                        staging,
+                        SURFACE_GUIDE_TEXTURE_FILE,
+                        "official_rulebook_surface_texture",
+                    ),
+                )
+            )
 
         xml_path = staging / OUTPUT_XML
-        xml_path.write_bytes(_build_field_xml(source_manifest, include_visual_meshes=True))
+        xml_path.write_bytes(
+            _build_field_xml(
+                source_manifest,
+                include_visual_meshes=True,
+                livery=livery_xml,
+            )
+        )
         collision_xml_path = staging / OUTPUT_COLLISION_ONLY_XML
         collision_xml_path.write_bytes(
             _build_field_xml(source_manifest, include_visual_meshes=False)
@@ -361,6 +766,7 @@ def export_runtime_asset_pack(field_build: Path, output_dir: Path) -> dict[str, 
         ]
         files.extend(visual_records)
         files.extend(_file_record(staging, relative, role) for relative, role in copied_collision)
+        files.extend(livery_files)
 
         source_identity = _json_object(source_manifest.get("source"), "source")
         scope = _json_object(source_manifest.get("validation_scope"), "validation_scope")
@@ -368,8 +774,38 @@ def export_runtime_asset_pack(field_build: Path, output_dir: Path) -> dict[str, 
             source_manifest.get("recommended_spawn"), "recommended_spawn"
         )
         dimensions = _json_object(source_manifest.get("dimensions"), "dimensions")
+        compact_collision: dict[str, Any] = {
+            "kind": collision.get("kind"),
+            "image_file": str(collision["image_file"]),
+            "image_sha256": str(collision["image_sha256"]),
+            "samples_file": str(collision["samples_file"]),
+            "samples_sha256": str(collision["samples_sha256"]),
+            "rows_y": int(collision["rows_y"]),
+            "columns_x": int(collision["columns_x"]),
+            "half_size_xy_m": _finite_numbers(
+                collision.get("half_size_xy_m"), count=2, label="collision.half_size_xy_m"
+            ),
+            "geom_center_after_translation_m": _finite_numbers(
+                collision.get("geom_center_after_translation_m"),
+                count=3,
+                label="collision.geom_center_after_translation_m",
+            ),
+            "maximum_height_m": float(collision["maximum_height_m"]),
+            "minimum_height_m": float(collision.get("minimum_height_m", 0.0)),
+            "base_depth_m": float(collision["base_depth_m"]),
+            "resolution_m": float(collision.get("resolution_m", math.nan)),
+            "png_rows": collision.get("png_rows"),
+            "claim_boundary": collision.get("claim_boundary"),
+        }
+        fixed_ramp_audit = collision.get("fixed_fly_ramp_audit")
+        if fixed_ramp_audit is not None:
+            if not isinstance(fixed_ramp_audit, dict):
+                raise ExportBlocked("collision.fixed_fly_ramp_audit必须是对象")
+            compact_collision["fixed_fly_ramp_audit"] = json.loads(
+                json.dumps(fixed_ramp_audit, allow_nan=False)
+            )
         compact_manifest: dict[str, Any] = {
-            "schema_version": 1,
+            "schema_version": OUTPUT_SCHEMA_VERSION,
             "artifact_type": OUTPUT_ARTIFACT_TYPE,
             "status": "PASS",
             "validation_status": "DRAFT_BLOCKED",
@@ -386,29 +822,27 @@ def export_runtime_asset_pack(field_build: Path, output_dir: Path) -> dict[str, 
                 "asset_included_in_source_repository": False,
             },
             "visual_meshes": compact_visual_meshes,
-            "collision": {
-                "kind": collision.get("kind"),
-                "image_file": str(collision["image_file"]),
-                "image_sha256": str(collision["image_sha256"]),
-                "samples_file": str(collision["samples_file"]),
-                "samples_sha256": str(collision["samples_sha256"]),
-                "rows_y": int(collision["rows_y"]),
-                "columns_x": int(collision["columns_x"]),
-                "half_size_xy_m": _finite_numbers(
-                    collision.get("half_size_xy_m"), count=2, label="collision.half_size_xy_m"
-                ),
-                "geom_center_after_translation_m": _finite_numbers(
-                    collision.get("geom_center_after_translation_m"),
-                    count=3,
-                    label="collision.geom_center_after_translation_m",
-                ),
-                "maximum_height_m": float(collision["maximum_height_m"]),
-                "minimum_height_m": float(collision.get("minimum_height_m", 0.0)),
-                "base_depth_m": float(collision["base_depth_m"]),
-                "resolution_m": float(collision.get("resolution_m", math.nan)),
-                "png_rows": collision.get("png_rows"),
-                "claim_boundary": collision.get("claim_boundary"),
+            "visual_display": {
+                "profile": PUBLIC_DISPLAY_PROFILE,
+                "source_rgba_preserved_in_visual_meshes_rgba": True,
+                "display_rgba_recorded_per_visual_mesh": True,
+                "black_floor": PUBLIC_DISPLAY_RGB_BLACK_FLOOR,
+                "white_ceiling": PUBLIC_DISPLAY_RGB_WHITE_CEILING,
+                "gamma": PUBLIC_DISPLAY_RGB_GAMMA,
+                "base_surface_scale": PUBLIC_DISPLAY_BASE_SURFACE_SCALE,
+                "primary_light_casts_shadow": False,
+                "physics_changed": False,
+                "lighting": {
+                    "key_light_name": KEY_LIGHT_NAME,
+                    "fill_light_name": FILL_LIGHT_NAME,
+                    "default_mode": "flat",
+                    "modes": ["flat", "shadow"],
+                    "toggle_key": "L",
+                    "physics_changed": False,
+                },
             },
+            "visual_layers": ({"livery": livery_manifest} if livery_manifest else {}),
+            "collision": compact_collision,
             "coordinate_frame": {
                 "world_units": "metre-radian-kilogram-second",
                 "z_up": True,
@@ -468,7 +902,8 @@ def export_runtime_asset_pack(field_build: Path, output_dir: Path) -> dict[str, 
             },
             "excluded": {
                 "colored_intermediate_glb": True,
-                "official_rulebook_screenshot": True,
+                "official_rulebook_screenshot": not include_surface_guide,
+                "rulebook_derived_ground_marking_overlay": True,
                 "source_step": True,
                 "telemetry_or_video": True,
             },
@@ -537,6 +972,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="导出可搬运的RMUC 2026 MuJoCo场地资产包")
     parser.add_argument("--field-build", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument("--include-surface-guide", action="store_true")
     parser.add_argument("--preview", action="store_true")
     return parser.parse_args()
 
@@ -551,7 +987,11 @@ def main() -> int:
                 )
             )
             return 0
-        result = export_runtime_asset_pack(args.field_build, args.output_dir)
+        result = export_runtime_asset_pack(
+            args.field_build,
+            args.output_dir,
+            include_surface_guide=args.include_surface_guide,
+        )
         print("RMUC2026_MUJOCO_ASSET_EXPORT=PASS")
         print(f"完成：{args.output_dir.expanduser().resolve()}")
         print(

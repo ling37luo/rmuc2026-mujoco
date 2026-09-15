@@ -17,7 +17,7 @@
     "distribution"
   ],
   "properties": {
-    "schema_version": {"const": 1},
+    "schema_version": {"enum": [1, 2]},
     "artifact_type": {"const": "rmuc2026_mujoco_runtime_asset_pack"},
     "status": {"const": "PASS"},
     "validation_status": {"const": "DRAFT_BLOCKED"},
@@ -56,10 +56,212 @@
             "maxItems": 4,
             "items": {"type": "number", "minimum": 0, "maximum": 1}
           },
+          "display_rgba": {
+            "type": "array",
+            "minItems": 4,
+            "maxItems": 4,
+            "items": {"type": "number", "minimum": 0, "maximum": 1}
+          },
           "visual_role": {"type": "string", "minLength": 1}
         },
         "additionalProperties": true
       }
+    },
+    "visual_display": {
+      "type": "object",
+      "properties": {
+        "profile": {"const": "cad_source_contrast_v2"},
+        "source_rgba_preserved_in_visual_meshes_rgba": {"const": true},
+        "display_rgba_recorded_per_visual_mesh": {"const": true},
+        "physics_changed": {"const": false},
+        "lighting": {
+          "type": "object",
+          "required": [
+            "key_light_name",
+            "fill_light_name",
+            "default_mode",
+            "modes",
+            "toggle_key",
+            "physics_changed"
+          ],
+          "properties": {
+            "key_light_name": {"const": "rmuc2026_key_light"},
+            "fill_light_name": {"const": "rmuc2026_fill_light"},
+            "default_mode": {"const": "flat"},
+            "modes": {"const": ["flat", "shadow"]},
+            "toggle_key": {"const": "L"},
+            "physics_changed": {"const": false}
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": true
+    },
+    "visual_layers": {
+      "type": "object",
+      "description": "Optional local-only display layers. Current schema-2 exporters retain the complete rulebook overhead render; readers also accept the earlier filtered-marking schema-2 variant.",
+      "properties": {
+        "livery": {
+          "oneOf": [
+            {
+              "title": "Complete rulebook overhead livery",
+              "description": "The complete locally extracted overhead render, including baked robots, field modules, obstacles, and shadows.",
+              "type": "object",
+              "required": [
+                "kind", "geom_name", "geom_group", "default_visible", "toggle_key",
+                "physics", "mesh_file", "mesh_sha256", "texture_file", "texture_sha256",
+                "contains_baked_scene_content"
+              ],
+              "properties": {
+                "kind": {"const": "official_rulebook_overhead_render_surface_guide"},
+                "geom_name": {"const": "rmuc2026_surface_guide"},
+                "geom_group": {"const": 4},
+                "default_visible": {"const": false},
+                "toggle_key": {"const": "G"},
+                "physics": {"const": false},
+                "mesh_file": {"type": "string", "pattern": "\\.obj$"},
+                "mesh_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+                "texture_file": {"type": "string", "pattern": "\\.png$"},
+                "texture_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+                "contains_baked_scene_content": {
+                  "const": [
+                    "fixed field-module appearance", "obstacle appearance", "robots", "shadows"
+                  ]
+                }
+              },
+              "additionalProperties": false
+            },
+            {
+              "title": "Earlier filtered ground-marking livery",
+              "description": "Read compatibility for schema-2 packs that retained only selected chromatic markings.",
+              "deprecated": true,
+              "type": "object",
+              "required": [
+                "kind", "geom_name", "geom_group", "default_visible", "toggle_key",
+                "physics", "mesh_file", "mesh_sha256", "texture_file", "texture_sha256",
+                "source_kind", "source_contains_baked_scene_content", "processing",
+                "surface_sampling", "known_limitations"
+              ],
+              "properties": {
+                "kind": {"const": "rulebook_derived_ground_marking_overlay"},
+                "geom_name": {"const": "rmuc2026_surface_guide"},
+                "geom_group": {"const": 4},
+                "default_visible": {"const": false},
+                "toggle_key": {"const": "G"},
+                "physics": {"const": false},
+                "mesh_file": {"type": "string", "pattern": "\\.obj$"},
+                "mesh_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+                "texture_file": {"type": "string", "pattern": "\\.png$"},
+                "texture_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+                "source_kind": {"const": "official_rulebook_overhead_render_surface_guide"},
+                "source_contains_baked_scene_content": {
+                  "const": [
+                    "fixed field-module appearance", "obstacle appearance", "robots", "shadows"
+                  ]
+                },
+                "processing": {
+                  "type": "object",
+                  "required": [
+                    "algorithm", "output_mode", "retained_content", "removed_by_design",
+                    "minimum_component_span_m", "minimum_component_area_m2", "input_size_px",
+                    "input_pixels", "strong_candidate_pixels", "retained_pixels",
+                    "transparent_pixels", "retained_fraction",
+                    "transparent_rgb_edge_bleed_radius_px",
+                    "transparent_rgb_edge_bleed_pixels", "components"
+                  ],
+                  "properties": {
+                    "algorithm": {"const": "chromatic_component_filter_v1"},
+                    "output_mode": {"const": "rgba_with_transparent_non_markings"},
+                    "retained_content": {
+                      "const": [
+                        "red ground markings", "blue ground markings", "orange ground markings"
+                      ]
+                    },
+                    "removed_by_design": {
+                      "const": [
+                        "neutral floor texture", "grayscale fixed field-module appearance",
+                        "grayscale obstacle appearance", "grayscale robots", "grayscale shadows"
+                      ]
+                    },
+                    "minimum_component_span_m": {"const": 0.45},
+                    "minimum_component_area_m2": {"const": 0.002},
+                    "input_size_px": {
+                      "type": "array", "prefixItems": [{"type": "integer"}, {"type": "integer"}],
+                      "minItems": 2, "maxItems": 2
+                    },
+                    "input_pixels": {"type": "integer", "minimum": 4},
+                    "strong_candidate_pixels": {"type": "integer", "minimum": 1},
+                    "retained_pixels": {"type": "integer", "minimum": 1},
+                    "transparent_pixels": {"type": "integer", "minimum": 0},
+                    "retained_fraction": {"type": "number", "exclusiveMinimum": 0, "maximum": 1},
+                    "transparent_rgb_edge_bleed_radius_px": {"const": 4},
+                    "transparent_rgb_edge_bleed_pixels": {"type": "integer", "minimum": 0},
+                    "components": {
+                      "type": "object",
+                      "required": ["detected", "retained", "rejected"],
+                      "properties": {
+                        "detected": {"type": "integer", "minimum": 1},
+                        "retained": {"type": "integer", "minimum": 1},
+                        "rejected": {"type": "integer", "minimum": 0}
+                      },
+                      "additionalProperties": false
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                "surface_sampling": {
+                  "type": "object",
+                  "required": [
+                    "method", "target_spacing_m", "actual_max_spacing_xy_m", "clearance_m",
+                    "maximum_surface_height_m", "maximum_cell_height_delta_m", "vertices",
+                    "faces", "omitted_cells", "cell_count", "marking_cells",
+                    "transparent_cells", "height_filtered_marking_cells", "mesh_size_bytes",
+                    "boundary_xy_height_interpolation", "source_texture_alpha_drives_topology"
+                  ],
+                  "properties": {
+                    "method": {
+                      "const": "sparse_marking_driven_5cm_mujoco_triangle_height_sampling"
+                    },
+                    "target_spacing_m": {"const": 0.05},
+                    "actual_max_spacing_xy_m": {
+                      "type": "array",
+                      "prefixItems": [
+                        {"type": "number", "exclusiveMinimum": 0, "maximum": 0.05},
+                        {"type": "number", "exclusiveMinimum": 0, "maximum": 0.05}
+                      ],
+                      "minItems": 2,
+                      "maxItems": 2
+                    },
+                    "clearance_m": {"const": 0.018},
+                    "maximum_surface_height_m": {"const": 0.7},
+                    "maximum_cell_height_delta_m": {"const": 0.2},
+                    "vertices": {"type": "integer", "minimum": 4},
+                    "faces": {"type": "integer", "minimum": 2},
+                    "omitted_cells": {"type": "integer", "minimum": 0},
+                    "cell_count": {"type": "integer", "minimum": 1},
+                    "marking_cells": {"type": "integer", "minimum": 1},
+                    "transparent_cells": {"type": "integer", "minimum": 0},
+                    "height_filtered_marking_cells": {"type": "integer", "minimum": 0},
+                    "mesh_size_bytes": {"type": "integer", "minimum": 1},
+                    "boundary_xy_height_interpolation": {"const": true},
+                    "source_texture_alpha_drives_topology": {"const": true}
+                  },
+                  "additionalProperties": false
+                },
+                "known_limitations": {
+                  "const": [
+                    "chromatic non-ground details can remain when large enough or connected to a retained marking",
+                    "low-saturation and white ground markings are deliberately omitted",
+                    "the rulebook image uses an outer-bounds fit rather than a surveyed homography"
+                  ]
+                }
+              },
+              "additionalProperties": false
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
     },
     "collision": {
       "type": "object",
@@ -180,5 +382,24 @@
       "additionalProperties": false
     }
   },
+  "allOf": [
+    {
+      "if": {"properties": {"schema_version": {"const": 2}}},
+      "then": {
+        "required": ["visual_display", "visual_layers"],
+        "properties": {
+          "visual_display": {
+            "required": [
+              "profile",
+              "source_rgba_preserved_in_visual_meshes_rgba",
+              "display_rgba_recorded_per_visual_mesh",
+              "physics_changed",
+              "lighting"
+            ]
+          }
+        }
+      }
+    }
+  ],
   "additionalProperties": true
 }

@@ -32,7 +32,9 @@ runtime_output/
 tensorboard/
 wandb/
 asset-pack*/
+local-rmuc2026-field/
 *.log
+MUJOCO_LOG.TXT
 
 # Third-party and official-source-derived field material must never be committed.
 *.stp

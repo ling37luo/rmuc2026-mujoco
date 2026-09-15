@@ -19,6 +19,7 @@ from .download import (
     download_official_step,
     verify_official_step,
 )
+from .display import FieldDisplayController
 from .errors import (
     AssetIntegrityError,
     ManifestError,
@@ -66,6 +67,7 @@ __all__ = [
     "FIELD_ATTACH_PREFIX",
     "FIELD_COLLISION_GEOM_NAME",
     "FieldAsset",
+    "FieldDisplayController",
     "HEIGHTFIELD_CLAIM_BOUNDARY",
     "HFIELD_NAME",
     "HeightFieldData",
@@ -108,4 +110,4 @@ __all__ = [
     "verify_official_step",
 ]
 
-__version__ = "0.2.0.dev0"
+__version__ = "0.2.0a1"

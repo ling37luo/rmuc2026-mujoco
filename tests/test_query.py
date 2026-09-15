@@ -137,6 +137,31 @@ def test_surface_query_rejects_outside_and_invalid_window(field_asset_dir: Path)
         surface_at(asset, 0.0, 0.0, window_radius_m=-0.1)
 
 
+@pytest.mark.parametrize(
+    ("x", "y", "radius", "rise"),
+    [
+        (0.2, 0.2, 0.09, 0.04),  # local bump, distant steeper peak excluded
+        (0.7, 0.7, 0.0, 0.0),  # zero-radius flat window
+        (1.0, 1.0, 0.2, 0.0),  # clipped window at the field corner
+        (0.2, 0.2, 10.0, 0.2),  # window covering the entire field
+    ],
+)
+def test_surface_window_is_local_and_preserves_edge_geometry(
+    field_asset_dir: Path, x: float, y: float, radius: float, rise: float
+) -> None:
+    axis = np.linspace(-1.0, 1.0, 21)
+    height = np.zeros((21, 21), dtype=np.float64)
+    height[2, 2] = 0.2
+    height[12, 12] = 0.04
+    _replace_heightfield(field_asset_dir, world_x=axis, world_y=axis, world_height=height)
+
+    sample = surface_at(FieldAsset.open(field_asset_dir), x, y, window_radius_m=radius)
+
+    expected_slope = np.degrees(np.arctan(np.sqrt(2.0) * rise / 0.1))
+    assert sample.maximum_window_slope_deg == pytest.approx(expected_slope, abs=1e-10)
+    assert sample.local_relief_upper_bound_m == pytest.approx(rise, abs=1e-12)
+
+
 def test_spawn_candidates_are_deterministic_separated_and_explicitly_limited(
     field_asset_dir: Path,
 ) -> None:

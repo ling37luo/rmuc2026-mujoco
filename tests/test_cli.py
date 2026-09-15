@@ -1,10 +1,20 @@
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
+import threading
+
+import pytest
 
 from rmuc2026_mujoco import DownloadedStep, FieldAsset
-from rmuc2026_mujoco.cli import _configure_camera, build_parser, main
+from rmuc2026_mujoco.cli import (
+    _configure_camera,
+    _start_display_key_listener,
+    build_parser,
+    main,
+)
+from rmuc2026_mujoco.download import DownloadedRulebook
 
 
 def test_verify_cli_emits_machine_readable_pass(field_asset_dir: Path, capsys) -> None:
@@ -41,10 +51,11 @@ def test_source_cli_is_read_only_and_reports_unverified_redistribution(capsys) -
 
 
 def test_setup_cli_has_a_safe_user_cache_default() -> None:
-    args = build_parser().parse_args(["setup", "local-field-pack", "--acknowledge-reference-only"])
+    args = build_parser().parse_args(["setup", "local-field-pack"])
 
     assert args.step_cache.name == "RMUC2026_V2.0.0.stp"
     assert args.step_cache.parent.name == "rmuc2026-mujoco"
+    assert args.rulebook_cache.name == "RMUC2026_rulebook_V2.0.0.pdf"
     assert args.output == Path("local-field-pack")
 
 
@@ -72,16 +83,165 @@ def test_overview_camera_uses_verified_field_bounds(field_asset_dir: Path) -> No
         azimuth = 0.0
         elevation = 0.0
 
+    class Viewport:
+        width = 1600
+        height = 900
+
+    class Global:
+        fovy = 45.0
+
+    class Visual:
+        global_ = Global()
+
+    class Model:
+        vis = Visual()
+
     class Viewer:
         cam = Camera()
+        viewport = Viewport()
+        m = Model()
 
     viewer = Viewer()
-    _configure_camera(viewer, FieldAsset.open(field_asset_dir), "overview")
+    viewport = _configure_camera(viewer, FieldAsset.open(field_asset_dir), "overview")
 
-    assert viewer.cam.lookat == [0.5, 0.0, 0.0]
-    assert viewer.cam.distance == 2.55
+    assert viewport == (1600, 900)
+    assert viewer.cam.lookat == [0.5, 0.0, 0.75]
+    assert math.isclose(viewer.cam.distance, 6.675981399053374)
     assert viewer.cam.azimuth == 135.0
     assert viewer.cam.elevation == -50.0
+
+    viewer.viewport.width = 600
+    viewer.viewport.height = 900
+    _configure_camera(viewer, FieldAsset.open(field_asset_dir), "overview")
+    assert math.isclose(viewer.cam.distance, 8.880680507502843)
+
+
+def test_display_keys_are_focus_scoped_and_toggle_once_per_press(monkeypatch) -> None:
+    class Key:
+        esc = object()
+        alt = object()
+
+    class Listener:
+        def __init__(self, **callbacks) -> None:
+            self.callbacks = callbacks
+            self.started = False
+
+        def start(self) -> None:
+            self.started = True
+
+        def stop(self) -> None:
+            self.started = False
+
+    class Interceptor:
+        closed = False
+
+        def close(self) -> None:
+            self.closed = True
+
+    class Keyboard:
+        pass
+
+    Keyboard.Key = Key
+    Keyboard.Listener = Listener
+
+    class Character:
+        def __init__(self, char: str) -> None:
+            self.char = char
+
+    class Display:
+        presses: list[str] = []
+
+        def press_name(self, name: str) -> bool:
+            self.presses.append(name)
+            return name in {"L", "G"}
+
+    focused = [True]
+    now = [10.0]
+    monkeypatch.setattr("rmuc2026_mujoco.cli.time.monotonic", lambda: now[0])
+    changed: list[str] = []
+    close_requested = threading.Event()
+    interceptor = Interceptor()
+    listener = _start_display_key_listener(
+        Display(),
+        close_requested,
+        on_change=lambda: changed.append("changed"),
+        focus_check=lambda: focused[0],
+        keyboard_module=Keyboard,
+        key_interceptor=interceptor,
+    )
+    assert listener is not None
+    assert listener.started is True
+    assert listener.callbacks["suppress"] is False
+    press = listener.callbacks["on_press"]
+    release = listener.callbacks["on_release"]
+
+    l_key = Character("l")
+    press(l_key)
+    press(l_key)
+    assert Display.presses == ["L"]
+    assert changed == ["changed"]
+    release(l_key)
+    now[0] += 0.1
+    press(l_key)
+    assert Display.presses == ["L", "L"]
+
+    release(l_key)
+    focused[0] = False
+    g_key = Character("g")
+    press(g_key)
+    focused[0] = True
+    press(g_key)
+    assert Display.presses == ["L", "L"]
+    release(g_key)
+    now[0] += 0.1
+    press(g_key)
+    assert Display.presses == ["L", "L", "G"]
+    release(g_key)
+
+    press(Key.alt)
+    press(l_key)
+    release(l_key)
+    release(Key.alt)
+    assert Display.presses == ["L", "L", "G"]
+
+    focused[0] = False
+    assert press(Key.esc) is None
+    assert close_requested.is_set() is False
+    release(Key.esc)
+    focused[0] = True
+    assert press(Key.esc) is False
+    assert close_requested.is_set() is True
+    listener.stop()
+    assert interceptor.closed is True
+
+
+def test_display_keys_fail_closed_without_selective_native_interception(monkeypatch) -> None:
+    class Keyboard:
+        class Key:
+            esc = object()
+
+        class Listener:
+            def __init__(self, **_callbacks) -> None:
+                raise AssertionError("listener must not start without an interceptor")
+
+    monkeypatch.setattr("rmuc2026_mujoco.cli.create_viewer_key_interceptor", lambda: None)
+
+    assert (
+        _start_display_key_listener(
+            object(),
+            threading.Event(),
+            keyboard_module=Keyboard,
+        )
+        is None
+    )
+
+    with pytest.raises(ValueError, match="must be supplied together"):
+        _start_display_key_listener(
+            object(),
+            threading.Event(),
+            focus_check=lambda: True,
+            keyboard_module=Keyboard,
+        )
 
 
 def test_setup_cli_downloads_then_builds_locally(monkeypatch, tmp_path: Path, capsys) -> None:
@@ -105,6 +265,8 @@ def test_setup_cli_downloads_then_builds_locally(monkeypatch, tmp_path: Path, ca
         assert options == {
             "target_visual_faces": 450_000,
             "heightfield_resolution_m": 0.02,
+            "include_surface_guide": False,
+            "rulebook_pdf": None,
         }
         calls.append(("build", Path(output_dir)))
         return {
@@ -123,7 +285,6 @@ def test_setup_cli_downloads_then_builds_locally(monkeypatch, tmp_path: Path, ca
                 str(output),
                 "--step-cache",
                 str(step),
-                "--acknowledge-reference-only",
             ]
         )
         == 0
@@ -142,12 +303,91 @@ def test_setup_cli_rejects_unsafe_build_resolution(tmp_path: Path, capsys) -> No
                 str(tmp_path / "output"),
                 "--heightfield-resolution",
                 "0.5",
-                "--acknowledge-reference-only",
             ]
         )
         == 2
     )
-    assert "within [0.02, 0.10]" in capsys.readouterr().err
+    assert "within [0.01, 0.10]" in capsys.readouterr().err
+
+
+def test_setup_with_surface_guide_downloads_verified_rulebook(
+    monkeypatch, tmp_path: Path, capsys
+) -> None:
+    step = tmp_path / "cache" / "RMUC2026_V2.0.0.stp"
+    rulebook = tmp_path / "cache" / "rulebook.pdf"
+    output = tmp_path / "runtime-pack"
+    calls: list[str] = []
+
+    monkeypatch.setattr(
+        "rmuc2026_mujoco.cli.download_official_step",
+        lambda *_args, **_kwargs: DownloadedStep(
+            step,
+            1_254_821_405,
+            "8dfe9ebd761e44d91361b3e593bc05416329112217b58cb35800b3cde2ffae33",
+            True,
+        ),
+    )
+
+    def fake_rulebook(destination, **_kwargs):
+        calls.append("rulebook")
+        assert Path(destination) == rulebook
+        return DownloadedRulebook(rulebook, 21_012_597, "5" * 64, False)
+
+    def fake_build(step_path, output_dir, **options):
+        calls.append("build")
+        assert Path(step_path) == step
+        assert Path(output_dir) == output
+        assert options["include_surface_guide"] is True
+        assert options["rulebook_pdf"] == rulebook
+        assert options["heightfield_resolution_m"] == 0.01
+        return {
+            "artifact_type": "rmuc2026_mujoco_runtime_asset_pack",
+            "status": "PASS",
+            "validation_status": "DRAFT_BLOCKED",
+        }
+
+    monkeypatch.setattr(
+        "rmuc2026_mujoco.cli.download_official_rulebook_v2_0_0",
+        fake_rulebook,
+    )
+    monkeypatch.setattr("rmuc2026_mujoco.cli.build_runtime_asset_pack", fake_build)
+
+    assert (
+        main(
+            [
+                "setup",
+                str(output),
+                "--step-cache",
+                str(step),
+                "--rulebook-cache",
+                str(rulebook),
+                "--heightfield-resolution",
+                "0.01",
+                "--include-surface-guide",
+            ]
+        )
+        == 0
+    )
+    result = json.loads(capsys.readouterr().out)
+    assert calls == ["rulebook", "build"]
+    assert result["official_rulebook_reused"] is False
+
+
+def test_build_surface_guide_requires_local_rulebook(tmp_path: Path, capsys) -> None:
+    assert (
+        main(
+            [
+                "build",
+                "--step",
+                str(tmp_path / "field.step"),
+                "--output",
+                str(tmp_path / "pack"),
+                "--include-surface-guide",
+            ]
+        )
+        == 2
+    )
+    assert "--rulebook is required" in capsys.readouterr().err
 
 
 def test_surface_cli_emits_geometry_and_claim_boundary(

@@ -25,6 +25,15 @@ OFFICIAL_STEP_SHA256 = "8dfe9ebd761e44d91361b3e593bc05416329112217b58cb35800b3cd
 OFFICIAL_STEP_PRODUCT = "00_RMUC2026_FINALS_ASM"
 OFFICIAL_SOURCE_PAGE = "https://bbs.robomaster.com/article/814728?source=8"
 OFFICIAL_RULE_CENTRE = "https://bbs.robomaster.com/wiki/20204847/809871?source=7"
+OFFICIAL_RULEBOOK_V2_0_0_URL = (
+    "https://bbs-web-static.robomaster.com/"
+    "5fbd46b110e542faaea519a6dd3065761782460789174/"
+    "RoboMaster%202026%20%E6%9C%BA%E7%94%B2%E5%A4%A7%E5%B8%88%E8%B6%85%E7%BA%A7%"
+    "E5%AF%B9%E6%8A%97%E8%B5%9B%E6%AF%94%E8%B5%9B%E8%A7%84%E5%88%99%E6%89%8B%"
+    "E5%86%8CV2.0.0%EF%BC%8820260626%EF%BC%89.pdf"
+)
+OFFICIAL_RULEBOOK_V2_0_0_SIZE = 21_012_597
+OFFICIAL_RULEBOOK_V2_0_0_SHA256 = "59d65aac5bac75fd6bbab157e224eb936b49cd2b9d60381fbe196fad635b473a"
 LAST_REVIEWED_RULEBOOK_VERSION = "V2.2.0"
 LAST_REVIEWED_RULEBOOK_PUBLICATION_DATE = "2026-08-07"
 LAST_REVIEWED_RULEBOOK_URL = (
@@ -45,6 +54,16 @@ class DownloadError(RuntimeError):
 
 @dataclass(frozen=True)
 class DownloadedStep:
+    path: Path
+    size_bytes: int
+    sha256: str
+    reused: bool
+
+
+@dataclass(frozen=True)
+class DownloadedRulebook:
+    """Identity of the pinned local V2.0.0 rulebook reference."""
+
     path: Path
     size_bytes: int
     sha256: str
@@ -144,7 +163,7 @@ def download_official_step(
     if target.parent.is_symlink():
         raise DownloadError(f"destination parent must not be a symlink: {target.parent}")
 
-    request = Request(OFFICIAL_STEP_URL, headers={"User-Agent": "rmuc2026-mujoco/0.1"})
+    request = Request(OFFICIAL_STEP_URL, headers={"User-Agent": "rmuc2026-mujoco/0.2"})
     temporary_path: Path | None = None
     try:
         with tempfile.NamedTemporaryFile(
@@ -193,7 +212,118 @@ def download_official_step(
             temporary_path.unlink(missing_ok=True)
 
 
+def verify_official_rulebook_v2_0_0(path: Path) -> DownloadedRulebook:
+    """Verify the exact V2.0.0 PDF used by the optional overhead guide."""
+
+    requested = Path(path).expanduser()
+    if requested.is_symlink():
+        raise DownloadError(f"rulebook path must not be a symlink: {requested}")
+    candidate = requested.resolve()
+    if not candidate.is_file():
+        raise DownloadError(f"not a regular rulebook PDF: {candidate}")
+    size = candidate.stat().st_size
+    if size != OFFICIAL_RULEBOOK_V2_0_0_SIZE:
+        raise DownloadError(
+            f"rulebook size mismatch: expected={OFFICIAL_RULEBOOK_V2_0_0_SIZE}, actual={size}"
+        )
+    with candidate.open("rb") as handle:
+        if handle.read(5) != b"%PDF-":
+            raise DownloadError("rulebook file does not have a PDF header")
+    digest = _sha256(candidate)
+    if digest != OFFICIAL_RULEBOOK_V2_0_0_SHA256:
+        raise DownloadError(
+            "rulebook SHA-256 mismatch: "
+            f"expected={OFFICIAL_RULEBOOK_V2_0_0_SHA256}, actual={digest}"
+        )
+    return DownloadedRulebook(candidate, size, digest, reused=True)
+
+
+def download_official_rulebook_v2_0_0(
+    destination: Path,
+    *,
+    acknowledge_reference_only: bool,
+    progress: Callable[[int, int], None] | None = None,
+    timeout_seconds: float = 60.0,
+) -> DownloadedRulebook:
+    """Download and verify the exact official PDF used by the local surface guide."""
+
+    if not acknowledge_reference_only:
+        raise DownloadError(
+            "explicit acknowledgement required: the official rulebook is reference-only "
+            f"material; review {OFFICIAL_RULE_CENTRE}"
+        )
+    requested = Path(destination).expanduser()
+    if requested.is_symlink():
+        raise DownloadError(f"destination must not be a symlink: {requested}")
+    target = requested.resolve()
+    if target.exists():
+        verified = verify_official_rulebook_v2_0_0(target)
+        return DownloadedRulebook(
+            verified.path,
+            verified.size_bytes,
+            verified.sha256,
+            reused=True,
+        )
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if target.parent.is_symlink():
+        raise DownloadError(f"destination parent must not be a symlink: {target.parent}")
+
+    request = Request(
+        OFFICIAL_RULEBOOK_V2_0_0_URL,
+        headers={"User-Agent": "rmuc2026-mujoco/0.2"},
+    )
+    temporary_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w+b",
+            prefix=f".{target.name}.",
+            suffix=".part",
+            dir=target.parent,
+            delete=False,
+        ) as temporary:
+            temporary_path = Path(temporary.name)
+            with urlopen(request, timeout=timeout_seconds) as response:  # noqa: S310
+                size, digest = _copy_and_hash(
+                    response,
+                    temporary,
+                    expected_size=OFFICIAL_RULEBOOK_V2_0_0_SIZE,
+                    progress=progress,
+                )
+        if size != OFFICIAL_RULEBOOK_V2_0_0_SIZE:
+            raise DownloadError(
+                "downloaded rulebook size mismatch: "
+                f"expected={OFFICIAL_RULEBOOK_V2_0_0_SIZE}, actual={size}"
+            )
+        if digest != OFFICIAL_RULEBOOK_V2_0_0_SHA256:
+            raise DownloadError(
+                "downloaded rulebook SHA-256 mismatch: "
+                f"expected={OFFICIAL_RULEBOOK_V2_0_0_SHA256}, actual={digest}"
+            )
+        assert temporary_path is not None
+        if target.exists():
+            raise DownloadError(
+                f"destination appeared during download; refusing overwrite: {target}"
+            )
+        os.replace(temporary_path, target)
+        temporary_path = None
+        verified = verify_official_rulebook_v2_0_0(target)
+        return DownloadedRulebook(
+            verified.path,
+            verified.size_bytes,
+            verified.sha256,
+            reused=False,
+        )
+    except DownloadError:
+        raise
+    except Exception as exc:
+        raise DownloadError(f"official rulebook download failed: {exc}") from exc
+    finally:
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
+
+
 __all__ = [
+    "DownloadedRulebook",
     "DownloadedStep",
     "DownloadError",
     "LAST_REVIEWED_RULEBOOK_PUBLICATION_DATE",
@@ -203,11 +333,16 @@ __all__ = [
     "LAST_REVIEWED_RULEBOOK_VERSION",
     "LAST_RULE_REVIEW_DATE",
     "OFFICIAL_RULE_CENTRE",
+    "OFFICIAL_RULEBOOK_V2_0_0_SHA256",
+    "OFFICIAL_RULEBOOK_V2_0_0_SIZE",
+    "OFFICIAL_RULEBOOK_V2_0_0_URL",
     "OFFICIAL_SOURCE_PAGE",
     "OFFICIAL_STEP_PRODUCT",
     "OFFICIAL_STEP_SHA256",
     "OFFICIAL_STEP_SIZE",
     "OFFICIAL_STEP_URL",
+    "download_official_rulebook_v2_0_0",
     "download_official_step",
+    "verify_official_rulebook_v2_0_0",
     "verify_official_step",
 ]

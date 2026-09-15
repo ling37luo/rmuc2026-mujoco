@@ -23,6 +23,11 @@ source URLs, version identities, hashes, and other provenance metadata only.
 
 ## Collision and model-assembly patterns
 
+- [MuJoCo contact parameter mixing](https://mujoco.readthedocs.io/en/stable/modeling.html#contact-parameters):
+  equal-priority geom friction uses an element-wise maximum. Therefore changing
+  only the field friction can leave low-friction trials ineffective. Our
+  explicit sensitivity mode sets field priority and explicit-pair friction,
+  and reports the solver-parameter precedence as part of the experiment.
 - [MuJoCo XML reference][mujoco-xml] and [model editing][mujoco-edit]: primitive
   collision geometry, contact filtering, explicit bodies/joints, and procedural
   `MjSpec` composition are preferred over one monolithic field mesh.

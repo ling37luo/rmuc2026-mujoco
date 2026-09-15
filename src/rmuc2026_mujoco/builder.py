@@ -48,6 +48,8 @@ def build_runtime_asset_pack(
     *,
     target_visual_faces: int = 450_000,
     heightfield_resolution_m: float = 0.02,
+    include_surface_guide: bool = False,
+    rulebook_pdf: Path | None = None,
     minimum_free_bytes: int = 5 * 1024**3,
 ) -> dict[str, Any]:
     """Create the relocatable runtime pack without retaining the heavy GLB.
@@ -76,7 +78,20 @@ def build_runtime_asset_pack(
             target_visual_faces=target_visual_faces,
             heightfield_resolution_m=heightfield_resolution_m,
         )
-        return export_runtime_asset_pack(full_build, destination)
+        export_source = full_build
+        if include_surface_guide:
+            if rulebook_pdf is None:
+                raise ValueError("rulebook_pdf is required when include_surface_guide is enabled")
+            from ._conversion import decorate_field_build
+
+            decorated_build = temporary_root / "decorated-build"
+            decorate_field_build(full_build, Path(rulebook_pdf), decorated_build)
+            export_source = decorated_build
+        return export_runtime_asset_pack(
+            export_source,
+            destination,
+            include_surface_guide=include_surface_guide,
+        )
     finally:
         shutil.rmtree(temporary_root, ignore_errors=True)
 

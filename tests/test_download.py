@@ -18,6 +18,15 @@ def _patch_identity(monkeypatch: pytest.MonkeyPatch, payload: bytes) -> None:
     monkeypatch.setattr(download, "OFFICIAL_STEP_SHA256", hashlib.sha256(payload).hexdigest())
 
 
+def _patch_rulebook_identity(monkeypatch: pytest.MonkeyPatch, payload: bytes) -> None:
+    monkeypatch.setattr(download, "OFFICIAL_RULEBOOK_V2_0_0_SIZE", len(payload))
+    monkeypatch.setattr(
+        download,
+        "OFFICIAL_RULEBOOK_V2_0_0_SHA256",
+        hashlib.sha256(payload).hexdigest(),
+    )
+
+
 def test_download_requires_explicit_reference_acknowledgement(tmp_path: Path) -> None:
     with pytest.raises(download.DownloadError, match="explicit acknowledgement"):
         download.download_official_step(
@@ -87,3 +96,44 @@ def test_verify_rejects_symlink(tmp_path: Path, monkeypatch: pytest.MonkeyPatch)
 
     with pytest.raises(download.DownloadError, match="symlink"):
         download.verify_official_step(link)
+
+
+def test_rulebook_download_is_atomic_verified_and_reused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    payload = b"%PDF-1.7\nverified official fixture\n%%EOF\n"
+    _patch_rulebook_identity(monkeypatch, payload)
+    calls = 0
+
+    def fake_urlopen(_request: object, *, timeout: float) -> io.BytesIO:
+        nonlocal calls
+        assert timeout == 7.0
+        calls += 1
+        return io.BytesIO(payload)
+
+    monkeypatch.setattr(download, "urlopen", fake_urlopen)
+    destination = tmp_path / "cache" / "rulebook.pdf"
+    first = download.download_official_rulebook_v2_0_0(
+        destination,
+        acknowledge_reference_only=True,
+        timeout_seconds=7.0,
+    )
+    second = download.download_official_rulebook_v2_0_0(
+        destination,
+        acknowledge_reference_only=True,
+    )
+
+    assert first.path == destination.resolve()
+    assert first.reused is False
+    assert second.reused is True
+    assert destination.read_bytes() == payload
+    assert calls == 1
+    assert not list(destination.parent.glob("*.part"))
+
+
+def test_rulebook_download_requires_reference_acknowledgement(tmp_path: Path) -> None:
+    with pytest.raises(download.DownloadError, match="explicit acknowledgement"):
+        download.download_official_rulebook_v2_0_0(
+            tmp_path / "rulebook.pdf",
+            acknowledge_reference_only=False,
+        )

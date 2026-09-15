@@ -108,8 +108,10 @@ def apply_friction_preset(
 ) -> dict[str, object]:
     """Apply an explicitly unofficial field-friction sensitivity preset.
 
-    Only the named field hfield geom is changed. Robot geoms and other world
-    geoms retain their authored friction values.
+    Give the field precedence over robot geoms so low-friction trials really
+    lower contact friction. This also selects the field's solver parameters;
+    the returned audit reports that choice. Explicit pairs involving the field
+    receive the same friction. Robot geom parameters remain unchanged.
     """
 
     try:
@@ -123,7 +125,19 @@ def apply_friction_preset(
     geom_id = int(mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, geom_name))
     if geom_id < 0:
         raise MujocoModelError(f"MuJoCo model does not contain field geom {geom_name!r}")
+    if model.opt.enableflags & int(mujoco.mjtEnableBit.mjENBL_OVERRIDE):
+        raise MujocoModelError("global contact override would mask the field friction preset")
+    other_ids = np.arange(model.ngeom) != geom_id
+    priority = max(0, int(np.max(model.geom_priority[other_ids], initial=0))) + 1
+    # Preserve all authored contact dimensions instead of losing wheel rolling
+    # or torsional friction when the higher-priority field owns the contact.
+    condim = max(3, int(np.max(model.geom_condim, initial=3)))
+    model.geom_priority[geom_id] = priority
+    model.geom_condim[geom_id] = condim
     model.geom_friction[geom_id, :] = values
+    pair_ids = np.flatnonzero((model.pair_geom1 == geom_id) | (model.pair_geom2 == geom_id))
+    pair_values = (values[0], values[0], values[1], values[2], values[2])
+    model.pair_friction[pair_ids, :] = pair_values
     applied = tuple(float(value) for value in model.geom_friction[geom_id, :])
     if not np.allclose(applied, values, rtol=0.0, atol=1.0e-12):
         raise MujocoModelError(f"friction preset {preset!r} was not applied exactly")
@@ -133,6 +147,11 @@ def apply_friction_preset(
         "preset": preset,
         "geom_name": geom_name,
         "friction": list(applied),
+        "contact_priority": priority,
+        "contact_dimension": condim,
+        "explicit_pair_ids": pair_ids.tolist(),
+        "solver_parameter_source": "field geom for dynamic pairs; authored explicit pairs retained",
+        "claim_boundary": "unofficial sensitivity setting, not measured competition material",
     }
 
 

@@ -8,7 +8,7 @@ decorative part into a convex collision object.
 
 from __future__ import annotations
 
-from collections import defaultdict
+from collections import defaultdict, deque
 from dataclasses import dataclass
 import hashlib
 import json
@@ -22,6 +22,8 @@ import time
 from typing import Any, Iterable
 
 import numpy as np
+
+from .ramp_audit import audit_fixed_fly_ramps
 
 
 OFFICIAL_STEP_URL = (
@@ -53,7 +55,8 @@ RECOMMENDED_HEIGHTFIELD_RESOLUTION_M = 0.040
 MIN_FINE_INTERACTION_SAMPLES_PER_WHEEL_DIAMETER = 3.0
 VALIDATION_HEIGHTFIELD_RESOLUTION_M = 0.020
 MIN_VALIDATION_SAMPLES_PER_WHEEL_DIAMETER = 6.0
-MINIMUM_HEIGHTFIELD_RESOLUTION_M = 0.020
+MINIMUM_HEIGHTFIELD_RESOLUTION_M = 0.010
+MAXIMUM_HEIGHTFIELD_SAMPLES = 10_000_000
 HEIGHTFIELD_LARGE_ADJACENT_JUMP_M = 0.20
 
 
@@ -916,6 +919,82 @@ def _mesh_watertight_if_available(mesh: Any) -> bool | None:
         return None
 
 
+def _clean_visual_mesh(
+    mesh: Any,
+    *,
+    vertex_digits: int = 8,
+    minimum_face_area_m2: float = 1.0e-14,
+) -> dict[str, Any]:
+    """Remove renderer-hostile duplicate data without changing visible geometry.
+
+    Official CAD exports repeat many vertices and sometimes repeat the same
+    triangle with opposite winding.  MuJoCo's shadow mapping is particularly
+    sensitive to those coincident faces.  The tolerance here is ten nanometres
+    in the axis-normalized metre frame, far below the source and heightfield
+    precision, so this cleanup cannot act as geometric simplification.
+    """
+
+    input_vertices = int(len(mesh.vertices))
+    input_faces = int(len(mesh.faces))
+    input_bounds = np.asarray(mesh.bounds, dtype=np.float64)
+    input_area = float(mesh.area)
+    if input_faces <= 0 or not np.isfinite(input_bounds).all() or not math.isfinite(input_area):
+        raise FieldBuildError("视觉网格清理要求有限且非空的输入几何")
+
+    mesh.merge_vertices(digits_vertex=vertex_digits)
+    after_vertex_merge = int(len(mesh.vertices))
+
+    face_areas = np.asarray(mesh.area_faces, dtype=np.float64)
+    valid_faces = np.isfinite(face_areas) & (face_areas > minimum_face_area_m2)
+    invalid_faces_removed = int(len(valid_faces) - np.count_nonzero(valid_faces))
+    if invalid_faces_removed:
+        mesh.update_faces(valid_faces)
+
+    unique_faces = np.asarray(mesh.unique_faces(), dtype=bool)
+    duplicate_faces_removed = int(len(unique_faces) - np.count_nonzero(unique_faces))
+    if duplicate_faces_removed:
+        mesh.update_faces(unique_faces)
+    mesh.remove_unreferenced_vertices()
+
+    winding_consistent_before_repair = bool(mesh.is_winding_consistent)
+    if not winding_consistent_before_repair:
+        mesh.fix_normals(multibody=True)
+    winding_consistent_after_repair = bool(mesh.is_winding_consistent)
+
+    output_bounds = np.asarray(mesh.bounds, dtype=np.float64)
+    output_area = float(mesh.area)
+    output_face_areas = np.asarray(mesh.area_faces, dtype=np.float64)
+    if (
+        len(mesh.faces) <= 0
+        or not np.isfinite(mesh.vertices).all()
+        or not np.isfinite(output_bounds).all()
+        or not math.isfinite(output_area)
+        or not np.isfinite(output_face_areas).all()
+        or np.any(output_face_areas <= minimum_face_area_m2)
+        or not np.all(mesh.unique_faces())
+    ):
+        raise FieldBuildError("视觉网格清理产生无效几何")
+
+    return {
+        "algorithm": "merge_10nm_vertices_remove_degenerate_and_duplicate_faces_repair_winding",
+        "vertex_decimal_digits_m": vertex_digits,
+        "minimum_face_area_m2": minimum_face_area_m2,
+        "input_vertices": input_vertices,
+        "output_vertices": int(len(mesh.vertices)),
+        "merged_vertices": input_vertices - after_vertex_merge,
+        "unreferenced_vertices_removed": after_vertex_merge - int(len(mesh.vertices)),
+        "input_faces": input_faces,
+        "output_faces": int(len(mesh.faces)),
+        "invalid_faces_removed": invalid_faces_removed,
+        "duplicate_faces_removed": duplicate_faces_removed,
+        "input_surface_area_m2": input_area,
+        "output_surface_area_m2": output_area,
+        "bounds_max_abs_change_m": float(np.max(np.abs(output_bounds - input_bounds))),
+        "winding_consistent_before_repair": winding_consistent_before_repair,
+        "winding_consistent_after_repair": winding_consistent_after_repair,
+    }
+
+
 def _simplify_parts_then_group(
     meshes: list[Any],
     output: Path,
@@ -1006,7 +1085,7 @@ def _simplify_parts_then_group(
             faces=np.asarray(original.faces, dtype=np.int64).copy(),
             process=False,
         )
-        working.remove_unreferenced_vertices()
+        cleanup_before_simplification = _clean_visual_mesh(working)
         wanted = int(row["target_faces"])
         if len(working.faces) > wanted:
             try:
@@ -1017,7 +1096,7 @@ def _simplify_parts_then_group(
                     f"part={row['index']}, faces={len(original.faces)}, "
                     f"target={wanted}, error={type(exc).__name__}: {exc}"
                 ) from exc
-        working.remove_unreferenced_vertices()
+        cleanup_after_simplification = _clean_visual_mesh(working)
         if (
             len(working.faces) <= 0
             or len(working.faces) > len(original.faces)
@@ -1038,9 +1117,13 @@ def _simplify_parts_then_group(
                 "input_vertices": int(row["input_vertices"]),
                 "output_vertices": int(len(working.vertices)),
                 "input_faces": int(row["input_faces"]),
+                "cleaned_input_faces": int(cleanup_before_simplification["output_faces"]),
                 "target_faces": wanted,
                 "output_faces": int(len(working.faces)),
                 "input_surface_area_m2": float(row["input_area_m2"]),
+                "cleaned_input_surface_area_m2": float(
+                    cleanup_before_simplification["output_surface_area_m2"]
+                ),
                 "output_surface_area_m2": float(working.area),
                 "input_bounds_m": input_bounds.tolist(),
                 "output_bounds_m": output_bounds.tolist(),
@@ -1052,6 +1135,10 @@ def _simplify_parts_then_group(
                 "output_is_watertight": _mesh_watertight_if_available(working),
                 "xy_bbox_area_m2": float(row["xy_bbox_area_m2"]),
                 "protection_reasons": list(row["protection_reasons"]),
+                "visual_cleanup": {
+                    "before_simplification": cleanup_before_simplification,
+                    "after_simplification": cleanup_after_simplification,
+                },
             }
         )
 
@@ -1070,7 +1157,7 @@ def _simplify_parts_then_group(
             row for row in candidates if row["rgba8"] == rgba8 and row["visual_role"] == visual_role
         ]
         merged = trimesh.util.concatenate(simplified_by_role_and_rgba[(visual_role, rgba8)])
-        merged.remove_unreferenced_vertices()
+        group_cleanup = _clean_visual_mesh(merged)
         path = visual_dir / f"rmuc2026_{material_id}.obj"
         merged.export(path, file_type="obj", include_color=False)
         final_meshes.append(merged)
@@ -1089,6 +1176,7 @@ def _simplify_parts_then_group(
             "vertices": int(len(merged.vertices)),
             "input_surface_area_m2": sum(float(row["input_area_m2"]) for row in source_rows),
             "output_surface_area_m2": float(merged.area),
+            "visual_cleanup": group_cleanup,
         }
         records.append(record)
 
@@ -1100,9 +1188,9 @@ def _simplify_parts_then_group(
     output_extents = output_bounds[1] - output_bounds[0]
     area_retention = float(output_metrics["surface_area_m2"] / raw_metrics["surface_area_m2"])
     protected_exact = all(
-        row["input_faces"] == row["output_faces"]
+        row["cleaned_input_faces"] == row["output_faces"]
         and math.isclose(
-            float(row["input_surface_area_m2"]),
+            float(row["cleaned_input_surface_area_m2"]),
             float(row["output_surface_area_m2"]),
             rel_tol=1.0e-12,
             abs_tol=1.0e-12,
@@ -1121,6 +1209,15 @@ def _simplify_parts_then_group(
         ),
         "face_budget_not_exceeded": int(output_metrics["faces"])
         <= max(target_faces, protected_faces),
+        "visual_cleanup_completed_for_every_part": all(
+            set(row["visual_cleanup"]) == {"before_simplification", "after_simplification"}
+            for row in part_records
+        ),
+        "final_groups_have_unique_finite_faces": all(
+            int(record["visual_cleanup"]["output_faces"]) > 0
+            and int(record["visual_cleanup"]["output_vertices"]) > 0
+            for record in records
+        ),
     }
     if not all(gates.values()):
         raise FieldBuildError(f"逐零件视觉保真硬门失败：{gates}")
@@ -1147,7 +1244,30 @@ def _simplify_parts_then_group(
     if not all(geometry_gates.values()):
         raise FieldBuildError(f"逐零件空间追踪硬门失败：{geometry_gates}")
     audit = {
-        "algorithm": "simplify_each_original_part_then_group_by_exact_rgba",
+        "algorithm": "clean_then_simplify_each_original_part_then_clean_group_by_exact_rgba",
+        "visual_cleanup": {
+            "purpose": "remove coincident/degenerate faces that cause MuJoCo render artifacts",
+            "geometry_simplification": False,
+            "collision_changed": False,
+            "vertex_decimal_digits_m": 8,
+            "minimum_face_area_m2": 1.0e-14,
+            "part_invalid_faces_removed": sum(
+                int(row["visual_cleanup"]["before_simplification"]["invalid_faces_removed"])
+                + int(row["visual_cleanup"]["after_simplification"]["invalid_faces_removed"])
+                for row in part_records
+            ),
+            "part_duplicate_faces_removed": sum(
+                int(row["visual_cleanup"]["before_simplification"]["duplicate_faces_removed"])
+                + int(row["visual_cleanup"]["after_simplification"]["duplicate_faces_removed"])
+                for row in part_records
+            ),
+            "group_invalid_faces_removed": sum(
+                int(record["visual_cleanup"]["invalid_faces_removed"]) for record in records
+            ),
+            "group_duplicate_faces_removed": sum(
+                int(record["visual_cleanup"]["duplicate_faces_removed"]) for record in records
+            ),
+        },
         "target_visual_faces": target_faces,
         "preserve_part_faces_at_most": preserve_part_faces,
         "preserve_broad_xy_bbox_area_at_least_m2": preserve_broad_xy_area_m2,
@@ -1200,26 +1320,31 @@ def _ray_heightfield(
 
     combined = trimesh.util.concatenate(meshes)
     low, high = np.asarray(combined.bounds, dtype=np.float64)
-    margin = resolution_m
-    x = np.arange(low[0] - margin, high[0] + margin + resolution_m * 0.5, resolution_m)
-    y = np.arange(low[1] - margin, high[1] + margin + resolution_m * 0.5, resolution_m)
-    xx, yy = np.meshgrid(x, y)
-    origins = np.column_stack((xx.reshape(-1), yy.reshape(-1), np.full(xx.size, high[2] + 1.0)))
-    directions = np.zeros_like(origins)
-    directions[:, 2] = -1.0
-    heights = np.full(xx.size, np.nan, dtype=np.float64)
+    x, y = _heightfield_grid_axes(low, high, resolution_m=resolution_m)
+    columns = len(x)
+    sample_count = len(y) * columns
+    heights = np.full(sample_count, np.nan, dtype=np.float64)
     intersector = trimesh.ray.ray_triangle.RayMeshIntersector(combined)
     batch = 8192
-    for start in range(0, len(origins), batch):
+    for start in range(0, sample_count, batch):
+        stop = min(start + batch, sample_count)
+        flat_indices = np.arange(start, stop, dtype=np.int64)
+        rows = flat_indices // columns
+        column_indices = flat_indices % columns
+        origins = np.column_stack(
+            (x[column_indices], y[rows], np.full(len(flat_indices), high[2] + 1.0))
+        )
+        directions = np.zeros_like(origins)
+        directions[:, 2] = -1.0
         locations, ray_indices, _triangle_indices = intersector.intersects_location(
-            origins[start : start + batch],
-            directions[start : start + batch],
+            origins,
+            directions,
             multiple_hits=False,
         )
         if len(ray_indices):
             heights[start + np.asarray(ray_indices, dtype=np.int64)] = locations[:, 2]
     missing = ~np.isfinite(heights)
-    height = heights.reshape(xx.shape)
+    height = heights.reshape((len(y), len(x)))
     height[~np.isfinite(height)] = 0.0
     height = np.maximum(height, 0.0)
     # Suppress isolated decorative spikes while retaining ramps and broad platforms.
@@ -1272,35 +1397,197 @@ def _ray_heightfield(
     return record, x, y, height
 
 
+def _heightfield_grid_axes(
+    low_xyz_m: np.ndarray,
+    high_xyz_m: np.ndarray,
+    *,
+    resolution_m: float,
+    maximum_samples: int = MAXIMUM_HEIGHTFIELD_SAMPLES,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Allocate bounded XY axes before creating the much larger ray grid.
+
+    A 1 cm field is useful for seam evaluation but is roughly four times the
+    sample count of a 2 cm field.  Apply the same ten-million-sample ceiling as
+    the runtime-pack validator before ``meshgrid`` and ray-origin allocation so
+    malformed bounds cannot exhaust memory during a local build.
+    """
+
+    low = np.asarray(low_xyz_m, dtype=np.float64)
+    high = np.asarray(high_xyz_m, dtype=np.float64)
+    resolution = float(resolution_m)
+    if (
+        low.shape != (3,)
+        or high.shape != (3,)
+        or not np.isfinite(low).all()
+        or not np.isfinite(high).all()
+        or np.any(high <= low)
+    ):
+        raise FieldBuildError("高度图边界必须是有限且递增的三维范围")
+    if not MINIMUM_HEIGHTFIELD_RESOLUTION_M <= resolution <= 0.25:
+        raise FieldBuildError(
+            f"高度图分辨率必须在[{MINIMUM_HEIGHTFIELD_RESOLUTION_M:.02f}, 0.25]米"
+        )
+    if isinstance(maximum_samples, bool) or maximum_samples < 4:
+        raise FieldBuildError("高度图采样上限必须是至少4的整数")
+
+    # Keep fine grids on the established 2 cm collision envelope.  Otherwise
+    # changing only the sample spacing also shifts the hfield centre, spawn and
+    # every translated visual mesh, which breaks pack-to-pack reproducibility.
+    # Coarser compatibility grids retain their historical one-cell margin.
+    fine_ratio = VALIDATION_HEIGHTFIELD_RESOLUTION_M / resolution
+    fine_stride = int(round(fine_ratio))
+    if resolution < VALIDATION_HEIGHTFIELD_RESOLUTION_M and math.isclose(
+        fine_ratio, fine_stride, rel_tol=0.0, abs_tol=1.0e-9
+    ):
+        envelope_step = VALIDATION_HEIGHTFIELD_RESOLUTION_M
+        coarse_x = np.arange(
+            low[0] - envelope_step,
+            high[0] + envelope_step + envelope_step * 0.5,
+            envelope_step,
+        )
+        coarse_y = np.arange(
+            low[1] - envelope_step,
+            high[1] + envelope_step + envelope_step * 0.5,
+            envelope_step,
+        )
+        x = _subdivide_grid_axis(coarse_x, stride=fine_stride)
+        y = _subdivide_grid_axis(coarse_y, stride=fine_stride)
+    else:
+        margin = resolution
+        x = np.arange(low[0] - margin, high[0] + margin + resolution * 0.5, resolution)
+        y = np.arange(low[1] - margin, high[1] + margin + resolution * 0.5, resolution)
+    samples = int(len(x)) * int(len(y))
+    if samples > maximum_samples:
+        raise FieldBuildError(
+            "高度图网格超过采样上限："
+            f"shape={len(y)}x{len(x)}, samples={samples}, limit={maximum_samples}"
+        )
+    return x, y
+
+
+def _subdivide_grid_axis(coarse_axis: np.ndarray, *, stride: int) -> np.ndarray:
+    """Subdivide an axis while preserving every established coarse coordinate."""
+
+    coarse = np.asarray(coarse_axis, dtype=np.float64)
+    fine = np.empty((len(coarse) - 1) * stride + 1, dtype=np.float64)
+    fine[::stride] = coarse
+    step = float(coarse[1] - coarse[0]) / stride
+    for offset in range(1, stride):
+        fine[offset::stride] = coarse[:-1] + offset * step
+    return fine
+
+
 def _choose_spawn(x: np.ndarray, y: np.ndarray, height: np.ndarray) -> dict[str, float]:
-    radius_cells = max(2, int(round(0.65 / float(x[1] - x[0]))))
-    window = radius_cells * 2 + 1
-    padded = np.pad(height, radius_cells, mode="edge")
-    neighborhoods = np.lib.stride_tricks.sliding_window_view(padded, (window, window))
-    local_range = np.ptp(neighborhoods, axis=(-1, -2))
-    xx, yy = np.meshgrid(x, y)
+    resolution = float(x[1] - x[0])
+    ratio = VALIDATION_HEIGHTFIELD_RESOLUTION_M / resolution
+    stride = int(round(ratio))
+    if resolution < VALIDATION_HEIGHTFIELD_RESOLUTION_M and math.isclose(
+        ratio, stride, rel_tol=0.0, abs_tol=1.0e-7
+    ):
+        selection_x = x[::stride]
+        selection_y = y[::stride]
+        selection_height = height[::stride, ::stride]
+    else:
+        selection_x = x
+        selection_y = y
+        selection_height = height
+    selection_resolution = float(selection_x[1] - selection_x[0])
+    radius_cells = max(2, int(round(0.65 / selection_resolution)))
+    local_range = _square_local_range(selection_height, radius_cells=radius_cells)
     margin = 1.2
     candidates = (
-        (np.abs(height) <= 0.03)
+        (np.abs(selection_height) <= 0.03)
         & (local_range <= 0.025)
-        & (xx >= x[0] + margin)
-        & (xx <= x[-1] - margin)
-        & (yy >= y[0] + margin)
-        & (yy <= y[-1] - margin)
+        & (selection_x[None, :] >= selection_x[0] + margin)
+        & (selection_x[None, :] <= selection_x[-1] - margin)
+        & (selection_y[:, None] >= selection_y[0] + margin)
+        & (selection_y[:, None] <= selection_y[-1] - margin)
     )
     if not np.any(candidates):
         raise FieldBuildError("没有找到足够大的官方场地平坦出生区")
-    target_x = float(x[0] + 0.78 * (x[-1] - x[0]))
-    target_y = float(0.5 * (y[0] + y[-1]))
-    score = (xx - target_x) ** 2 + (yy - target_y) ** 2
+    target_x = float(selection_x[0] + 0.78 * (selection_x[-1] - selection_x[0]))
+    target_y = float(0.5 * (selection_y[0] + selection_y[-1]))
+    score = (selection_x[None, :] - target_x) ** 2 + (selection_y[:, None] - target_y) ** 2
     score[~candidates] = math.inf
     row, column = np.unravel_index(int(np.argmin(score)), score.shape)
     return {
-        "x_before_translation_m": float(x[column]),
-        "y_before_translation_m": float(y[row]),
-        "terrain_height_m": float(height[row, column]),
-        "verified_flat_radius_m": radius_cells * float(x[1] - x[0]),
+        "x_before_translation_m": float(selection_x[column]),
+        "y_before_translation_m": float(selection_y[row]),
+        "terrain_height_m": float(selection_height[row, column]),
+        "verified_flat_radius_m": radius_cells * selection_resolution,
     }
+
+
+def _square_local_range(height_m: np.ndarray, *, radius_cells: int) -> np.ndarray:
+    """Return edge-padded square-neighbourhood ranges in linear memory."""
+
+    height = np.asarray(height_m, dtype=np.float64)
+    if height.ndim != 2 or min(height.shape) < 1 or not np.isfinite(height).all():
+        raise FieldBuildError("出生点局部范围要求有限二维高度图")
+    if isinstance(radius_cells, bool) or not isinstance(radius_cells, int) or radius_cells < 0:
+        raise FieldBuildError("出生点局部范围半径必须是非负整数")
+    if radius_cells == 0:
+        return np.zeros_like(height)
+    window = radius_cells * 2 + 1
+    horizontal_low = np.empty_like(height)
+    horizontal_high = np.empty_like(height)
+    padded_x = np.pad(height, ((0, 0), (radius_cells, radius_cells)), mode="edge")
+    for row in range(height.shape[0]):
+        low, high = _sliding_min_max_1d(padded_x[row], window)
+        horizontal_low[row] = low
+        horizontal_high[row] = high
+
+    local_low = np.empty_like(height)
+    local_high = np.empty_like(height)
+    padded_low = np.pad(horizontal_low, ((radius_cells, radius_cells), (0, 0)), mode="edge")
+    padded_high = np.pad(horizontal_high, ((radius_cells, radius_cells), (0, 0)), mode="edge")
+    for column in range(height.shape[1]):
+        local_low[:, column] = _sliding_extreme_1d(padded_low[:, column], window, maximum=False)
+        local_high[:, column] = _sliding_extreme_1d(padded_high[:, column], window, maximum=True)
+    return local_high - local_low
+
+
+def _sliding_min_max_1d(values: np.ndarray, window: int) -> tuple[np.ndarray, np.ndarray]:
+    source = np.asarray(values, dtype=np.float64)
+    low = np.empty(len(source) - window + 1, dtype=np.float64)
+    high = np.empty_like(low)
+    low_indices: deque[int] = deque()
+    high_indices: deque[int] = deque()
+    for index, value in enumerate(source):
+        while low_indices and source[low_indices[-1]] >= value:
+            low_indices.pop()
+        while high_indices and source[high_indices[-1]] <= value:
+            high_indices.pop()
+        low_indices.append(index)
+        high_indices.append(index)
+        expired = index - window
+        if low_indices[0] <= expired:
+            low_indices.popleft()
+        if high_indices[0] <= expired:
+            high_indices.popleft()
+        if index >= window - 1:
+            output_index = index - window + 1
+            low[output_index] = source[low_indices[0]]
+            high[output_index] = source[high_indices[0]]
+    return low, high
+
+
+def _sliding_extreme_1d(values: np.ndarray, window: int, *, maximum: bool) -> np.ndarray:
+    source = np.asarray(values, dtype=np.float64)
+    output = np.empty(len(source) - window + 1, dtype=np.float64)
+    indices: deque[int] = deque()
+    for index, value in enumerate(source):
+        while indices and (
+            source[indices[-1]] <= value if maximum else source[indices[-1]] >= value
+        ):
+            indices.pop()
+        indices.append(index)
+        expired = index - window
+        if indices[0] <= expired:
+            indices.popleft()
+        if index >= window - 1:
+            output[index - window + 1] = source[indices[0]]
+    return output
 
 
 def _translate_final_assets(
@@ -1542,6 +1829,7 @@ def repack_field_build(
     collision["source_faces"] = int(raw_transformed_metrics["faces"])
     collision["source_surface_area_m2"] = float(raw_transformed_metrics["surface_area_m2"])
     spawn = _complete_collision_and_spawn(collision, x, y, height)
+    collision["fixed_fly_ramp_audit"] = audit_fixed_fly_ramps(x, y, height)
     _translate_final_assets(final_meshes, visual_records, output, spawn=spawn)
     _record_part_geometry_world_bounds(simplification, spawn=spawn)
     translated_outer_bounds = _translated_bounds(raw_transformed_metrics, spawn)
@@ -1704,6 +1992,7 @@ def build_field(
     collision["source_faces"] = int(raw_transformed_metrics["faces"])
     collision["source_surface_area_m2"] = float(raw_transformed_metrics["surface_area_m2"])
     spawn = _complete_collision_and_spawn(collision, x, y, height)
+    collision["fixed_fly_ramp_audit"] = audit_fixed_fly_ramps(x, y, height)
     _translate_final_assets(final_meshes, visual_records, output, spawn=spawn)
     _record_part_geometry_world_bounds(simplification, spawn=spawn)
     translated_outer_bounds = _translated_bounds(raw_transformed_metrics, spawn)

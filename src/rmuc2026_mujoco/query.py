@@ -214,10 +214,11 @@ def surface_at(
     row_start, row_stop = _sample_window(data.y_m, y_value, radius)
     column_start, column_stop = _sample_window(data.x_m, x_value, radius)
     local = data.height_m[row_start:row_stop, column_start:column_stop]
-    maximum_face_slope = _cell_triangle_maximum_slope(data)[
-        row_start : row_stop - 1,
-        column_start : column_stop - 1,
-    ]
+    maximum_face_slope = _cell_triangle_maximum_slope(
+        data,
+        rows=slice(row_start, row_stop),
+        columns=slice(column_start, column_stop),
+    )
     return SurfaceSample(
         x_m=x_value,
         y_m=y_value,
@@ -494,15 +495,26 @@ def _mujoco_triangle_sample(
     return float(height), float(dz_dx), float(dz_dy)
 
 
-def _cell_triangle_maximum_slope(data: HeightFieldData) -> np.ndarray:
-    """Return the steeper of MuJoCo's two planar faces for every grid cell."""
+def _cell_triangle_maximum_slope(
+    data: HeightFieldData,
+    *,
+    rows: slice = slice(None),
+    columns: slice = slice(None),
+) -> np.ndarray:
+    """Return the steeper face per cell in the selected vertex window.
+
+    Slice before allocating gradient arrays so local queries do not calculate
+    slopes across the entire field. Keep the original grid spacing to preserve
+    identical results even with floating-point variation along the world axes.
+    """
 
     delta_x = float(data.x_m[1] - data.x_m[0])
     delta_y = float(data.y_m[1] - data.y_m[0])
-    z00 = data.height_m[:-1, :-1]
-    z01 = data.height_m[:-1, 1:]
-    z10 = data.height_m[1:, :-1]
-    z11 = data.height_m[1:, 1:]
+    height = data.height_m[rows, columns]
+    z00 = height[:-1, :-1]
+    z01 = height[:-1, 1:]
+    z10 = height[1:, :-1]
+    z11 = height[1:, 1:]
     upper_left = np.degrees(
         np.arctan(
             np.hypot(
