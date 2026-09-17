@@ -40,13 +40,17 @@ def _sha(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def _grayscale16_png(width: int, height: int) -> bytes:
+def _heightfield_bootstrap_png(height_m: np.ndarray, maximum_height_m: float) -> bytes:
     def chunk(kind: bytes, data: bytes) -> bytes:
         crc = zlib.crc32(data, zlib.crc32(kind)) & 0xFFFFFFFF
         return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", crc)
 
-    ihdr = struct.pack(">IIBBBBB", width, height, 16, 0, 0, 0, 0)
-    scanlines = b"".join(b"\x00" + b"\x00\x00" * width for _ in range(height))
+    quantized = np.rint(np.clip(height_m / maximum_height_m, 0.0, 1.0) * 65535.0).astype(np.uint16)
+    rows, columns = quantized.shape
+    ihdr = struct.pack(">IIBBBBB", columns, rows, 16, 0, 0, 0, 0)
+    scanlines = b"".join(
+        b"\x00" + np.flipud(quantized)[row].astype(">u2").tobytes() for row in range(rows)
+    )
     return (
         b"\x89PNG\r\n\x1a\n"
         + chunk(b"IHDR", ihdr)
@@ -105,7 +109,7 @@ def _synthetic_source_build(root: Path, *, include_surface_guide: bool = False) 
             }
         )
     image = collision_dir / "heightfield.png"
-    image.write_bytes(_grayscale16_png(2, 2))
+    image.write_bytes(_heightfield_bootstrap_png(np.asarray([[0.0, 0.1], [0.1, 0.2]]), 1.0))
     samples = collision_dir / "heightfield.npz"
     np.savez_compressed(
         samples,

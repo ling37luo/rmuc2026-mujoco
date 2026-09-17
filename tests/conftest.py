@@ -18,13 +18,19 @@ def _sha(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def _grayscale16_png(width: int, height: int) -> bytes:
+def _heightfield_bootstrap_png(height_m: np.ndarray, maximum_height_m: float) -> bytes:
+    """Encode the collision bootstrap PNG exactly as the field builder writes it."""
+
     def chunk(kind: bytes, data: bytes) -> bytes:
         crc = zlib.crc32(data, zlib.crc32(kind)) & 0xFFFFFFFF
         return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", crc)
 
-    ihdr = struct.pack(">IIBBBBB", width, height, 16, 0, 0, 0, 0)
-    scanlines = b"".join(b"\x00" + b"\x00\x00" * width for _ in range(height))
+    quantized = np.rint(np.clip(height_m / maximum_height_m, 0.0, 1.0) * 65535.0).astype(np.uint16)
+    rows, columns = quantized.shape
+    ihdr = struct.pack(">IIBBBBB", columns, rows, 16, 0, 0, 0, 0)
+    scanlines = b"".join(
+        b"\x00" + np.flipud(quantized)[row].astype(">u2").tobytes() for row in range(rows)
+    )
     return (
         b"\x89PNG\r\n\x1a\n"
         + chunk(b"IHDR", ihdr)
@@ -68,14 +74,14 @@ def field_asset_dir(tmp_path: Path) -> Path:
         encoding="ascii",
     )
     image = collision / "heightfield.png"
-    image.write_bytes(_grayscale16_png(4, 3))
-    samples = collision / "heightfield.npz"
     x = np.asarray([10.0, 11.0, 12.0, 13.0], dtype=np.float64)
     y = np.asarray([20.0, 21.0, 22.0], dtype=np.float64)
     height = np.asarray(
         [[0.5, 0.75, 1.0, 1.25], [0.75, 1.0, 1.25, 1.5], [1.0, 1.25, 1.5, 2.0]],
         dtype=np.float64,
     )
+    image.write_bytes(_heightfield_bootstrap_png(height, 2.0))
+    samples = collision / "heightfield.npz"
     np.savez_compressed(samples, x_m=x, y_m=y, height_m=height)
     entrypoint = tmp_path / "rmuc2026_field.xml"
     entrypoint.write_text(
