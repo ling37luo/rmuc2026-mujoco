@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import sys
+
 import pytest
 
 import rmuc2026_mujoco.viewer as viewer_module
@@ -260,6 +262,10 @@ def test_x11_key_interceptor_releases_every_passive_grab() -> None:
     assert connection.events == ["sync", "close"]
 
 
+@pytest.mark.skipif(
+    not sys.platform.startswith("linux"),
+    reason="the live keyboard grab path is Linux/X11 only",
+)
 def test_x11_async_grab_error_rolls_back_and_fails_closed(monkeypatch) -> None:
     from Xlib import XK, display
 
@@ -311,6 +317,10 @@ def test_x11_async_grab_error_rolls_back_and_fails_closed(monkeypatch) -> None:
 
     connection = Connection()
     window = Window()
+    # create_viewer_key_interceptor only checks that a display is *named* before
+    # it builds grabs; the connection and window below are fakes, so the grab
+    # path must be reachable on a headless runner that has no X server at all.
+    monkeypatch.setenv("DISPLAY", ":0")
     monkeypatch.setattr(display, "Display", lambda: connection)
     monkeypatch.setattr(viewer_module, "_find_x11_viewer_window", lambda *_args: window)
 
