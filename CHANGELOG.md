@@ -23,6 +23,10 @@ project intends to follow [Semantic Versioning](https://semver.org/).
   verified; a consumer that loads the entrypoint XML directly with MuJoCo reads
   the image instead of the samples and would have received a different field.
   The comparison allows one LSB of 16-bit rounding.
+- `ValidationReport` no longer reports `PASS` when hashes were not verified.
+  `FieldAsset.open(..., verify=False)` now reports `PASS_SIZE_ONLY` and exposes
+  `hashes_verified`, so a consumer cannot read a size-only check as an
+  integrity claim.
 
 ## [0.2.0a1] - 2026-09-15
 

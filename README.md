@@ -195,9 +195,13 @@ local-rmuc2026-field/
 ```
 
 Every referenced path must remain inside the pack, be a regular file, and
-match its declared size and SHA-256. The PNG is not the authoritative contact
-surface: the loader replaces its quantized values with the verified NPZ floats
-before the first simulation step.
+match its declared size and SHA-256. Verification also compares the collision
+bootstrap PNG against the float samples it is supposed to quantize: a consumer
+that loads the entrypoint XML directly with MuJoCo reads the image, not the
+samples the loader injects. The PNG is not the authoritative contact surface:
+the loader replaces its quantized values with the verified NPZ floats before
+the first simulation step. `FieldAsset.open(..., verify=False)` skips the hash
+and image comparisons and reports `PASS_SIZE_ONLY` instead of `PASS`.
 
 New local builds use runtime-pack schema 2 for the named lighting and optional
 livery contracts. The complete livery uses a 20 cm non-contact visual mesh with
@@ -332,6 +336,11 @@ python3 -m venv .venv
 这是一个**非官方、源码仓库不带场地资产**的 RMUC 2026 MuJoCo 模块。
 安装 `build` 依赖后，`rmuc2026-field setup` 会直接从 RoboMaster 官方地址
 下载指定 STEP，核对固定大小和 SHA-256，并只在你的电脑上生成可搬运场地包。
+
+打开运行包时，除每个文件的大小与 SHA-256 之外，还会把碰撞引导 PNG 与浮点样本
+逐格比对：直接用 MuJoCo 打开入口 XML 的消费者读到的是这张图，而不是加载器注入的
+样本。跳过哈希校验的 `FieldAsset.open(..., verify=False)` 只会报告
+`PASS_SIZE_ONLY`，不会再被当成完整性通过。
 
 现在的视觉模型来自官方 CAD；碰撞采用可配置 1–10 cm 单值高度场，因此平地、坡道和
 台阶可以直接用于 MuJoCo，但桥下空间、悬空结构、垂直墙面和动态机关还不是精确碰撞。

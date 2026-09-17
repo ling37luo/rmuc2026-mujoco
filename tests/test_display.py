@@ -48,6 +48,7 @@ def _asset(
         manifest=manifest,
         manifest_sha256="",
         verified_files=(),
+        hashes_verified=True,
         _files_by_relative={},
     )
 
