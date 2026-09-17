@@ -11,6 +11,8 @@ from typing import Any, Mapping
 import xml.etree.ElementTree as ET
 import zlib
 
+import numpy as np
+
 from .download import OFFICIAL_STEP_SHA256, OFFICIAL_STEP_SIZE
 from .errors import AssetIntegrityError, ManifestError
 from .livery import (
@@ -51,6 +53,17 @@ XML_FLOAT_REL_TOLERANCE = 1e-8
 XML_FLOAT_ABS_TOLERANCE = 1e-10
 MAX_HEIGHTFIELD_SAMPLES = 10_000_000
 MAX_HEIGHTFIELD_PNG_BYTES = 64 * 1024 * 1024
+# The bootstrap PNG is a 16-bit rendering of the verified float samples.  A
+# producer and this validator can only differ through the last-bit rounding of
+# the same expression, so one LSB is the whole legitimate disagreement.
+HEIGHTFIELD_PNG_LSB_TOLERANCE = 1
+HEIGHTFIELD_PNG_SAMPLE_MAXIMUM = 65535.0
+PNG_FILTER_NONE = 0
+PNG_FILTER_SUB = 1
+PNG_FILTER_UP = 2
+PNG_FILTER_AVERAGE = 3
+PNG_FILTER_PAETH = 4
+PNG_GRAYSCALE16_BYTES_PER_PIXEL = 2
 _GEOM_TRANSFORM_ATTRIBUTES = frozenset({"axisangle", "euler", "fromto", "quat", "xyaxes", "zaxis"})
 
 
@@ -172,7 +185,12 @@ class FieldAsset:
 
     @classmethod
     def open(cls, root: str | Path, *, verify: bool = True) -> FieldAsset:
-        """Open the sole public runtime-pack schema and optionally verify all hashes."""
+        """Open the runtime-pack schema and optionally verify every bound file.
+
+        Verification covers the declared sizes, every SHA-256, and the heightfield
+        bootstrap PNG against the float samples it is supposed to quantize.
+        ``verify=False`` keeps the structural and cross-reference checks only.
+        """
 
         pack_root = Path(root).expanduser().resolve()
         manifest_path = pack_root / "manifest.json"
@@ -186,7 +204,7 @@ class FieldAsset:
             raise ManifestError("manifest root must be an object")
         _validate_identity(manifest)
         file_paths = _validate_file_table(pack_root, manifest, verify=verify)
-        _validate_cross_references(manifest, file_paths)
+        _validate_cross_references(manifest, file_paths, verify=verify)
         return cls(
             root=pack_root,
             manifest=manifest,
@@ -365,6 +383,8 @@ def _validate_file_table(
 def _validate_cross_references(
     manifest: Mapping[str, Any],
     files: Mapping[str, Path],
+    *,
+    verify: bool,
 ) -> None:
     contents = _mapping(manifest.get("contents"), label="contents")
     entrypoint = _nonempty_string(contents.get("entrypoint"), label="contents.entrypoint")
@@ -473,6 +493,14 @@ def _validate_cross_references(
         raise ManifestError("heightfield_precision shape disagrees with collision")
     if precision.get("float_samples_file") != collision.get("samples_file"):
         raise ManifestError("heightfield_precision sample file disagrees with collision")
+    if verify:
+        _verify_collision_bootstrap(
+            collision,
+            files,
+            rows=rows,
+            columns=columns,
+            maximum_height_m=maximum,
+        )
 
     _validate_runtime_profiles(
         manifest,
@@ -1212,6 +1240,24 @@ def _png_ihdr_dimensions(
 ) -> tuple[int, int]:
     """Validate a generated grayscale16 PNG and return its effective dimensions."""
 
+    _decoded, width, height = _png_scanline_payload(
+        path,
+        label=label,
+        expected_rows=expected_rows,
+        expected_columns=expected_columns,
+    )
+    return width, height
+
+
+def _png_scanline_payload(
+    path: Path,
+    *,
+    label: str,
+    expected_rows: int,
+    expected_columns: int,
+) -> tuple[bytes, int, int]:
+    """Return the still-filtered PNG scanlines plus the validated dimensions."""
+
     try:
         encoded_size = path.stat().st_size
         if encoded_size > MAX_HEIGHTFIELD_PNG_BYTES:
@@ -1306,7 +1352,145 @@ def _png_ihdr_dimensions(
         raise ManifestError(f"{label} PNG IDAT does not decode to the declared grayscale image")
     if any(decoded[row * expected_scanline_bytes] > 4 for row in range(height)):
         raise ManifestError(f"{label} contains an invalid PNG scanline filter")
-    return width, height
+    return decoded, width, height
+
+
+def _paeth_predictor(left: int, above: int, upper_left: int) -> int:
+    """Return the PNG Paeth predictor for one byte pair."""
+
+    estimate = left + above - upper_left
+    distance_left = abs(estimate - left)
+    distance_above = abs(estimate - above)
+    distance_upper_left = abs(estimate - upper_left)
+    if distance_left <= distance_above and distance_left <= distance_upper_left:
+        return left
+    if distance_above <= distance_upper_left:
+        return above
+    return upper_left
+
+
+def _unfilter_png_scanlines(
+    decoded: bytes,
+    *,
+    width: int,
+    height: int,
+    label: str,
+) -> bytes:
+    """Undo the per-scanline PNG filters of a validated grayscale16 image.
+
+    A producer picks a filter per row, so the sample comparison cannot assume
+    filter 0.  Filtering is byte-oriented with a two-byte pixel stride.
+    """
+
+    stride = PNG_GRAYSCALE16_BYTES_PER_PIXEL * width
+    line_bytes = 1 + stride
+    result = bytearray(stride * height)
+    previous = bytearray(stride)
+    for row in range(height):
+        start = row * line_bytes
+        filter_type = decoded[start]
+        raw = decoded[start + 1 : start + 1 + stride]
+        current = bytearray(stride)
+        if filter_type == PNG_FILTER_NONE:
+            current[:] = raw
+        elif filter_type == PNG_FILTER_SUB:
+            for index in range(stride):
+                left = (
+                    current[index - PNG_GRAYSCALE16_BYTES_PER_PIXEL]
+                    if index >= PNG_GRAYSCALE16_BYTES_PER_PIXEL
+                    else 0
+                )
+                current[index] = (raw[index] + left) & 0xFF
+        elif filter_type == PNG_FILTER_UP:
+            for index in range(stride):
+                current[index] = (raw[index] + previous[index]) & 0xFF
+        elif filter_type == PNG_FILTER_AVERAGE:
+            for index in range(stride):
+                left = (
+                    current[index - PNG_GRAYSCALE16_BYTES_PER_PIXEL]
+                    if index >= PNG_GRAYSCALE16_BYTES_PER_PIXEL
+                    else 0
+                )
+                current[index] = (raw[index] + ((left + previous[index]) >> 1)) & 0xFF
+        elif filter_type == PNG_FILTER_PAETH:
+            for index in range(stride):
+                if index >= PNG_GRAYSCALE16_BYTES_PER_PIXEL:
+                    left = current[index - PNG_GRAYSCALE16_BYTES_PER_PIXEL]
+                    upper_left = previous[index - PNG_GRAYSCALE16_BYTES_PER_PIXEL]
+                else:
+                    left = 0
+                    upper_left = 0
+                current[index] = (
+                    raw[index] + _paeth_predictor(left, previous[index], upper_left)
+                ) & 0xFF
+        else:
+            raise ManifestError(f"{label} contains an invalid PNG scanline filter")
+        result[row * stride : (row + 1) * stride] = current
+        previous = current
+    return bytes(result)
+
+
+def _verify_collision_bootstrap(
+    collision: Mapping[str, Any],
+    files: Mapping[str, Path],
+    *,
+    rows: int,
+    columns: int,
+    maximum_height_m: float,
+) -> None:
+    """Confirm the bootstrap PNG encodes the same surface as the float samples.
+
+    MuJoCo derives a file-backed heightfield's dimensions from the image, so the
+    PNG must exist.  Its samples are only a bootstrap: the loader replaces them
+    with the verified NPZ floats before the first step.  A consumer that opens
+    the entrypoint XML directly with MuJoCo never reaches that replacement, so a
+    PNG that disagrees with the samples would hand that consumer a different
+    field.  Bind the two here rather than trusting that one producer wrote both
+    from the same array.
+    """
+
+    image_relative = str(collision["image_file"])
+    samples_relative = str(collision["samples_file"])
+    label = f"collision.{image_relative}"
+    try:
+        with np.load(files[samples_relative], allow_pickle=False) as samples:
+            height = np.asarray(samples["height_m"], dtype=np.float64)
+    except (OSError, KeyError, ValueError) as exc:
+        raise ManifestError(f"collision.samples_file could not be read: {exc}") from exc
+    if height.shape != (rows, columns):
+        raise ManifestError("collision.samples_file shape disagrees with the manifest")
+    if not np.isfinite(height).all():
+        raise ManifestError("collision.samples_file contains non-finite samples")
+
+    decoded, width, decoded_height = _png_scanline_payload(
+        files[image_relative],
+        label=label,
+        expected_rows=rows,
+        expected_columns=columns,
+    )
+    unfiltered = _unfilter_png_scanlines(
+        decoded,
+        width=width,
+        height=decoded_height,
+        label=label,
+    )
+    expected = np.rint(
+        np.clip(height / maximum_height_m, 0.0, 1.0) * HEIGHTFIELD_PNG_SAMPLE_MAXIMUM
+    ).astype(np.uint16)
+    # MuJoCo reads the first PNG row as positive local Y while the samples are
+    # indexed from y_min, so the producer stores the image flipped.
+    observed = np.frombuffer(unfiltered, dtype=">u2").reshape(rows, columns)[::-1]
+    deviation = np.abs(observed.astype(np.int32) - expected.astype(np.int32))
+    worst = int(np.max(deviation))
+    if worst > HEIGHTFIELD_PNG_LSB_TOLERANCE:
+        row, column = (
+            int(value) for value in np.unravel_index(int(np.argmax(deviation)), deviation.shape)
+        )
+        raise AssetIntegrityError(
+            "collision bootstrap PNG disagrees with the verified float samples: "
+            f"row={row}, column={column}, deviation={worst} LSB, "
+            f"tolerance={HEIGHTFIELD_PNG_LSB_TOLERANCE} LSB"
+        )
 
 
 def _xml_integer_attribute(

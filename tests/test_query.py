@@ -3,7 +3,9 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
+import struct
 import xml.etree.ElementTree as ET
+import zlib
 
 import numpy as np
 import pytest
@@ -19,6 +21,27 @@ from rmuc2026_mujoco import (
 )
 
 
+def _png_chunk(kind: bytes, data: bytes) -> bytes:
+    crc = zlib.crc32(data, zlib.crc32(kind)) & 0xFFFFFFFF
+    return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", crc)
+
+
+def _bootstrap_png(height_m: np.ndarray, maximum_height_m: float) -> bytes:
+    """Encode the collision bootstrap PNG exactly as the field builder writes it."""
+
+    quantized = np.rint(np.clip(height_m / maximum_height_m, 0.0, 1.0) * 65535.0).astype(np.uint16)
+    rows, columns = quantized.shape
+    scanlines = b"".join(
+        b"\x00" + np.flipud(quantized)[row].astype(">u2").tobytes() for row in range(rows)
+    )
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + _png_chunk(b"IHDR", struct.pack(">IIBBBBB", columns, rows, 16, 0, 0, 0, 0))
+        + _png_chunk(b"IDAT", zlib.compress(scanlines))
+        + _png_chunk(b"IEND", b"")
+    )
+
+
 def _replace_heightfield(
     root: Path,
     *,
@@ -30,11 +53,12 @@ def _replace_heightfield(
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     spawn = manifest["coordinate_frame"]["recommended_spawn"]
     samples_path = root / manifest["collision"]["samples_file"]
+    source_height = world_height + float(spawn["terrain_height_m"])
     np.savez_compressed(
         samples_path,
         x_m=world_x + float(spawn["x_before_translation_m"]),
         y_m=world_y + float(spawn["y_before_translation_m"]),
-        height_m=world_height + float(spawn["terrain_height_m"]),
+        height_m=source_height,
     )
     digest = hashlib.sha256(samples_path.read_bytes()).hexdigest()
     collision = manifest["collision"]
@@ -60,6 +84,9 @@ def _replace_heightfield(
         collision["resolution_m"] = float(world_x[1] - world_x[0])
     manifest["heightfield_precision"]["rows_y"] = len(world_y)
     manifest["heightfield_precision"]["columns_x"] = len(world_x)
+    image_path = root / manifest["collision"]["image_file"]
+    image_path.write_bytes(_bootstrap_png(source_height, collision["maximum_height_m"]))
+    collision["image_sha256"] = hashlib.sha256(image_path.read_bytes()).hexdigest()
 
     size = [
         *collision["half_size_xy_m"],
@@ -85,7 +112,10 @@ def _replace_heightfield(
 
     for record in manifest["contents"]["files"]:
         path = root / record["file"]
-        if record["file"] == collision["samples_file"] or path.suffix == ".xml":
+        if (
+            record["file"] in {collision["samples_file"], collision["image_file"]}
+            or path.suffix == ".xml"
+        ):
             record["sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()
             record["size_bytes"] = path.stat().st_size
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")

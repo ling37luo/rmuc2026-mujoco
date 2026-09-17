@@ -7,6 +7,7 @@ import struct
 import xml.etree.ElementTree as ET
 import zlib
 
+import numpy as np
 import pytest
 
 from rmuc2026_mujoco import AssetIntegrityError, FieldAsset, ManifestError, verify_asset
@@ -26,6 +27,27 @@ def _grayscale16_png(width: int, height: int, *, compressed: bytes | None = None
         b"\x89PNG\r\n\x1a\n"
         + _png_chunk(b"IHDR", ihdr)
         + _png_chunk(b"IDAT", compressed)
+        + _png_chunk(b"IEND", b"")
+    )
+
+
+def _bootstrap_png(root: Path) -> bytes:
+    """Re-encode a fixture pack's own float samples the way the builder does."""
+
+    manifest = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
+    with np.load(root / str(manifest["collision"]["samples_file"]), allow_pickle=False) as samples:
+        height = np.asarray(samples["height_m"], dtype=np.float64)
+    maximum = float(manifest["collision"]["maximum_height_m"])
+    quantized = np.rint(np.clip(height / maximum, 0.0, 1.0) * 65535.0).astype(np.uint16)
+    rows, columns = quantized.shape
+    ihdr = struct.pack(">IIBBBBB", columns, rows, 16, 0, 0, 0, 0)
+    scanlines = b"".join(
+        b"\x00" + np.flipud(quantized)[row].astype(">u2").tobytes() for row in range(rows)
+    )
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + _png_chunk(b"IHDR", ihdr)
+        + _png_chunk(b"IDAT", zlib.compress(scanlines))
         + _png_chunk(b"IEND", b"")
     )
 
@@ -218,7 +240,7 @@ def test_legacy_file_hfield_shape_is_read_from_declared_png_ihdr(
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     image_relative = "collision/heightfield.png"
     image = field_asset_dir / image_relative
-    image.write_bytes(_grayscale16_png(4, 3))
+    image.write_bytes(_bootstrap_png(field_asset_dir))
     image_sha = hashlib.sha256(image.read_bytes()).hexdigest()
     manifest["collision"]["image_sha256"] = image_sha
     _refresh_declared_file(field_asset_dir, manifest, image_relative)
@@ -433,3 +455,133 @@ def test_runtime_profile_rejects_undeclared_or_transformed_external_assets(
 
     with pytest.raises(ManifestError, match=error):
         FieldAsset.open(field_asset_dir)
+
+
+def _png_with_filter_type(
+    values: np.ndarray,
+    filter_type: int,
+) -> bytes:
+    """Encode a grayscale16 PNG whose every scanline uses one chosen filter."""
+
+    rows, columns = values.shape
+    stride = 2 * columns
+
+    def filtered(previous: bytes, current: bytes) -> bytes:
+        raw = bytearray(stride)
+        for index in range(stride):
+            left = current[index - 2] if index >= 2 else 0
+            above = previous[index]
+            upper_left = previous[index - 2] if index >= 2 else 0
+            if filter_type == 0:
+                predicted = 0
+            elif filter_type == 1:
+                predicted = left
+            elif filter_type == 2:
+                predicted = above
+            elif filter_type == 3:
+                predicted = (left + above) >> 1
+            else:
+                estimate = left + above - upper_left
+                distance_left = abs(estimate - left)
+                distance_above = abs(estimate - above)
+                distance_upper_left = abs(estimate - upper_left)
+                if distance_left <= distance_above and distance_left <= distance_upper_left:
+                    predicted = left
+                elif distance_above <= distance_upper_left:
+                    predicted = above
+                else:
+                    predicted = upper_left
+            raw[index] = (current[index] - predicted) & 0xFF
+        return bytes(raw)
+
+    scanlines = bytearray()
+    previous = bytes(stride)
+    for row in range(rows):
+        current = values[row].astype(">u2").tobytes()
+        scanlines.append(filter_type)
+        scanlines.extend(filtered(previous, current))
+        previous = current
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + _png_chunk(b"IHDR", struct.pack(">IIBBBBB", columns, rows, 16, 0, 0, 0, 0))
+        + _png_chunk(b"IDAT", zlib.compress(bytes(scanlines)))
+        + _png_chunk(b"IEND", b"")
+    )
+
+
+@pytest.mark.parametrize("filter_type", [0, 1, 2, 3, 4])
+def test_png_unfilter_recovers_every_scanline_filter(tmp_path: Path, filter_type: int) -> None:
+    """Pillow decodes the crafted PNG, so the two implementations check each other."""
+
+    from PIL import Image
+
+    from rmuc2026_mujoco.manifest import _png_scanline_payload, _unfilter_png_scanlines
+
+    rng = np.random.default_rng(filter_type)
+    values = rng.integers(0, 65536, size=(7, 9), dtype=np.uint16)
+    path = tmp_path / "filtered.png"
+    path.write_bytes(_png_with_filter_type(values, filter_type))
+
+    with Image.open(path) as image:
+        oracle = np.asarray(image, dtype=np.uint16)
+    assert np.array_equal(oracle, values), "the crafted PNG is not valid without our decoder"
+
+    decoded, width, height = _png_scanline_payload(
+        path, label="filtered", expected_rows=7, expected_columns=9
+    )
+    unfiltered = _unfilter_png_scanlines(decoded, width=width, height=height, label="filtered")
+    assert np.array_equal(np.frombuffer(unfiltered, dtype=">u2").reshape(7, 9), values)
+
+
+def test_bootstrap_png_must_quantize_the_verified_float_samples(field_asset_dir: Path) -> None:
+    manifest_path = field_asset_dir / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    image_relative = "collision/heightfield.png"
+    image = field_asset_dir / image_relative
+    # A structurally perfect PNG that encodes a flat field instead of the samples.
+    image.write_bytes(_grayscale16_png(4, 3))
+    manifest["collision"]["image_sha256"] = hashlib.sha256(image.read_bytes()).hexdigest()
+    _refresh_declared_file(field_asset_dir, manifest, image_relative)
+    _write_manifest(field_asset_dir, manifest)
+
+    with pytest.raises(AssetIntegrityError, match="bootstrap PNG disagrees"):
+        FieldAsset.open(field_asset_dir)
+
+
+def test_bootstrap_check_is_skipped_without_hash_verification(field_asset_dir: Path) -> None:
+    manifest_path = field_asset_dir / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    image_relative = "collision/heightfield.png"
+    image = field_asset_dir / image_relative
+    image.write_bytes(_grayscale16_png(4, 3))
+    manifest["collision"]["image_sha256"] = hashlib.sha256(image.read_bytes()).hexdigest()
+    _refresh_declared_file(field_asset_dir, manifest, image_relative)
+    _write_manifest(field_asset_dir, manifest)
+
+    assert FieldAsset.open(field_asset_dir, verify=False).collision["rows_y"] == 3
+
+
+def test_bootstrap_png_accepts_one_lsb_quantization_difference(field_asset_dir: Path) -> None:
+    manifest_path = field_asset_dir / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    image_relative = "collision/heightfield.png"
+    image = field_asset_dir / image_relative
+    with np.load(field_asset_dir / "collision/heightfield.npz") as samples:
+        height = np.asarray(samples["height_m"], dtype=np.float64)
+    quantized = np.rint(np.clip(height / 2.0, 0.0, 1.0) * 65535.0).astype(np.uint16)
+    shifted = np.where(quantized < 65535, quantized + 1, quantized - 1)
+    rows, columns = shifted.shape
+    scanlines = b"".join(
+        b"\x00" + np.flipud(shifted)[row].astype(">u2").tobytes() for row in range(rows)
+    )
+    image.write_bytes(
+        b"\x89PNG\r\n\x1a\n"
+        + _png_chunk(b"IHDR", struct.pack(">IIBBBBB", columns, rows, 16, 0, 0, 0, 0))
+        + _png_chunk(b"IDAT", zlib.compress(scanlines))
+        + _png_chunk(b"IEND", b"")
+    )
+    manifest["collision"]["image_sha256"] = hashlib.sha256(image.read_bytes()).hexdigest()
+    _refresh_declared_file(field_asset_dir, manifest, image_relative)
+    _write_manifest(field_asset_dir, manifest)
+
+    assert FieldAsset.open(field_asset_dir).collision["rows_y"] == 3

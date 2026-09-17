@@ -6,6 +6,15 @@ project intends to follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Pack verification now compares the collision bootstrap PNG against the
+  verified float samples it is supposed to quantize. Previously only the two
+  hashes were checked, so a pack whose image and samples disagreed still
+  verified; a consumer that loads the entrypoint XML directly with MuJoCo reads
+  the image instead of the samples and would have received a different field.
+  The comparison allows one LSB of 16-bit rounding.
+
 ## [0.2.0a1] - 2026-09-15
 
 ### Added
