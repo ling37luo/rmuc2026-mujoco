@@ -48,6 +48,7 @@ test = [
   "networkx>=3,<4",
   "pillow>=10,<13",
   "pytest>=8,<9",
+  "python-xlib>=0.17,<1",
   "ruff>=0.12,<0.15",
   "trimesh==4.8.3",
 ]

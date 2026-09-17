@@ -27,6 +27,10 @@ project intends to follow [Semantic Versioning](https://semver.org/).
   `FieldAsset.open(..., verify=False)` now reports `PASS_SIZE_ONLY` and exposes
   `hashes_verified`, so a consumer cannot read a size-only check as an
   integrity claim.
+- The `test` extra now declares `python-xlib`, which `tests/test_viewer.py`
+  imports directly. CI installs only `.[test]`, so the synthetic-fixture job
+  had failed on every branch since `0bbee0d`, while the same suite passed in a
+  developer environment that also installs the `viewer` extra.
 
 ## [0.2.0a1] - 2026-09-15
 
