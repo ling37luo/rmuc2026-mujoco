@@ -6,6 +6,15 @@ project intends to follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Runtime packs now carry the collision sample-provenance record:
+  `collision.ray_misses_filled_with_ground`, `collision.isolated_spikes_replaced`,
+  and the source build's `collision.structural_audit`. These say how much of the
+  runtime surface is synthetic, which the pack previously reduced to a prose
+  claim boundary. A source build that never measured a counter records `null`
+  instead of a fabricated zero.
+
 ### Fixed
 
 - Pack verification now compares the collision bootstrap PNG against the

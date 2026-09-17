@@ -585,3 +585,27 @@ def test_bootstrap_png_accepts_one_lsb_quantization_difference(field_asset_dir: 
     _write_manifest(field_asset_dir, manifest)
 
     assert FieldAsset.open(field_asset_dir).collision["rows_y"] == 3
+
+
+def test_runtime_pack_rejects_a_malformed_sample_provenance_counter(
+    field_asset_dir: Path,
+) -> None:
+    manifest_path = field_asset_dir / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["collision"]["ray_misses_filled_with_ground"] = -3
+    _write_manifest(field_asset_dir, manifest)
+
+    with pytest.raises(ManifestError, match="non-negative integer"):
+        FieldAsset.open(field_asset_dir, verify=False)
+
+
+def test_runtime_pack_rejects_a_non_boolean_structural_audit_flag(
+    field_asset_dir: Path,
+) -> None:
+    manifest_path = field_asset_dir / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["collision"]["structural_audit"] = {"sealed_underpass_risk": "yes"}
+    _write_manifest(field_asset_dir, manifest)
+
+    with pytest.raises(ManifestError, match="must be a boolean"):
+        FieldAsset.open(field_asset_dir, verify=False)

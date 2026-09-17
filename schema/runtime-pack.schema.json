@@ -285,7 +285,21 @@
         "rows_y": {"type": "integer", "minimum": 2},
         "columns_x": {"type": "integer", "minimum": 2},
         "maximum_height_m": {"type": "number", "exclusiveMinimum": 0},
-        "base_depth_m": {"type": "number", "minimum": 0}
+        "base_depth_m": {"type": "number", "minimum": 0},
+        "ray_misses_filled_with_ground": {
+          "description": "Samples where the CAD ray hit nothing and a proxy ground value was stored; null when the source build did not measure it.",
+          "type": ["integer", "null"],
+          "minimum": 0
+        },
+        "isolated_spikes_replaced": {
+          "description": "Samples the isolated-spike median filter rewrote; null when the source build did not measure it.",
+          "type": ["integer", "null"],
+          "minimum": 0
+        },
+        "structural_audit": {
+          "description": "Single-valued 2.5-D topology declaration carried from the source build.",
+          "type": "object"
+        }
       },
       "additionalProperties": true
     },

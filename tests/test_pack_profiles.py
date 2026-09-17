@@ -548,3 +548,48 @@ def test_surface_guide_keeps_high_surfaces_and_omits_only_height_jumps(tmp_path:
         if line.startswith("v ")
     ]
     assert max(vertices) == pytest.approx(2.018)
+
+
+def test_export_carries_heightfield_sample_provenance(tmp_path: Path) -> None:
+    source = _synthetic_source_build(tmp_path / "source")
+    manifest_path = source / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["collision"]["ray_misses_filled_with_ground"] = 12_345
+    manifest["collision"]["isolated_spikes_replaced"] = 678
+    manifest["collision"]["structural_audit"] = {
+        "representation": "single_height_per_xy_cell_2.5D",
+        "underpasses_and_overhangs_preserved": False,
+        "sealed_underpass_risk": True,
+    }
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    output = tmp_path / "pack"
+    result = export_runtime_asset_pack(source, output)
+
+    assert result["collision"]["ray_misses_filled_with_ground"] == 12_345
+    assert result["collision"]["isolated_spikes_replaced"] == 678
+    assert result["collision"]["structural_audit"]["sealed_underpass_risk"] is True
+    asset = FieldAsset.open(output)
+    assert asset.collision["ray_misses_filled_with_ground"] == 12_345
+    assert asset.collision["isolated_spikes_replaced"] == 678
+
+
+def test_export_records_absent_sample_provenance_as_null(tmp_path: Path) -> None:
+    source = _synthetic_source_build(tmp_path / "source")
+
+    result = export_runtime_asset_pack(source, tmp_path / "pack")
+
+    assert result["collision"]["ray_misses_filled_with_ground"] is None
+    assert result["collision"]["isolated_spikes_replaced"] is None
+    assert "structural_audit" not in result["collision"]
+
+
+def test_export_rejects_a_negative_sample_provenance_counter(tmp_path: Path) -> None:
+    source = _synthetic_source_build(tmp_path / "source")
+    manifest_path = source / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["collision"]["isolated_spikes_replaced"] = -1
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    with pytest.raises(ExportBlocked, match="非负整数"):
+        export_runtime_asset_pack(source, tmp_path / "pack")

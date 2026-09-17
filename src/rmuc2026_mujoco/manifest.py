@@ -469,6 +469,20 @@ def _validate_cross_references(
     )
     if collision.get("png_rows") != "flipped_y_for_mujoco_hfield_loader":
         raise ManifestError("unsupported collision PNG row orientation")
+    # Preview-era packs predate these sample-provenance records, so they stay
+    # optional; when a pack does record them they must be usable as evidence.
+    for counter in ("ray_misses_filled_with_ground", "isolated_spikes_replaced"):
+        recorded = collision.get(counter)
+        if recorded is None:
+            continue
+        if isinstance(recorded, bool) or not isinstance(recorded, int) or recorded < 0:
+            raise ManifestError(f"collision.{counter} must be a non-negative integer")
+    structural_audit = collision.get("structural_audit")
+    if structural_audit is not None:
+        audit = _mapping(structural_audit, label="collision.structural_audit")
+        for flag in ("underpasses_and_overhangs_preserved", "sealed_underpass_risk"):
+            if flag in audit and not isinstance(audit[flag], bool):
+                raise ManifestError(f"collision.structural_audit.{flag} must be a boolean")
 
     frame = _mapping(manifest.get("coordinate_frame"), label="coordinate_frame")
     if frame.get("world_units") != "metre-radian-kilogram-second" or frame.get("z_up") is not True:

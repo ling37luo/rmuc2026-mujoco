@@ -72,6 +72,31 @@ def _finite_numbers(value: object, *, count: int, label: str) -> list[float]:
     return numbers
 
 
+def _json_safe_copy(value: object, label: str) -> object:
+    """Refuse NaN/Infinity instead of writing a manifest that no parser accepts."""
+
+    try:
+        return json.loads(json.dumps(value, allow_nan=False))
+    except (TypeError, ValueError) as exc:
+        raise ExportBlocked(f"{label}不是可序列化的有限JSON：{exc}") from exc
+
+
+def _source_count(source: dict[str, Any], key: str, *, label: str) -> int | None:
+    """Copy an audit counter, or record None when the source never measured it.
+
+    The runtime pack keeps the counters that say how much of the collision
+    surface is synthetic.  A missing counter stays explicit rather than
+    becoming a fabricated zero.
+    """
+
+    value = source.get(key)
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise ExportBlocked(f"{label}.{key}必须是非负整数")
+    return value
+
+
 def _display_rgba(source_rgba: list[float], *, visual_role: str) -> list[float]:
     """Map source colours to a legible display palette without changing provenance."""
 
@@ -795,14 +820,29 @@ def export_runtime_asset_pack(
             "base_depth_m": float(collision["base_depth_m"]),
             "resolution_m": float(collision.get("resolution_m", math.nan)),
             "png_rows": collision.get("png_rows"),
+            "ray_misses_filled_with_ground": _source_count(
+                collision,
+                "ray_misses_filled_with_ground",
+                label="collision",
+            ),
+            "isolated_spikes_replaced": _source_count(
+                collision,
+                "isolated_spikes_replaced",
+                label="collision",
+            ),
             "claim_boundary": collision.get("claim_boundary"),
         }
+        structural_audit = collision.get("structural_audit")
+        if structural_audit is not None:
+            compact_collision["structural_audit"] = _json_safe_copy(
+                _json_object(structural_audit, "collision.structural_audit"),
+                "collision.structural_audit",
+            )
         fixed_ramp_audit = collision.get("fixed_fly_ramp_audit")
         if fixed_ramp_audit is not None:
-            if not isinstance(fixed_ramp_audit, dict):
-                raise ExportBlocked("collision.fixed_fly_ramp_audit必须是对象")
-            compact_collision["fixed_fly_ramp_audit"] = json.loads(
-                json.dumps(fixed_ramp_audit, allow_nan=False)
+            compact_collision["fixed_fly_ramp_audit"] = _json_safe_copy(
+                _json_object(fixed_ramp_audit, "collision.fixed_fly_ramp_audit"),
+                "collision.fixed_fly_ramp_audit",
             )
         compact_manifest: dict[str, Any] = {
             "schema_version": OUTPUT_SCHEMA_VERSION,
