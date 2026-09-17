@@ -136,10 +136,14 @@ class ValidationReport:
     verified_bytes: int
     collision_shape: tuple[int, int]
     validation_status: str
+    hashes_verified: bool
 
     def to_dict(self) -> dict[str, object]:
         return {
-            "status": "PASS",
+            # A size-only pass must not read as an integrity claim, so it gets
+            # its own status instead of sharing PASS with the verified path.
+            "status": "PASS" if self.hashes_verified else "PASS_SIZE_ONLY",
+            "hashes_verified": self.hashes_verified,
             "root": str(self.root),
             "manifest_sha256": self.manifest_sha256,
             "entrypoint": str(self.entrypoint),
@@ -181,6 +185,10 @@ class FieldAsset:
     manifest: Mapping[str, Any]
     manifest_sha256: str
     verified_files: tuple[Path, ...]
+    # False means only the declared sizes were compared, so a consumer that
+    # treats this pack as verified must check the flag instead of the report
+    # status alone.
+    hashes_verified: bool
     _files_by_relative: Mapping[str, Path]
 
     @classmethod
@@ -210,6 +218,7 @@ class FieldAsset:
             manifest=manifest,
             manifest_sha256=sha256_file(manifest_path),
             verified_files=tuple(file_paths.values()),
+            hashes_verified=verify,
             _files_by_relative=file_paths,
         )
 
@@ -291,6 +300,7 @@ class FieldAsset:
             verified_bytes=sum(path.stat().st_size for path in self.verified_files),
             collision_shape=(int(collision["rows_y"]), int(collision["columns_x"])),
             validation_status=str(self.manifest["validation_status"]),
+            hashes_verified=self.hashes_verified,
         )
 
 

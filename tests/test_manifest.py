@@ -609,3 +609,19 @@ def test_runtime_pack_rejects_a_non_boolean_structural_audit_flag(
 
     with pytest.raises(ManifestError, match="must be a boolean"):
         FieldAsset.open(field_asset_dir, verify=False)
+
+
+def test_report_does_not_claim_hash_verification_when_hashes_were_skipped(
+    field_asset_dir: Path,
+) -> None:
+    verified = FieldAsset.open(field_asset_dir)
+    assert verified.hashes_verified is True
+    assert verified.report().to_dict()["status"] == "PASS"
+
+    unverified = FieldAsset.open(field_asset_dir, verify=False)
+    assert unverified.hashes_verified is False
+    report = unverified.report().to_dict()
+    assert report["status"] == "PASS_SIZE_ONLY"
+    assert report["hashes_verified"] is False
+    # The size-only path still compares every declared size.
+    assert report["verified_file_count"] == 5
