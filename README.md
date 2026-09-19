@@ -287,6 +287,27 @@ For that reason generated manifests deliberately remain `DRAFT_BLOCKED`:
 | Official simulator status | No; this project is unofficial |
 | Final whole-field policy validation | Not claimed |
 
+The repository also provides a read-only recheck for the previously audited
+parts 292 and 312. It pins the legacy CAD-ray evidence by hash, verifies the
+current 1 cm runtime pack and both source manifests, rejects a changed coordinate
+transform, then recomputes whether the
+current heightfield seals those candidate gaps. The recorded horizontal ray
+masks are replayed for the robot's required entry width. Run it with:
+
+```bash
+.venv/bin/python -m rmuc2026_mujoco.clearance_review PACK_DIR \
+  --source-manifest SOURCE_MANIFEST.json \
+  --multihit-audit MULTIHIT_AUDIT_DIR \
+  --horizontal-audit HORIZONTAL_AUDIT_DIR \
+  --output NEW_RESULT.json
+```
+
+The JSON reports `integrity_status` separately from its top-level `status`.
+Matching hashes and a complete recheck can yield integrity `PASS` while the
+collision decision remains `BLOCKED`. This audit never edits a runtime pack or
+approves an underpass; diagonal access and contact ownership remain separate
+checks.
+
 Run the fixed-ramp dynamics gate against an exported pack with:
 
 ```bash
