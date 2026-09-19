@@ -16,8 +16,10 @@ import xml.etree.ElementTree as ET
 import numpy as np
 
 from .livery import (
+    LiveryProcessingError,
     SOURCE_BAKED_SCENE_CONTENT,
     SOURCE_SURFACE_GUIDE_KIND,
+    mask_rulebook_page_edge,
 )
 
 
@@ -40,9 +42,10 @@ SURFACE_GUIDE_MESH_FILE = "visual/rmuc2026_surface_guide.obj"
 SURFACE_GUIDE_GEOM_NAME = "rmuc2026_surface_guide"
 SURFACE_GUIDE_GEOM_GROUP = 4
 SURFACE_GUIDE_BAKED_CONTENT = SOURCE_BAKED_SCENE_CONTENT
-SURFACE_GUIDE_SAMPLING_M = 0.20
+SURFACE_GUIDE_SAMPLING_M = 0.05
 SURFACE_GUIDE_CLEARANCE_M = 0.018
 SURFACE_GUIDE_MAXIMUM_CELL_HEIGHT_DELTA_M = 0.20
+SURFACE_GUIDE_UNDERCUT_MARGIN_M = 0.002
 
 
 class ExportBlocked(RuntimeError):
@@ -267,6 +270,60 @@ def _mujoco_triangle_height_samples(
     return np.where(v > u, upper_triangle, lower_triangle)
 
 
+def _surface_guide_maximum_undercut(
+    x: np.ndarray,
+    y: np.ndarray,
+    height: np.ndarray,
+    selected_x: np.ndarray,
+    selected_y: np.ndarray,
+    selected_height: np.ndarray,
+) -> np.ndarray:
+    """Measure terrain protrusions hidden between guide-grid vertices.
+
+    Four-corner checks alone miss isolated 1 cm heightfield features. Inspect
+    each authoritative sample against the same diagonal used for OBJ faces,
+    in row chunks so a full field does not allocate multiple 4.7M-point arrays.
+    """
+
+    x_inside = (x >= selected_x[0]) & (x <= selected_x[-1])
+    x_cells = np.clip(np.searchsorted(selected_x, x, side="right") - 1, 0, len(selected_x) - 2)
+    u = (x - selected_x[x_cells]) / (selected_x[x_cells + 1] - selected_x[x_cells])
+    result = np.full((len(selected_y) - 1, len(selected_x) - 1), -np.inf)
+    for first_row in range(0, len(y), 128):
+        stop_row = min(first_row + 128, len(y))
+        section_y = y[first_row:stop_row]
+        y_inside = (section_y >= selected_y[0]) & (section_y <= selected_y[-1])
+        y_cells = np.clip(
+            np.searchsorted(selected_y, section_y, side="right") - 1,
+            0,
+            len(selected_y) - 2,
+        )
+        v = (section_y - selected_y[y_cells]) / (selected_y[y_cells + 1] - selected_y[y_cells])
+        lower_left = selected_height[np.ix_(y_cells, x_cells)]
+        lower_right = selected_height[np.ix_(y_cells, x_cells + 1)]
+        upper_left = selected_height[np.ix_(y_cells + 1, x_cells)]
+        upper_right = selected_height[np.ix_(y_cells + 1, x_cells + 1)]
+        lower_triangle = (
+            lower_left
+            + (lower_right - lower_left) * u[None, :]
+            + (upper_right - lower_right) * v[:, None]
+        )
+        upper_triangle = (
+            lower_left
+            + (upper_right - upper_left) * u[None, :]
+            + (upper_left - lower_left) * v[:, None]
+        )
+        guide_height = np.where(v[:, None] > u[None, :], upper_triangle, lower_triangle)
+        undercut = height[first_row:stop_row] - guide_height
+        undercut[~(y_inside[:, None] & x_inside[None, :])] = -np.inf
+        np.maximum.at(result, (y_cells[:, None], x_cells[None, :]), undercut)
+    center_x = 0.5 * (selected_x[:-1] + selected_x[1:])
+    center_y = 0.5 * (selected_y[:-1] + selected_y[1:])
+    center_height = _mujoco_triangle_height_samples(x, y, height, center_x, center_y)
+    guide_center_height = 0.5 * (selected_height[:-1, :-1] + selected_height[1:, 1:])
+    return np.maximum(result, center_height - guide_center_height)
+
+
 def _write_surface_guide_mesh(
     path: Path,
     *,
@@ -277,10 +334,12 @@ def _write_surface_guide_mesh(
 ) -> dict[str, Any]:
     """Write the full non-contact rulebook surface used by the visual5 pack.
 
-    The 20 cm grid follows MuJoCo's fixed-diagonal heightfield surface. Cells
-    that cross a height discontinuity are omitted so the picture is not drawn
-    vertically across a wall, while the complete RGB texture remains available
-    on every retained surface cell. Texture alpha never selects the geometry.
+    The 5 cm grid follows MuJoCo's fixed-diagonal heightfield surface. Keeping
+    omitted cells this small avoids visible stair-steps at raised platform edges.
+    Cells that cross a height discontinuity are omitted so the picture is not
+    drawn vertically across a wall, while the complete RGB texture remains
+    available on every retained surface cell. Texture alpha never selects the
+    geometry.
     """
 
     try:
@@ -335,7 +394,12 @@ def _write_surface_guide_mesh(
             selected_height[1:, 1:],
         )
     )
-    visible_cells = cell_maximum - cell_minimum <= SURFACE_GUIDE_MAXIMUM_CELL_HEIGHT_DELTA_M
+    maximum_undercut = _surface_guide_maximum_undercut(
+        x, y, height, selected_x, selected_y, selected_height - SURFACE_GUIDE_CLEARANCE_M
+    )
+    smooth_cells = cell_maximum - cell_minimum <= SURFACE_GUIDE_MAXIMUM_CELL_HEIGHT_DELTA_M
+    undercut_cells = maximum_undercut > SURFACE_GUIDE_CLEARANCE_M - SURFACE_GUIDE_UNDERCUT_MARGIN_M
+    visible_cells = smooth_cells & ~undercut_cells
     if not np.any(visible_cells):
         raise ExportBlocked("surface_guide跨高度接缝过滤后没有可显示三角面")
 
@@ -377,7 +441,7 @@ def _write_surface_guide_mesh(
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(lines) + "\n", encoding="ascii")
     return {
-        "method": "full_rulebook_surface_20cm_mujoco_triangle_height_sampling",
+        "method": "full_rulebook_surface_5cm_mujoco_triangle_height_sampling",
         "target_spacing_m": SURFACE_GUIDE_SAMPLING_M,
         "actual_max_spacing_xy_m": [
             float(np.max(np.diff(selected_x))),
@@ -389,7 +453,8 @@ def _write_surface_guide_mesh(
         "faces": face_count,
         "omitted_cells": omitted_cell_count,
         "cell_count": cell_count,
-        "height_discontinuity_filtered_cells": omitted_cell_count,
+        "height_discontinuity_filtered_cells": int(np.count_nonzero(~smooth_cells)),
+        "interior_undercut_filtered_cells": int(np.count_nonzero(smooth_cells & undercut_cells)),
         "mesh_size_bytes": path.stat().st_size,
         "boundary_xy_height_interpolation": True,
         "source_texture_alpha_drives_topology": False,
@@ -729,11 +794,15 @@ def export_runtime_asset_pack(
             texture_destination = staging / SURFACE_GUIDE_TEXTURE_FILE
             texture_destination.parent.mkdir(parents=True, exist_ok=True)
             world_bounds = np.asarray(source_surface["world_bounds_xy_m"], dtype=np.float64)
-            # Keep the complete opaque rulebook render. It already has bounded,
-            # neutral edge pixels, so direct byte preservation avoids both the
-            # transparent black fringe seen in filtered overlays and any colour
-            # loss from another image encode.
-            shutil.copyfile(source_surface["source_path"], texture_destination)
+            # Preserve the complete image and its source hash in the field
+            # build, but hide only the connected white PDF margin in the local
+            # runtime texture. The RGB bleed avoids transparent white fringes.
+            try:
+                edge_processing = mask_rulebook_page_edge(
+                    source_surface["source_path"], texture_destination
+                )
+            except LiveryProcessingError as exc:
+                raise ExportBlocked(f"surface_guide页边处理失败：{exc}") from exc
             mesh_destination = staging / SURFACE_GUIDE_MESH_FILE
             recommended_spawn = _json_object(
                 source_manifest.get("recommended_spawn"), "recommended_spawn"
@@ -760,6 +829,8 @@ def export_runtime_asset_pack(
                 "mesh_sha256": sha256_file(mesh_destination),
                 "texture_file": SURFACE_GUIDE_TEXTURE_FILE,
                 "texture_sha256": sha256_file(texture_destination),
+                "source_texture_sha256": source_surface["source_sha256"],
+                "edge_processing": edge_processing,
                 "contains_baked_scene_content": list(SURFACE_GUIDE_BAKED_CONTENT),
             }
             livery_files.extend(

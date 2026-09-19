@@ -7,6 +7,7 @@ packs can still be validated and reproduced when explicitly needed.
 
 from __future__ import annotations
 
+from collections import deque
 from pathlib import Path
 from typing import Any, Sequence
 
@@ -23,6 +24,11 @@ SOURCE_BAKED_SCENE_CONTENT = (
     "robots",
     "shadows",
 )
+SOURCE_GUIDE_EDGE_ALGORITHM = "boundary_connected_near_white_alpha_v1"
+SOURCE_GUIDE_EDGE_WHITE_MIN = 240
+SOURCE_GUIDE_EDGE_NEUTRAL_SPAN = 12
+SOURCE_GUIDE_EDGE_BAND_FRACTION = 0.03
+SOURCE_GUIDE_EDGE_BAND_MAX_PX = 32
 GROUND_MARKING_RETAINED_CONTENT = (
     "red ground markings",
     "blue ground markings",
@@ -47,6 +53,127 @@ GROUND_MARKING_RGB_BLEED_RADIUS_PX = 4
 
 class LiveryProcessingError(ValueError):
     """The local rulebook image cannot produce a bounded markings overlay."""
+
+
+def mask_rulebook_page_edge(source: Path, destination: Path) -> dict[str, Any]:
+    """Make only boundary-connected white PDF margins transparent.
+
+    The source remains unmodified and the image dimensions stay the same, so
+    world UV coordinates and every interior marking retain their exact pixels.
+    Transparent RGB is filled from nearby opaque pixels to avoid a white fringe
+    when the renderer bilinearly samples the edge.
+    """
+
+    from PIL import Image
+
+    try:
+        with Image.open(source) as image:
+            rgb = np.asarray(image.convert("RGB"), dtype=np.uint8).copy()
+    except (OSError, ValueError) as exc:
+        raise LiveryProcessingError(f"cannot read rulebook surface guide: {exc}") from exc
+    rows, columns = rgb.shape[:2]
+    if rows < 2 or columns < 2:
+        raise LiveryProcessingError("rulebook surface guide must be at least 2x2 pixels")
+    band_x = min(
+        SOURCE_GUIDE_EDGE_BAND_MAX_PX,
+        max(2, int(np.ceil(columns * SOURCE_GUIDE_EDGE_BAND_FRACTION))),
+    )
+    band_y = min(
+        SOURCE_GUIDE_EDGE_BAND_MAX_PX,
+        max(2, int(np.ceil(rows * SOURCE_GUIDE_EDGE_BAND_FRACTION))),
+    )
+    channel_min = rgb.min(axis=2)
+    channel_span = rgb.max(axis=2) - channel_min
+    near_white = (channel_min >= SOURCE_GUIDE_EDGE_WHITE_MIN) & (
+        channel_span <= SOURCE_GUIDE_EDGE_NEUTRAL_SPAN
+    )
+    border_band = np.zeros((rows, columns), dtype=bool)
+    border_band[:band_y] = True
+    border_band[-band_y:] = True
+    border_band[:, :band_x] = True
+    border_band[:, -band_x:] = True
+    candidates = near_white & border_band
+    hidden = np.zeros((rows, columns), dtype=bool)
+    pending: deque[tuple[int, int]] = deque()
+    for column in range(columns):
+        for row in (0, rows - 1):
+            if candidates[row, column] and not hidden[row, column]:
+                hidden[row, column] = True
+                pending.append((row, column))
+    for row in range(1, rows - 1):
+        for column in (0, columns - 1):
+            if candidates[row, column] and not hidden[row, column]:
+                hidden[row, column] = True
+                pending.append((row, column))
+    while pending:
+        row, column = pending.popleft()
+        for adjacent_row, adjacent_column in (
+            (row - 1, column),
+            (row + 1, column),
+            (row, column - 1),
+            (row, column + 1),
+        ):
+            if (
+                0 <= adjacent_row < rows
+                and 0 <= adjacent_column < columns
+                and candidates[adjacent_row, adjacent_column]
+                and not hidden[adjacent_row, adjacent_column]
+            ):
+                hidden[adjacent_row, adjacent_column] = True
+                pending.append((adjacent_row, adjacent_column))
+
+    # Carry opaque edge colours outward before setting alpha to zero. This
+    # leaves the source's RGB intact wherever the texture remains visible.
+    frontier: deque[tuple[int, int]] = deque()
+    assigned = ~hidden
+    for row, column in np.argwhere(hidden):
+        for adjacent_row, adjacent_column in (
+            (row - 1, column),
+            (row + 1, column),
+            (row, column - 1),
+            (row, column + 1),
+        ):
+            if (
+                0 <= adjacent_row < rows
+                and 0 <= adjacent_column < columns
+                and assigned[adjacent_row, adjacent_column]
+            ):
+                rgb[row, column] = rgb[adjacent_row, adjacent_column]
+                assigned[row, column] = True
+                frontier.append((row, column))
+                break
+    while frontier:
+        row, column = frontier.popleft()
+        for adjacent_row, adjacent_column in (
+            (row - 1, column),
+            (row + 1, column),
+            (row, column - 1),
+            (row, column + 1),
+        ):
+            if (
+                0 <= adjacent_row < rows
+                and 0 <= adjacent_column < columns
+                and hidden[adjacent_row, adjacent_column]
+                and not assigned[adjacent_row, adjacent_column]
+            ):
+                rgb[adjacent_row, adjacent_column] = rgb[row, column]
+                assigned[adjacent_row, adjacent_column] = True
+                frontier.append((adjacent_row, adjacent_column))
+    rgba = np.empty((rows, columns, 4), dtype=np.uint8)
+    rgba[:, :, :3] = rgb
+    rgba[:, :, 3] = np.where(hidden, 0, 255).astype(np.uint8)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    Image.fromarray(rgba, mode="RGBA").save(destination, format="PNG", optimize=True)
+    return {
+        "algorithm": SOURCE_GUIDE_EDGE_ALGORITHM,
+        "white_rgb_min": SOURCE_GUIDE_EDGE_WHITE_MIN,
+        "neutral_rgb_span_max": SOURCE_GUIDE_EDGE_NEUTRAL_SPAN,
+        "border_band_fraction": SOURCE_GUIDE_EDGE_BAND_FRACTION,
+        "border_band_max_px": SOURCE_GUIDE_EDGE_BAND_MAX_PX,
+        "masked_pixels": int(np.count_nonzero(hidden)),
+        "interior_rgb_preserved": True,
+        "world_uv_unchanged": True,
+    }
 
 
 def _dilate(mask: np.ndarray) -> np.ndarray:

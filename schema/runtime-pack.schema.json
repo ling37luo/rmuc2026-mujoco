@@ -105,7 +105,7 @@
           "oneOf": [
             {
               "title": "Complete rulebook overhead livery",
-              "description": "The complete locally extracted overhead render, including baked robots, field modules, obstacles, and shadows.",
+              "description": "The complete locally extracted overhead render, including baked robots, field modules, obstacles, and shadows. New local exports also record the original image hash and transparent page-edge processing; earlier full-guide packs omit both fields.",
               "type": "object",
               "required": [
                 "kind", "geom_name", "geom_group", "default_visible", "toggle_key",
@@ -123,11 +123,35 @@
                 "mesh_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
                 "texture_file": {"type": "string", "pattern": "\\.png$"},
                 "texture_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+                "source_texture_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+                "edge_processing": {
+                  "type": "object",
+                  "required": [
+                    "algorithm", "white_rgb_min", "neutral_rgb_span_max",
+                    "border_band_fraction", "border_band_max_px", "masked_pixels",
+                    "interior_rgb_preserved", "world_uv_unchanged"
+                  ],
+                  "properties": {
+                    "algorithm": {"const": "boundary_connected_near_white_alpha_v1"},
+                    "white_rgb_min": {"const": 240},
+                    "neutral_rgb_span_max": {"const": 12},
+                    "border_band_fraction": {"const": 0.03},
+                    "border_band_max_px": {"const": 32},
+                    "masked_pixels": {"type": "integer", "minimum": 0},
+                    "interior_rgb_preserved": {"const": true},
+                    "world_uv_unchanged": {"const": true}
+                  },
+                  "additionalProperties": false
+                },
                 "contains_baked_scene_content": {
                   "const": [
                     "fixed field-module appearance", "obstacle appearance", "robots", "shadows"
                   ]
                 }
+              },
+              "dependentRequired": {
+                "source_texture_sha256": ["edge_processing"],
+                "edge_processing": ["source_texture_sha256"]
               },
               "additionalProperties": false
             },

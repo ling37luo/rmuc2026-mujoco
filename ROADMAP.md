@@ -13,10 +13,17 @@ Completing a code item never upgrades a geometry-validation status by itself.
 - expose explicit, unofficial friction presets;
 - test and audit wheels/source archives without third-party assets.
 
-## 0.2 — validated static interaction
+## 0.2.0 — bounded static-interaction foundations
 
-- expose deterministic terrain-surface and candidate-spawn screening while
-  preserving an explicit non-topology-verified claim boundary; **implemented**
+This release adds a 1 cm heightfield option, deterministic terrain-surface and
+candidate-spawn screening, and evidence tied to the two fixed 17-degree fly
+ramps. It also improves the optional local-only visual guide and its display
+controls. These are bounded capabilities, not whole-field collision approval:
+generated runtime packs retain `DRAFT_BLOCKED`, and spawn screening is not
+topology-verified.
+
+## Planned static-interaction work
+
 - add a versioned registry of robot-validated spawn poses and static routes;
 - add query APIs for semantic, unsupported, or unverified zones;
 - add multi-hit vertical and horizontal-blocker audits before any multi-level

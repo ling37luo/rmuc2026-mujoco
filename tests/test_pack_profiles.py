@@ -10,6 +10,7 @@ import zlib
 
 import numpy as np
 import pytest
+from PIL import Image
 
 from rmuc2026_mujoco import FieldAsset, ManifestError
 from rmuc2026_mujoco.download import OFFICIAL_STEP_SHA256, OFFICIAL_STEP_SIZE
@@ -282,11 +283,23 @@ def test_export_can_include_fail_closed_non_contact_livery(tmp_path: Path) -> No
     assert livery["mesh_sha256"] == _sha(output / "visual/rmuc2026_surface_guide.obj")
     assert livery["texture_file"] == SURFACE_GUIDE_TEXTURE_FILE
     assert livery["texture_sha256"] == _sha(output / SURFACE_GUIDE_TEXTURE_FILE)
+    assert livery["source_texture_sha256"] == _sha(
+        source / "visual/official_rulebook_v2_overhead_surface.png"
+    )
+    assert livery["edge_processing"]["algorithm"] == "boundary_connected_near_white_alpha_v1"
     assert livery["contains_baked_scene_content"] == list(SURFACE_GUIDE_BAKED_CONTENT)
     assert "processing" not in livery
     assert "surface_sampling" not in livery
     source_texture = source / "visual/official_rulebook_v2_overhead_surface.png"
-    assert (output / SURFACE_GUIDE_TEXTURE_FILE).read_bytes() == source_texture.read_bytes()
+    with (
+        Image.open(source_texture) as source_image,
+        Image.open(output / SURFACE_GUIDE_TEXTURE_FILE) as runtime_image,
+    ):
+        assert runtime_image.mode == "RGBA"
+        assert np.array_equal(
+            np.asarray(runtime_image)[:, :, :3], np.asarray(source_image.convert("RGB"))
+        )
+        assert np.all(np.asarray(runtime_image)[:, :, 3] == 255)
     assert result["excluded"]["official_rulebook_screenshot"] is False
     assert result["excluded"]["rulebook_derived_ground_marking_overlay"] is True
     full = ET.parse(asset.entrypoint_for("full")).getroot()
@@ -339,6 +352,8 @@ def test_surface_guide_source_contract_fails_closed(
         ("physics", True, "schema-2 contract"),
         ("mesh_sha256", "0" * 64, "SHA-256"),
         ("contains_baked_scene_content", ["floor"], "full-guide contract"),
+        ("source_texture_sha256", "invalid", "source_texture_sha256"),
+        ("edge_processing", {}, "edge_processing contract"),
     ],
 )
 def test_runtime_livery_manifest_contract_fails_closed(
@@ -367,6 +382,8 @@ def test_loader_keeps_earlier_filtered_marking_schema2_compatible(tmp_path: Path
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     livery = manifest["visual_layers"]["livery"]
     livery.pop("contains_baked_scene_content")
+    livery.pop("source_texture_sha256")
+    livery.pop("edge_processing")
     livery.update(
         {
             "kind": GROUND_MARKING_OVERLAY_KIND,
@@ -469,7 +486,7 @@ def test_runtime_livery_xml_contract_fails_closed_after_rehash(
         FieldAsset.open(output)
 
 
-def test_surface_guide_uses_twenty_centimetre_exact_xy_sampling(tmp_path: Path) -> None:
+def test_surface_guide_uses_five_centimetre_exact_xy_sampling(tmp_path: Path) -> None:
     x = np.linspace(0.0, 1.0, 101)
     y = np.linspace(0.0, 1.0, 101)
     height = 0.1 * x[None, :] + 0.2 * y[:, None]
@@ -490,8 +507,8 @@ def test_surface_guide_uses_twenty_centimetre_exact_xy_sampling(tmp_path: Path) 
         world_bounds_xy_m=bounds,
     )
 
-    assert report["method"] == "full_rulebook_surface_20cm_mujoco_triangle_height_sampling"
-    assert max(report["actual_max_spacing_xy_m"]) <= 0.20 + 1.0e-9
+    assert report["method"] == "full_rulebook_surface_5cm_mujoco_triangle_height_sampling"
+    assert max(report["actual_max_spacing_xy_m"]) <= 0.05 + 1.0e-9
     assert report["omitted_cells"] == 0
     assert report["source_texture_alpha_drives_topology"] is False
     lines = mesh.read_text(encoding="ascii").splitlines()
@@ -540,7 +557,9 @@ def test_surface_guide_keeps_high_surfaces_and_omits_only_height_jumps(tmp_path:
     )
 
     assert 0 < report["height_discontinuity_filtered_cells"] < report["cell_count"]
-    assert report["omitted_cells"] == report["height_discontinuity_filtered_cells"]
+    assert report["omitted_cells"] == (
+        report["height_discontinuity_filtered_cells"] + report["interior_undercut_filtered_cells"]
+    )
     assert report["faces"] == 2 * (report["cell_count"] - report["omitted_cells"])
     vertices = [
         float(line.split()[3])
@@ -548,6 +567,31 @@ def test_surface_guide_keeps_high_surfaces_and_omits_only_height_jumps(tmp_path:
         if line.startswith("v ")
     ]
     assert max(vertices) == pytest.approx(2.018)
+
+
+def test_surface_guide_omits_hidden_terrain_spike_inside_a_smooth_cell(tmp_path: Path) -> None:
+    x = np.linspace(0.0, 1.0, 101)
+    y = np.linspace(0.0, 1.0, 101)
+    height = np.zeros((101, 101))
+    height[2, 2] = 0.3  # 5 cm cell corners remain zero despite the interior spike
+    samples = tmp_path / "heightfield.npz"
+    np.savez_compressed(samples, x_m=x, y_m=y, height_m=height)
+
+    report = _write_surface_guide_mesh(
+        tmp_path / "guide.obj",
+        samples_path=samples,
+        collision={"rows_y": 101, "columns_x": 101},
+        recommended_spawn={
+            "x_before_translation_m": 0.0,
+            "y_before_translation_m": 0.0,
+            "terrain_height_m": 0.0,
+        },
+        world_bounds_xy_m=np.asarray([[0.0, 0.0], [1.0, 1.0]]),
+    )
+
+    assert report["height_discontinuity_filtered_cells"] == 0
+    assert report["interior_undercut_filtered_cells"] >= 1
+    assert report["faces"] < 2 * report["cell_count"]
 
 
 def test_export_carries_heightfield_sample_provenance(tmp_path: Path) -> None:

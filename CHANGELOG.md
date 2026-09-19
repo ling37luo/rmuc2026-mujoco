@@ -6,6 +6,12 @@ project intends to follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-09-19
+
+This code-only release improves local visual-guide generation and runtime-pack
+verification. Generated field packs remain `DRAFT_BLOCKED`; no official or
+source-derived field assets are included.
+
 ### Added
 
 - Runtime packs now carry the collision sample-provenance record:
@@ -17,6 +23,16 @@ project intends to follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- The optional full rulebook livery now follows a 5 cm visual grid instead of
+  20 cm, reducing stepped gaps along raised-platform edges. Cells that would
+  hide an interior 1 cm terrain protrusion are omitted; the collision
+  heightfield, 18 mm visual clearance, and group 4 zero-contact contract stay
+  unchanged.
+- Boundary-connected near-white rulebook page margins now become transparent
+  in the locally generated runtime texture. Interior RGB pixels and world UVs
+  are preserved; the manifest records the source-image hash and processing
+  contract while existing schema 2 packs remain readable. The published JSON
+  schema accepts the new fields as a validated pair.
 - Pack verification now compares the collision bootstrap PNG against the
   verified float samples it is supposed to quantize. Previously only the two
   hashes were checked, so a pack whose image and samples disagreed still

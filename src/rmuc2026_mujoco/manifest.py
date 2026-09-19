@@ -23,6 +23,11 @@ from .livery import (
     GROUND_MARKING_RETAINED_CONTENT,
     GROUND_MARKING_RGB_BLEED_RADIUS_PX,
     SOURCE_BAKED_SCENE_CONTENT,
+    SOURCE_GUIDE_EDGE_ALGORITHM,
+    SOURCE_GUIDE_EDGE_BAND_FRACTION,
+    SOURCE_GUIDE_EDGE_BAND_MAX_PX,
+    SOURCE_GUIDE_EDGE_NEUTRAL_SPAN,
+    SOURCE_GUIDE_EDGE_WHITE_MIN,
     SOURCE_SURFACE_GUIDE_KIND,
 )
 
@@ -608,10 +613,38 @@ def _validate_visual_layers(
     if any(livery.get(key) != value for key, value in common_values.items()):
         raise ManifestError("visual_layers.livery does not match the schema-2 contract")
     if kind == SURFACE_GUIDE_KIND:
-        if set(livery) != common_keys | {"contains_baked_scene_content"}:
+        legacy_keys = common_keys | {"contains_baked_scene_content"}
+        processed_keys = legacy_keys | {"source_texture_sha256", "edge_processing"}
+        if set(livery) not in (legacy_keys, processed_keys):
             raise ManifestError("visual_layers.livery contains unsupported or missing fields")
         if livery.get("contains_baked_scene_content") != list(SURFACE_GUIDE_BAKED_CONTENT):
             raise ManifestError("visual_layers.livery does not match the full-guide contract")
+        if set(livery) == processed_keys:
+            _sha256(
+                livery.get("source_texture_sha256"),
+                label="visual_layers.livery.source_texture_sha256",
+            )
+            processing = _mapping(
+                livery.get("edge_processing"), label="visual_layers.livery.edge_processing"
+            )
+            expected_processing = {
+                "algorithm": SOURCE_GUIDE_EDGE_ALGORITHM,
+                "white_rgb_min": SOURCE_GUIDE_EDGE_WHITE_MIN,
+                "neutral_rgb_span_max": SOURCE_GUIDE_EDGE_NEUTRAL_SPAN,
+                "border_band_fraction": SOURCE_GUIDE_EDGE_BAND_FRACTION,
+                "border_band_max_px": SOURCE_GUIDE_EDGE_BAND_MAX_PX,
+                "interior_rgb_preserved": True,
+                "world_uv_unchanged": True,
+            }
+            if set(processing) != set(expected_processing) | {"masked_pixels"} or any(
+                processing.get(key) != value for key, value in expected_processing.items()
+            ):
+                raise ManifestError("visual_layers.livery.edge_processing contract is invalid")
+            _integer(
+                processing.get("masked_pixels"),
+                label="visual_layers.livery.edge_processing.masked_pixels",
+                minimum=0,
+            )
         texture_role = "official_rulebook_surface_texture"
     elif kind == GROUND_MARKING_OVERLAY_KIND:
         expected_keys = common_keys | {
