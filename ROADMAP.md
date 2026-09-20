@@ -24,6 +24,13 @@ topology-verified.
 
 ## Planned static-interaction work
 
+- resolve the source-backed top-edge part 236/552 contact transition before
+  offering it as a robot route. Both the existing and source-negative local
+  1 cm trials reach MuJoCo's 50-contact-per-pair heightfield limit, and a
+  matched robot can leave the field. A local exact-source convex triangle
+  improves one approach, but covers only 22.6% of the part-236 roof group;
+  its adjacent official slopes need separate, non-overlapping owners. Source
+  fidelity and safe route behavior require separate gates;
 - define and validate robot out-of-bounds termination before promoting the
   source-ray-masked schema-3 pack. Initial frozen-robot edge routes lost field
   contact and later produced `BADQACC`; keep the finite -5 m floor labeled

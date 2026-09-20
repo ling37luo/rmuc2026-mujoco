@@ -296,6 +296,13 @@ an opening that is visibly open in the CAD mesh. Each region therefore needs
 its own multi-hit, horizontal-blocker, and clearance checks before being
 promoted for physical interaction.
 
+MuJoCo's [heightfield collision documentation](https://mujoco.readthedocs.io/en/latest/XMLreference.html#asset-hfield)
+limits contacts between one heightfield and one geom to 50; contacts beyond
+that limit are discarded. In the frozen-robot top-edge trials, some robot
+geom pairs reached this limit, and simply reducing the grid resolution to
+2 or 4 cm only delayed numerical instability. Source-backed contact ownership
+and robot traversal therefore remain separate acceptance gates for that edge.
+
 For that reason generated manifests deliberately remain `DRAFT_BLOCKED`:
 
 | Layer | Current status |
@@ -308,6 +315,7 @@ For that reason generated manifests deliberately remain `DRAFT_BLOCKED`:
 | Perimeter chassis containment | Four-side robot-tested local proxy; placement and gaps are unresolved |
 | Fixed 17° fly-ramp interior and seam audit | Bound to parts 392 and 397 |
 | 120 mm wheel dynamics over those two ramps | Separate 12-trial bounded audit |
+| Top-edge deck robot contact | One local source-triangle replacement improves a tested route; full deck and safe edge exit remain blocked |
 | Multi-level / overhanging collision | Not represented |
 | Dynamic facilities | Not modeled |
 | Official simulator status | No; this project is unofficial |
@@ -387,6 +395,14 @@ schema-2 pack stayed numerically stable because its false floor held the
 robot. The source-ray correction is therefore **experimental and disabled by
 default** until robot out-of-bounds termination is validated. The runtime
 remains `DRAFT_BLOCKED`.
+
+One separate local physics experiment replaced a single convex roof triangle
+of official part 236 with its exact-source prism and transferred 59,387 roof
+nodes from the heightfield to the official base below. The matched robot
+crossed the tested upper-edge path without an early solver warning, but the
+triangle covers only about 22.6% of that deck's roof face group, adjacent
+source slopes require their own contact owners, and the robot still fell off
+the field. This is neither part of the default pack nor a safe robot route.
 
 The STEP-derived base shell has no demonstrated continuous body-height fence.
 The official V2.0.0 rulebook, however, specifies a black steel perimeter
