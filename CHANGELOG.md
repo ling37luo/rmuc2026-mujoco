@@ -6,6 +6,13 @@ project intends to follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Source- and heightfield-hash-bound, audit-only collision candidate tools for
+  STEP-derived wall parts and all four finite field edges. They document
+  existing heightfield ownership and definite source-face gaps without adding
+  unverified wall or perimeter collision to runtime packs.
+
 ## [0.2.1] - 2026-09-20
 
 ### Fixed

@@ -28,9 +28,13 @@ topology-verified.
 - add query APIs for semantic, unsupported, or unverified zones;
 - add multi-hit vertical and horizontal-blocker audits before any multi-level
   structure can be promoted;
-- replace only independently accepted ramp footprints with mutually exclusive
-  primitive or convex collision while preserving the remaining heightfield
-  bit-for-bit;
+- use the source-bound wall and four-edge audit-only candidate registries to
+  select a genuinely missing barrier; the current wall footprints already
+  belong to the heightfield, and the finite perimeter has no demonstrated
+  continuous body-height source wall;
+- replace only independently accepted structure footprints with mutually
+  exclusive primitive or convex collision while preserving the remaining
+  heightfield bit-for-bit;
 - validate contact ownership so one XY location cannot accidentally collide
   with both the heightfield and its replacement geometry;
 - add visual LODs with geometry-coverage and silhouette regression gates.

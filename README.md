@@ -314,6 +314,33 @@ collision decision remains `BLOCKED`. This audit never edits a runtime pack or
 approves an underpass; diagonal access and contact ownership remain separate
 checks.
 
+### Wall and field-edge collision candidates
+
+The repository can also inspect the original STEP-derived parts against the
+exact local heightfield before proposing new contact geometry. Generate local,
+read-only evidence with:
+
+```bash
+.venv/bin/python -m rmuc2026_mujoco.collision_candidate SOURCE_BUILD WALLS.json
+.venv/bin/python -m rmuc2026_mujoco.boundary_audit SOURCE_BUILD/manifest.json EDGES.json
+```
+
+Both outputs bind the source manifest, official STEP, intermediate GLB, and
+heightfield sample hashes. They are `AUDIT_ONLY` with collision activation
+disabled, and are not runtime packs. The wall audit checks candidate source
+parts and the heightfield already occupying their footprints; the edge audit
+checks all four field boundaries at wheel, curb, and body heights. An uncovered
+edge interval rules out a continuous source wall at that height, while apparent
+coverage alone cannot prove a wall. Keep these locally generated reports out
+of the code repository.
+
+The current wall and edge evidence does not justify adding contact geoms:
+the wall footprints already have heightfield contact, and a trial replacement
+left duplicate wheel-height contacts and an abrupt junction. The source model
+also does not support a continuous body-height perimeter wall. Further static
+collision must replace an explicitly audited heightfield region, prove its
+contact ownership and joins, and pass wheel and robot traversal checks.
+
 Run the fixed-ramp dynamics gate against an exported pack with:
 
 ```bash
