@@ -27,16 +27,23 @@ topology-verified.
 - resolve the source-backed top-edge part 236/552 contact transition before
   offering it as a robot route. Both the existing and source-negative local
   1 cm trials reach MuJoCo's 50-contact-per-pair heightfield limit, and a
-  matched robot can leave the field. A local exact-source convex triangle
-  improves one approach, but covers only 22.6% of the part-236 roof group;
-  its adjacent official slopes need separate, non-overlapping owners. Source
-  fidelity and safe route behavior require separate gates;
+  matched robot can leave the field. Nine local exact-source convex roof
+  triangles improve two approaches up to the official edge, but one still
+  fails after crossing it, and the triangles' shared side contacts are not
+  proven exclusive. Source fidelity and safe route behavior require separate
+  gates;
+- decompose the source-backed bottom-edge part-244 roof beyond the one tested
+  convex triangle and validate its adjacent seams. The local one-triangle
+  candidate improved 0.3/0.5 m/s outward routes but raised the 1.0 m/s
+  acceleration peak and left 50-contact heightfield pairs;
 - define and validate robot out-of-bounds termination before promoting the
   source-ray-masked schema-3 pack. Initial frozen-robot edge routes lost field
   contact and later produced `BADQACC`; keep the finite -5 m floor labeled
   as a surrogate rather than a source-measured depth;
-- finish the exact 402/403 wall replacement contract and longer robot routes
-  before enabling its convex contacts in a runtime pack;
+- finish the exact 402/403 wall replacement contract and reverse/high-side,
+  repeated-impact robot routes before enabling its convex contacts in a runtime
+  pack. Twelve short forward approaches did not penetrate the walls, but
+  startup heightfield contact pairs still reached 50 points;
 - register the chassis perimeter proxy against the official-source boundary,
   resolve its open stretches and window positions, then repeat robot routes
   before any default activation;

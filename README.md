@@ -315,7 +315,8 @@ For that reason generated manifests deliberately remain `DRAFT_BLOCKED`:
 | Perimeter chassis containment | Four-side robot-tested local proxy; placement and gaps are unresolved |
 | Fixed 17° fly-ramp interior and seam audit | Bound to parts 392 and 397 |
 | 120 mm wheel dynamics over those two ramps | Separate 12-trial bounded audit |
-| Top-edge deck robot contact | One local source-triangle replacement improves a tested route; full deck and safe edge exit remain blocked |
+| Top-edge deck robot contact | Local source-derived roof prisms improve two approaches to the edge; shared seams and safe edge exit remain blocked |
+| Bottom-edge deck robot contact | One local source-triangle replacement improves two low-speed routes, but 1.0 m/s and seam gates remain blocked |
 | Multi-level / overhanging collision | Not represented |
 | Dynamic facilities | Not modeled |
 | Official simulator status | No; this project is unofficial |
@@ -372,7 +373,10 @@ tips, not the rest of their vertical faces or whole-wall collision. The other
 wall footprints already have heightfield contact. A separate, opt-in exact
 convex-mesh replacement transfers their 15,800 roof nodes to the lower source
 floor before adding the two source walls; it has short robot and probe evidence,
-but the full robot route and runtime-pack contact-owner contract are unfinished.
+plus twelve 5-second frozen-robot approaches to the two walls at 0.3–1.0 m/s.
+Those routes had no through-wall event or numerical warning and reached at most
+3.30 mm wall contact penetration; reverse/high-side approaches, sustained
+repeated impacts, and the runtime-pack contact-owner contract remain unfinished.
 
 ### Source-backed outer edge
 
@@ -402,7 +406,15 @@ nodes from the heightfield to the official base below. The matched robot
 crossed the tested upper-edge path without an early solver warning, but the
 triangle covers only about 22.6% of that deck's roof face group, adjacent
 source slopes require their own contact owners, and the robot still fell off
-the field. This is neither part of the default pack nor a safe robot route.
+the field. A follow-up local candidate divided all nine roof triangles into
+convex prisms. Two matched robot lanes reached the official deck edge with at
+most 16 total contacts and no warning, but one lane still reported `BADQACC`
+after crossing the edge; internal prism seam contact ownership remains
+unverified. Neither candidate is part of the default pack or a safe robot route.
+Another local official-source triangle experiment at the bottom edge improved
+the tested 0.3 and 0.5 m/s outward paths, but its 1.0 m/s path showed a larger
+acceleration peak, and remaining heightfield pairs still reached the 50-contact
+limit. Neither local triangle is promoted into a runtime pack.
 
 The STEP-derived base shell has no demonstrated continuous body-height fence.
 The official V2.0.0 rulebook, however, specifies a black steel perimeter
