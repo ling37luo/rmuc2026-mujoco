@@ -646,6 +646,8 @@ def _validate_mujoco_grid_alignment(
     actual_endpoints = np.asarray([data.x_m[0], data.x_m[-1], data.y_m[0], data.y_m[-1]])
     if not np.allclose(actual_endpoints, expected_endpoints, rtol=1.0e-9, atol=1.0e-10):
         raise ManifestError("heightfield world axes disagree with MuJoCo size/position")
+    # The manifest records the logical pre-heightfield origin. Schema 3 shifts
+    # only the emitted MJCF geom to its negative minimum elevation.
     if not math.isclose(center_z, -terrain_offset_z, rel_tol=1.0e-9, abs_tol=1.0e-10):
         raise ManifestError("heightfield world z translation disagrees with MuJoCo position")
 

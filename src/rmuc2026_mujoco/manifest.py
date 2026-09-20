@@ -13,6 +13,7 @@ import zlib
 
 import numpy as np
 
+from .collision_candidate import SOURCE_GLB_SHA256
 from .download import OFFICIAL_STEP_SHA256, OFFICIAL_STEP_SIZE
 from .errors import AssetIntegrityError, ManifestError
 from .livery import (
@@ -34,8 +35,8 @@ from .wall_tip_repair import validate_wall_tip_repair_record, verify_wall_tip_re
 
 
 RUNTIME_ARTIFACT_TYPE = "rmuc2026_mujoco_runtime_asset_pack"
-SUPPORTED_SCHEMA_VERSION = 2
-SUPPORTED_SCHEMA_VERSIONS = frozenset({1, SUPPORTED_SCHEMA_VERSION})
+SUPPORTED_SCHEMA_VERSION = 3
+SUPPORTED_SCHEMA_VERSIONS = frozenset({1, 2, SUPPORTED_SCHEMA_VERSION})
 SUPPORTED_VALIDATION_STATUS = "DRAFT_BLOCKED"
 DEFAULT_RUNTIME_PROFILE = "full"
 RUNTIME_PROFILE_NAMES = ("full", "collision_only")
@@ -169,6 +170,8 @@ class _RuntimeCollisionContract:
     columns: int
     half_size_xy_m: tuple[float, float]
     maximum_height_m: float
+    minimum_height_m: float
+    schema_version: int
     base_depth_m: float
     geom_center_m: tuple[float, float, float]
     image_relative: str
@@ -442,7 +445,7 @@ def _validate_cross_references(
         livery_contract = None
     else:
         if display_rgba_count != len(visual):
-            raise ManifestError("schema 2 requires display_rgba for every visual mesh")
+            raise ManifestError("schema 2/3 requires display_rgba for every visual mesh")
         _validate_visual_display(manifest, require_lighting=True)
         livery_contract = _validate_visual_layers(manifest, files)
 
@@ -478,8 +481,14 @@ def _validate_cross_references(
         collision.get("maximum_height_m"), label="collision.maximum_height_m", positive=True
     )
     minimum = _finite_number(collision.get("minimum_height_m"), label="collision.minimum_height_m")
-    if minimum < 0.0 or minimum > maximum:
+    if minimum > maximum or (schema_version < 3 and minimum < 0.0):
         raise ManifestError("collision minimum/maximum heights are inconsistent")
+    if schema_version == 3:
+        if minimum >= 0.0:
+            raise ManifestError("schema 3 requires a negative collision minimum")
+        _validate_edge_void_provenance(manifest, collision, files, minimum_height_m=minimum)
+    elif collision.get("edge_void_provenance") is not None:
+        raise ManifestError("edge_void_provenance requires runtime-pack schema_version 3")
     base_depth = _finite_number(
         collision.get("base_depth_m"), label="collision.base_depth_m", positive=True
     )
@@ -531,6 +540,14 @@ def _validate_cross_references(
         raise ManifestError("heightfield_precision shape disagrees with collision")
     if precision.get("float_samples_file") != collision.get("samples_file"):
         raise ManifestError("heightfield_precision sample file disagrees with collision")
+    if schema_version == 3:
+        if (
+            precision.get("minimum_height_m") != minimum
+            or precision.get("maximum_height_m") != maximum
+            or precision.get("normalized_model_values")
+            != "(height_m - minimum_height_m) / (maximum_height_m - minimum_height_m)"
+        ):
+            raise ManifestError("schema-3 heightfield normalization contract is invalid")
     if verify:
         _verify_collision_bootstrap(
             collision,
@@ -538,6 +555,8 @@ def _validate_cross_references(
             rows=rows,
             columns=columns,
             maximum_height_m=maximum,
+            minimum_height_m=minimum,
+            schema_version=schema_version,
         )
 
     _validate_runtime_profiles(
@@ -550,12 +569,14 @@ def _validate_cross_references(
             columns=columns,
             half_size_xy_m=(half_size[0], half_size[1]),
             maximum_height_m=maximum,
+            minimum_height_m=minimum,
+            schema_version=schema_version,
             base_depth_m=base_depth,
             geom_center_m=(geom_center[0], geom_center[1], geom_center[2]),
             image_relative=str(collision["image_file"]),
             image_path=files[str(collision["image_file"])],
         ),
-        require_named_lighting=schema_version == 2,
+        require_named_lighting=schema_version >= 2,
         livery_contract=livery_contract,
     )
 
@@ -1204,7 +1225,8 @@ def _validate_runtime_profile_xml(
     )
     expected_size = (
         *collision_contract.half_size_xy_m,
-        collision_contract.maximum_height_m,
+        collision_contract.maximum_height_m
+        - (collision_contract.minimum_height_m if collision_contract.schema_version == 3 else 0.0),
         collision_contract.base_depth_m,
     )
     _require_xml_numbers_close(
@@ -1221,9 +1243,68 @@ def _validate_runtime_profile_xml(
     )
     _require_xml_numbers_close(
         geom_center,
-        collision_contract.geom_center_m,
+        (
+            *collision_contract.geom_center_m[:2],
+            collision_contract.geom_center_m[2]
+            + (
+                collision_contract.minimum_height_m
+                if collision_contract.schema_version == 3
+                else 0.0
+            ),
+        ),
         label=f"runtime profile {profile!r} canonical collision geom pos",
     )
+
+
+def _validate_edge_void_provenance(
+    manifest: Mapping[str, Any],
+    collision: Mapping[str, Any],
+    files: Mapping[str, Path],
+    *,
+    minimum_height_m: float,
+) -> None:
+    """Bind the schema-3 void mask to a fixed audited source and sentinel."""
+
+    record = _mapping(collision.get("edge_void_provenance"), label="collision.edge_void_provenance")
+    expected_keys = {
+        "status",
+        "source_glb_sha256",
+        "mask_file",
+        "mask_sha256",
+        "changed_count",
+        "edge_band_m",
+        "sentinel_height_m",
+    }
+    if set(record) != expected_keys or record.get("status") != "PASS":
+        raise ManifestError("edge_void_provenance status or fields are invalid")
+    if record.get("source_glb_sha256") != SOURCE_GLB_SHA256:
+        raise ManifestError("edge_void_provenance is not bound to the audited source GLB")
+    relative = _nonempty_string(record.get("mask_file"), label="edge_void_provenance.mask_file")
+    digest = _sha256(record.get("mask_sha256"), label="edge_void_provenance.mask_sha256")
+    if Path(relative).suffix.lower() != ".npz":
+        raise ManifestError("edge_void_provenance mask must be NPZ")
+    _require_cross_file(files, manifest, relative, digest, label="edge_void_provenance")
+    records = manifest["contents"]["files"]
+    if (
+        next(item for item in records if item.get("file") == relative).get("role")
+        != "heightfield_edge_void_mask"
+    ):
+        raise ManifestError("edge_void_provenance mask has the wrong file role")
+    count = _integer(
+        record.get("changed_count"), label="edge_void_provenance.changed_count", minimum=1
+    )
+    if count > int(collision["rows_y"]) * int(collision["columns_x"]):
+        raise ManifestError("edge_void_provenance count exceeds heightfield size")
+    band = _finite_number(
+        record.get("edge_band_m"), label="edge_void_provenance.edge_band_m", positive=True
+    )
+    sentinel = _finite_number(
+        record.get("sentinel_height_m"), label="edge_void_provenance.sentinel_height_m"
+    )
+    if not math.isclose(band, 1.25, abs_tol=1e-9) or not math.isclose(sentinel, -5.0, abs_tol=1e-9):
+        raise ManifestError("edge_void_provenance uses an unaudited strip or sentinel")
+    if not math.isclose(minimum_height_m, sentinel, abs_tol=1e-9):
+        raise ManifestError("edge_void_provenance sentinel disagrees with collision minimum")
 
 
 def _runtime_hfield_shape(
@@ -1503,6 +1584,8 @@ def _verify_collision_bootstrap(
     rows: int,
     columns: int,
     maximum_height_m: float,
+    minimum_height_m: float,
+    schema_version: int,
 ) -> None:
     """Confirm the bootstrap PNG encodes the same surface as the float samples.
 
@@ -1521,6 +1604,9 @@ def _verify_collision_bootstrap(
     try:
         with np.load(files[samples_relative], allow_pickle=False) as samples:
             height = np.asarray(samples["height_m"], dtype=np.float64)
+            if schema_version == 3:
+                x = np.asarray(samples["x_m"], dtype=np.float64)
+                y = np.asarray(samples["y_m"], dtype=np.float64)
             wall_tip_repair = collision.get("verified_wall_tip_repair")
             if isinstance(wall_tip_repair, dict) and wall_tip_repair.get("status") == "PASS":
                 verify_wall_tip_repair_samples(
@@ -1535,6 +1621,38 @@ def _verify_collision_bootstrap(
         raise ManifestError("collision.samples_file shape disagrees with the manifest")
     if not np.isfinite(height).all():
         raise ManifestError("collision.samples_file contains non-finite samples")
+    if schema_version == 3:
+        record = collision["edge_void_provenance"]
+        if (
+            x.shape != (columns,)
+            or y.shape != (rows,)
+            or not np.isfinite(x).all()
+            or not np.isfinite(y).all()
+            or not np.all(np.diff(x) > 0.0)
+            or not np.all(np.diff(y) > 0.0)
+        ):
+            raise ManifestError("schema-3 edge void axes are invalid")
+        try:
+            with np.load(files[str(record["mask_file"])], allow_pickle=False) as mask_npz:
+                mask = np.asarray(mask_npz["changed_mask"])
+        except (OSError, KeyError, ValueError) as exc:
+            raise ManifestError(f"edge void mask is invalid: {exc}") from exc
+        if mask.shape != height.shape or mask.dtype != np.bool_:
+            raise ManifestError("edge void mask shape or dtype disagrees with heightfield")
+        band = float(record["edge_band_m"])
+        edge_columns = (x - x[0] <= band + 1e-9) | (x[-1] - x <= band + 1e-9)
+        edge_rows = (y - y[0] <= band + 1e-9) | (y[-1] - y <= band + 1e-9)
+        allowed = edge_rows[:, None] | edge_columns[None, :]
+        sentinel = float(record["sentinel_height_m"])
+        if (
+            int(np.count_nonzero(mask)) != int(record["changed_count"])
+            or np.any(mask & ~allowed)
+            or not np.all(np.abs(height[mask] - sentinel) <= 1e-9)
+            or np.any(height[~mask] < -1e-8)
+            or abs(float(np.min(height)) - minimum_height_m) > 1e-8
+            or float(np.max(height)) > maximum_height_m + 1e-8
+        ):
+            raise ManifestError("edge void mask does not match the declared sentinel samples")
 
     decoded, width, decoded_height = _png_scanline_payload(
         files[image_relative],
@@ -1548,9 +1666,13 @@ def _verify_collision_bootstrap(
         height=decoded_height,
         label=label,
     )
-    expected = np.rint(
-        np.clip(height / maximum_height_m, 0.0, 1.0) * HEIGHTFIELD_PNG_SAMPLE_MAXIMUM
-    ).astype(np.uint16)
+    if schema_version == 3:
+        normalized = (height - minimum_height_m) / (maximum_height_m - minimum_height_m)
+        if np.any((normalized < -1e-8) | (normalized > 1.0 + 1e-8)):
+            raise ManifestError("schema-3 heightfield normalized samples are outside [0, 1]")
+    else:
+        normalized = np.clip(height / maximum_height_m, 0.0, 1.0)
+    expected = np.rint(normalized * HEIGHTFIELD_PNG_SAMPLE_MAXIMUM).astype(np.uint16)
     # MuJoCo reads the first PNG row as positive local Y while the samples are
     # indexed from y_min, so the producer stores the image flipped.
     observed = np.frombuffer(unfiltered, dtype=">u2").reshape(rows, columns)[::-1]

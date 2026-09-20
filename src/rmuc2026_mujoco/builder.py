@@ -16,8 +16,9 @@ def build_from_official_step(
     step_path: Path,
     output_dir: Path,
     *,
-    target_visual_faces: int = 450_000,
+    target_visual_faces: int = 2_300_000,
     heightfield_resolution_m: float = 0.02,
+    include_edge_void: bool = False,
 ) -> dict[str, Any]:
     """Build the field locally; no official or derived asset is uploaded.
 
@@ -39,6 +40,7 @@ def build_from_official_step(
         target_visual_faces=target_visual_faces,
         heightfield_resolution_m=heightfield_resolution_m,
         preserve_cad_colors=True,
+        include_edge_void=include_edge_void,
     )
 
 
@@ -46,8 +48,9 @@ def build_runtime_asset_pack(
     step_path: Path,
     output_dir: Path,
     *,
-    target_visual_faces: int = 450_000,
+    target_visual_faces: int = 2_300_000,
     heightfield_resolution_m: float = 0.02,
+    include_edge_void: bool = False,
     include_surface_guide: bool = False,
     rulebook_pdf: Path | None = None,
     minimum_free_bytes: int = 5 * 1024**3,
@@ -77,6 +80,7 @@ def build_runtime_asset_pack(
             full_build,
             target_visual_faces=target_visual_faces,
             heightfield_resolution_m=heightfield_resolution_m,
+            include_edge_void=include_edge_void,
         )
         export_source = full_build
         if include_surface_guide:

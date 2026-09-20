@@ -11,8 +11,10 @@ import zlib
 import numpy as np
 import pytest
 from PIL import Image
+import mujoco
 
-from rmuc2026_mujoco import FieldAsset, ManifestError
+from rmuc2026_mujoco import FieldAsset, ManifestError, height_at, load_model
+from rmuc2026_mujoco.collision_candidate import SOURCE_GLB_SHA256
 from rmuc2026_mujoco.download import OFFICIAL_STEP_SHA256, OFFICIAL_STEP_SIZE
 from rmuc2026_mujoco.pack import (
     PUBLIC_DISPLAY_BASE_SURFACE_SCALE,
@@ -41,12 +43,21 @@ def _sha(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def _heightfield_bootstrap_png(height_m: np.ndarray, maximum_height_m: float) -> bytes:
+def _heightfield_bootstrap_png(
+    height_m: np.ndarray, maximum_height_m: float, minimum_height_m: float = 0.0
+) -> bytes:
     def chunk(kind: bytes, data: bytes) -> bytes:
         crc = zlib.crc32(data, zlib.crc32(kind)) & 0xFFFFFFFF
         return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", crc)
 
-    quantized = np.rint(np.clip(height_m / maximum_height_m, 0.0, 1.0) * 65535.0).astype(np.uint16)
+    quantized = np.rint(
+        np.clip(
+            (height_m - minimum_height_m) / (maximum_height_m - minimum_height_m),
+            0.0,
+            1.0,
+        )
+        * 65535.0
+    ).astype(np.uint16)
     rows, columns = quantized.shape
     ihdr = struct.pack(">IIBBBBB", columns, rows, 16, 0, 0, 0, 0)
     scanlines = b"".join(
@@ -191,6 +202,79 @@ def _synthetic_source_build(root: Path, *, include_surface_guide: bool = False) 
         }
     (root / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
     return root
+
+
+def _negative_source_build(root: Path) -> Path:
+    source = _synthetic_source_build(root)
+    manifest_path = source / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    collision = manifest["collision"]
+    height = np.asarray([[-5.0, 0.1], [0.1, 0.2]])
+    samples_path = source / collision["samples_file"]
+    np.savez_compressed(
+        samples_path,
+        x_m=np.asarray([-0.5, 0.5]),
+        y_m=np.asarray([-0.5, 0.5]),
+        height_m=height,
+    )
+    image_path = source / collision["image_file"]
+    image_path.write_bytes(_heightfield_bootstrap_png(height, 1.0, -5.0))
+    mask_path = source / "collision/edge_void_mask.npz"
+    np.savez_compressed(mask_path, changed_mask=np.asarray([[True, False], [False, False]]))
+    collision["minimum_height_m"] = -5.0
+    collision["resolution_m"] = 1.0
+    collision["image_sha256"] = _sha(image_path)
+    collision["samples_sha256"] = _sha(samples_path)
+    collision["edge_void_provenance"] = {
+        "status": "PASS",
+        "source_glb_sha256": SOURCE_GLB_SHA256,
+        "mask_file": "collision/edge_void_mask.npz",
+        "mask_sha256": _sha(mask_path),
+        "changed_count": 1,
+        "edge_band_m": 1.25,
+        "sentinel_height_m": -5.0,
+    }
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    return source
+
+
+def test_negative_heightfield_uses_schema3_offset_encoding(tmp_path: Path) -> None:
+    source = _negative_source_build(tmp_path / "source")
+    output = tmp_path / "pack"
+    exported = export_runtime_asset_pack(source, output)
+    asset = FieldAsset.open(output)
+    assert exported["schema_version"] == 3
+    assert exported["collision"]["edge_void_provenance"]["changed_count"] == 1
+    assert height_at(asset, -0.5, -0.5) == pytest.approx(-5.0)
+    model, _ = load_model(asset, profile="collision_only")
+    hid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_HFIELD, "rmuc2026_collision")
+    gid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, "rmuc2026_field_collision")
+    assert model.hfield_size[hid, 2] == pytest.approx(6.0)
+    assert model.geom_pos[gid, 2] == pytest.approx(-5.0)
+    expected = np.asarray([[0.0, 5.1 / 6.0], [5.1 / 6.0, 5.2 / 6.0]])
+    np.testing.assert_allclose(model.hfield_data.reshape(2, 2), expected, atol=2e-7, rtol=0)
+
+
+def test_schema3_rejects_mask_that_disagrees_with_negative_samples(tmp_path: Path) -> None:
+    source = _negative_source_build(tmp_path / "source")
+    output = tmp_path / "pack"
+    export_runtime_asset_pack(source, output)
+    mask_path = output / "collision/edge_void_mask.npz"
+    np.savez_compressed(mask_path, changed_mask=np.zeros((2, 2), dtype=np.bool_))
+    manifest_path = output / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    digest = _sha(mask_path)
+    manifest["collision"]["edge_void_provenance"]["mask_sha256"] = digest
+    record = next(
+        item
+        for item in manifest["contents"]["files"]
+        if item["file"] == "collision/edge_void_mask.npz"
+    )
+    record["sha256"] = digest
+    record["size_bytes"] = mask_path.stat().st_size
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    with pytest.raises(ManifestError, match="mask does not match"):
+        FieldAsset.open(output)
 
 
 def test_export_emits_full_and_collision_only_runtime_profiles(tmp_path: Path) -> None:

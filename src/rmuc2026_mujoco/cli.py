@@ -59,8 +59,13 @@ def build_parser() -> argparse.ArgumentParser:
     build = commands.add_parser("build", help="build a local runtime pack from a verified STEP")
     build.add_argument("--step", type=Path, required=True)
     build.add_argument("--output", type=Path, required=True)
-    build.add_argument("--target-visual-faces", type=int, default=450_000)
+    build.add_argument("--target-visual-faces", type=int, default=2_300_000)
     build.add_argument("--heightfield-resolution", type=float, default=0.02)
+    build.add_argument(
+        "--experimental-edge-void",
+        action="store_true",
+        help="1 cm official-source outer void candidate; robot edge validation is blocked",
+    )
     build.add_argument("--include-surface-guide", action="store_true")
     build.add_argument(
         "--rulebook",
@@ -86,8 +91,13 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help=argparse.SUPPRESS,
     )
-    setup.add_argument("--target-visual-faces", type=int, default=450_000)
+    setup.add_argument("--target-visual-faces", type=int, default=2_300_000)
     setup.add_argument("--heightfield-resolution", type=float, default=0.02)
+    setup.add_argument(
+        "--experimental-edge-void",
+        action="store_true",
+        help="1 cm official-source outer void candidate; robot edge validation is blocked",
+    )
     setup.add_argument("--include-surface-guide", action="store_true")
     setup.add_argument(
         "--rulebook-cache",
@@ -219,6 +229,8 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         if args.command == "build":
             _validate_build_options(args.target_visual_faces, args.heightfield_resolution)
+            if args.experimental_edge_void and args.heightfield_resolution != 0.01:
+                raise ValueError("--experimental-edge-void requires --heightfield-resolution 0.01")
             if args.include_surface_guide and args.rulebook is None:
                 raise ValueError("--rulebook is required with --include-surface-guide for build")
             result = build_runtime_asset_pack(
@@ -226,6 +238,7 @@ def main(argv: list[str] | None = None) -> int:
                 args.output,
                 target_visual_faces=args.target_visual_faces,
                 heightfield_resolution_m=args.heightfield_resolution,
+                include_edge_void=args.experimental_edge_void,
                 include_surface_guide=args.include_surface_guide,
                 rulebook_pdf=args.rulebook,
             )
@@ -244,6 +257,8 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         if args.command == "setup":
             _validate_build_options(args.target_visual_faces, args.heightfield_resolution)
+            if args.experimental_edge_void and args.heightfield_resolution != 0.01:
+                raise ValueError("--experimental-edge-void requires --heightfield-resolution 0.01")
             downloaded = download_official_step(
                 args.step_cache,
                 acknowledge_reference_only=True,
@@ -261,6 +276,7 @@ def main(argv: list[str] | None = None) -> int:
                 args.output,
                 target_visual_faces=args.target_visual_faces,
                 heightfield_resolution_m=args.heightfield_resolution,
+                include_edge_void=args.experimental_edge_void,
                 include_surface_guide=args.include_surface_guide,
                 rulebook_pdf=(
                     downloaded_rulebook.path if downloaded_rulebook is not None else None

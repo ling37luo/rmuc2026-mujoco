@@ -72,6 +72,13 @@ install the distribution's `python3-venv` package or use the `uv` route above.
 choose another location. Existing files are reused only after the complete
 identity check passes; outputs are never silently overwritten.
 
+The default visual face budget is 2.3 million for new conversions. Cleaning
+the official mesh before simplification prevents some thin parts from reaching
+the older 450,000-face budget without losing substantial area; the builder
+keeps its face-budget hard gate instead of silently overstepping it. Use the
+`collision_only` profile for headless robot physics when those visual meshes
+are unnecessary.
+
 If you already have the pinned STEP, the two explicit commands are:
 
 ```bash
@@ -295,8 +302,10 @@ For that reason generated manifests deliberately remain `DRAFT_BLOCKED`:
 | --- | --- |
 | Source identity and file integrity | Checked |
 | CAD-derived visual layout | Available, simplified |
-| Static 1–10 cm heightfield collision | Available; 1 cm is the fine seam candidate |
+| Static 1–10 cm heightfield collision | Available; experimental schema 3 can remove audited outer-edge false support |
 | Exact-source wall-end roof support | Seven 1 cm samples repaired for parts 402/403; bounded probe evidence only |
+| Full vertical contact on wall parts 402/403 | Local source-exact replacement candidate; not in the default pack |
+| Perimeter chassis containment | Four-side robot-tested local proxy; placement and gaps are unresolved |
 | Fixed 17° fly-ramp interior and seam audit | Bound to parts 392 and 397 |
 | 120 mm wheel dynamics over those two ramps | Separate 12-trial bounded audit |
 | Multi-level / overhanging collision | Not represented |
@@ -352,8 +361,32 @@ to their source-triangle roof heights. The record in
 float samples by hash. The existing heightfield remains the only contact
 owner; this adds no wall geom. It addresses missing roof support at these wall
 tips, not the rest of their vertical faces or whole-wall collision. The other
-wall footprints already have heightfield contact, while a trial convex-mesh
-replacement left duplicate wheel-height contacts and an abrupt junction.
+wall footprints already have heightfield contact. A separate, opt-in exact
+convex-mesh replacement transfers their 15,800 roof nodes to the lower source
+floor before adding the two source walls; it has short robot and probe evidence,
+but the full robot route and runtime-pack contact-owner contract are unfinished.
+
+### Source-backed outer edge
+
+With `--experimental-edge-void` on the audited official GLB at 1 cm resolution,
+the builder marks only
+downward-ray misses within the outer 1.25 m strips. These nodes receive a
+finite -5 m surrogate void instead of a false drivable floor; every interior
+node and every source-hit edge node keeps its original height. Runtime schema 3
+binds the Boolean mask, float NPZ, bootstrap PNG, source GLB hash, and MJCF
+vertical origin/scale together. Older schema 1/2 packs keep their existing
+height encoding. MuJoCo still sees a floor at -5 m; this is not a true hole or
+a physical fence. The middle of the field retains the documented 2.5D limits.
+
+The local source-ray audit changed 277,806 edge samples, with no interior or
+source-hit samples changed. A rolling 120 mm wheel drove outward at 0.3, 0.5,
+and 1.0 m/s without solver warnings; unsupported outside-to-inside travel is
+not a drivable return route. A matched frozen-robot trial at 0.5 m/s on the
+left edge lost contact and later produced `BADQACC`; the same route on the
+schema-2 pack stayed numerically stable because its false floor held the
+robot. The source-ray correction is therefore **experimental and disabled by
+default** until robot out-of-bounds termination is validated. The runtime
+remains `DRAFT_BLOCKED`.
 
 The STEP-derived base shell has no demonstrated continuous body-height fence.
 The official V2.0.0 rulebook, however, specifies a black steel perimeter
@@ -362,7 +395,10 @@ battlefield (§4.1, Figure 4-5), and depicts a dart-transfer window in that
 fence (Figure 4-20). Its exact thickness, centerline, and openings cannot be
 recovered from the low base-shell part alone. A fence based on the rulebook
 therefore needs an explicitly labeled geometric proxy and contact probes
-before activation; the current runtime pack does not add one. Other static
+before activation. An 81-panel, 0.3 m chassis-level local proxy has four
+matched robot approach runs without numerical warnings, but 6.8 m of the
+perimeter and uncertain window/corner placement remain. The current runtime
+pack does not add it. Other static
 collision still needs source-bounded contact ownership, seam checks, and robot
 traversal evidence.
 

@@ -8,6 +8,21 @@ project intends to follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Experimental runtime schema 3 for the audited 1 cm official-source field. A hashed ray
+  mask removes 277,806 unsupported outer-edge samples using a finite -5 m
+  surrogate void, while preserving every source-hit and interior sample. The
+  MJCF origin, height range, PNG bootstrap and exact float injection share one
+  versioned formula; schema 1/2 packs remain readable. This removes false
+  playable-height support, not the single-heightfield topology limit. It is
+  opt-in: a frozen robot leaving the edge can later produce `BADQACC` without
+  an accepted out-of-bounds termination rule.
+- Local-only exact wall-contact and chassis perimeter candidates with bounded
+  wheel, sphere and frozen-robot evidence. They are disabled in exported packs
+  until contact-owner and placement contracts are complete.
+- A 2.3 million default visual face budget for fresh builds. Mesh cleanup made
+  the old 450,000-face budget unattainable on some official parts without
+  losing large areas; the builder still rejects a requested budget it cannot
+  meet and reports the actual count.
 - An optional 400 g movable energy-unit collision probe based on the official
   rulebook's 150 mm height and asymmetric 95/80 mm end diameters. It is a
   primitive contact test, never part of the default field pack; rib/rim detail
@@ -25,6 +40,9 @@ project intends to follow [Semantic Versioning](https://semver.org/).
 
 ### Documentation
 
+- Prioritized robot-driving ground, walls, finite boundaries and contact
+  behavior. Movable props and game mechanisms remain optional interaction
+  probes rather than field-completion gates.
 - Clarified that the STEP base shell lacks a continuous body-height fence,
   while official V2.0.0 rulebook §4.1 specifies a 28 × 15 m field with a
   steel perimeter fence rising 2.4 m above the floor. Its exact placement and

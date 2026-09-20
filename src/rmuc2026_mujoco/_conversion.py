@@ -353,6 +353,9 @@ def decorate_field_build(
             {"file": collision.get("samples_file"), "sha256": collision.get("samples_sha256")},
         ]
     )
+    edge_void = collision.get("edge_void_provenance")
+    if isinstance(edge_void, dict):
+        records.append({"file": edge_void.get("mask_file"), "sha256": edge_void.get("mask_sha256")})
     for record in records:
         if not isinstance(record, dict) or not isinstance(record.get("file"), str):
             raise FieldBuildError("基础场地产物文件记录损坏")
@@ -1220,7 +1223,11 @@ def _simplify_parts_then_group(
         ),
     }
     if not all(gates.values()):
-        raise FieldBuildError(f"逐零件视觉保真硬门失败：{gates}")
+        raise FieldBuildError(
+            "逐零件视觉保真硬门失败："
+            f"{gates}; requested_faces={target_faces}, "
+            f"actual_faces={int(output_metrics['faces'])}, protected_faces={protected_faces}"
+        )
     source_part_indices = [int(row["source_part_index"]) for row in part_records]
     grouped_part_indices = [
         int(index) for record in records for index in record["source_part_indices"]
@@ -1315,6 +1322,7 @@ def _ray_heightfield(
     *,
     resolution_m: float,
     source_glb_sha256: str | None = None,
+    include_edge_void: bool = False,
 ) -> tuple[dict[str, Any], np.ndarray, np.ndarray, np.ndarray]:
     import trimesh
     from PIL import Image
@@ -1356,6 +1364,9 @@ def _ray_heightfield(
     height[isolated] = median[isolated]
     from .wall_tip_repair import SOURCE_GLB_SHA256, repair_verified_wall_tips
 
+    if include_edge_void and (source_glb_sha256 != SOURCE_GLB_SHA256 or resolution_m != 0.01):
+        raise FieldBuildError("边缘空域实验仅支持固定官方GLB的1 cm高度场")
+
     if source_glb_sha256 == SOURCE_GLB_SHA256 and resolution_m == 0.01:
         try:
             wall_tip_repair = repair_verified_wall_tips(
@@ -1371,13 +1382,51 @@ def _ray_heightfield(
             "grid_resolution_m": resolution_m,
             "repaired_nodes": 0,
         }
+    edge_void_provenance: dict[str, Any] | None = None
+    if include_edge_void and source_glb_sha256 == SOURCE_GLB_SHA256 and resolution_m == 0.01:
+        from .edge_void_candidate import (
+            make_edge_void_candidate,
+            outer_edge_sample_mask,
+        )
+
+        # The downward-ray miss bitmap is the only source-backed way to tell
+        # missing exterior ground from an actual low surface.  Interior misses
+        # remain unchanged because this audit covers only the finite outer strip.
+        edge_band = outer_edge_sample_mask(x, y)
+        source_hits = np.ones(height.shape, dtype=np.bool_)
+        source_hits[edge_band] = ~missing.reshape(height.shape)[edge_band]
+        candidate = make_edge_void_candidate(
+            x,
+            y,
+            height,
+            source_hits,
+            source_glb_sha256=source_glb_sha256,
+        )
+        height = candidate.height_m
+        collision_dir = output / "collision"
+        collision_dir.mkdir(exist_ok=True)
+        mask_path = collision_dir / "edge_void_mask.npz"
+        np.savez_compressed(mask_path, changed_mask=candidate.changed_mask)
+        edge_void_provenance = {
+            "status": "PASS",
+            "source_glb_sha256": source_glb_sha256,
+            "mask_file": str(mask_path.relative_to(output)),
+            "mask_sha256": sha256_file(mask_path),
+            "changed_count": int(np.count_nonzero(candidate.changed_mask)),
+            "edge_band_m": 1.25,
+            "sentinel_height_m": -5.0,
+        }
     max_height = float(np.max(height))
     if not math.isfinite(max_height) or max_height <= 0.01:
         raise FieldBuildError("官方场地高度图没有检测到有效障碍")
-    normalized = np.clip(height / max_height, 0.0, 1.0)
+    minimum_height = float(np.min(height))
+    if minimum_height < 0.0:
+        normalized = (height - minimum_height) / (max_height - minimum_height)
+    else:
+        normalized = np.clip(height / max_height, 0.0, 1.0)
     pixels = np.rint(normalized * 65535.0).astype(np.uint16)
     collision_dir = output / "collision"
-    collision_dir.mkdir()
+    collision_dir.mkdir(exist_ok=True)
     image_path = collision_dir / "rmuc2026_heightfield.png"
     # MuJoCo's PNG hfield loader maps the first image row to positive local Y,
     # while our NumPy grid is indexed from y_min to y_max.  Flip rows here so
@@ -1400,20 +1449,30 @@ def _ray_heightfield(
         "y_min_m": float(y[0]),
         "y_max_m": float(y[-1]),
         "maximum_height_m": max_height,
-        "minimum_height_m": float(np.min(height)),
-        "ray_misses_filled_with_ground": int(np.count_nonzero(missing)),
+        "minimum_height_m": minimum_height,
+        "ray_misses_filled_with_ground": int(
+            np.count_nonzero(missing)
+            - (edge_void_provenance["changed_count"] if edge_void_provenance else 0)
+        ),
         "isolated_spikes_replaced": int(np.count_nonzero(isolated)),
         "png_rows": "flipped_y_for_mujoco_hfield_loader",
         "resolution_quality": _collision_resolution_contract(resolution_m),
         "structural_audit": _heightfield_structural_audit(height),
         "claim_boundary": (
             "official STEP-derived single-valued 2.5D top-surface contact proxy; not exact "
+            "B-rep contact; audited outer-edge ray misses use a finite -5 m surrogate void "
+            "while interior misses remain filled with ground; highest-surface sampling seals "
+            "underpasses and cannot preserve stacked, vertical, or overhanging surfaces"
+            if edge_void_provenance
+            else "official STEP-derived single-valued 2.5D top-surface contact proxy; not exact "
             "B-rep contact; ray misses are filled with ground and no validity mask is saved; "
             "highest-surface sampling seals underpasses and cannot preserve stacked, vertical, "
             "or overhanging collision surfaces"
         ),
     }
     record["verified_wall_tip_repair"] = wall_tip_repair
+    if edge_void_provenance is not None:
+        record["edge_void_provenance"] = edge_void_provenance
     return record, x, y, height
 
 
@@ -1803,8 +1862,9 @@ def repack_field_build(
     base_build: Path,
     output_dir: Path,
     *,
-    target_visual_faces: int = 450_000,
+    target_visual_faces: int = 2_300_000,
     heightfield_resolution_m: float = RECOMMENDED_HEIGHTFIELD_RESOLUTION_M,
+    include_edge_void: bool = False,
 ) -> dict[str, Any]:
     """Fast, provenance-checked rebuild from an existing official OpenCascade GLB."""
 
@@ -1843,6 +1903,7 @@ def repack_field_build(
         output,
         resolution_m=heightfield_resolution_m,
         source_glb_sha256=copied_glb_sha256,
+        include_edge_void=include_edge_void,
     )
     collision["geometry_source"] = (
         "raw_axis_and_ground_transformed_official_glb_before_visual_simplification"
@@ -1938,9 +1999,10 @@ def build_field(
     *,
     linear_deflection_mm: float = 30.0,
     angular_deflection_rad: float = 0.5,
-    target_visual_faces: int = 450_000,
+    target_visual_faces: int = 2_300_000,
     heightfield_resolution_m: float = RECOMMENDED_HEIGHTFIELD_RESOLUTION_M,
     preserve_cad_colors: bool = True,
+    include_edge_void: bool = False,
 ) -> dict[str, Any]:
     from OCP.BRepMesh import BRepMesh_IncrementalMesh
     from OCP.Message import Message_ProgressRange
@@ -2010,6 +2072,7 @@ def build_field(
         output,
         resolution_m=heightfield_resolution_m,
         source_glb_sha256=intermediate_hash,
+        include_edge_void=include_edge_void,
     )
     collision["geometry_source"] = (
         "raw_axis_and_ground_transformed_official_glb_before_visual_simplification"

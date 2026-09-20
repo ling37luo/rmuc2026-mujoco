@@ -30,6 +30,7 @@ OUTPUT_ARTIFACT_TYPE = "rmuc2026_mujoco_runtime_asset_pack"
 OUTPUT_XML = "rmuc2026_field.xml"
 OUTPUT_COLLISION_ONLY_XML = "rmuc2026_field_collision_only.xml"
 OUTPUT_SCHEMA_VERSION = 2
+NEGATIVE_HEIGHT_SCHEMA_VERSION = 3
 PUBLIC_DISPLAY_RGB_BLACK_FLOOR = 0.06
 PUBLIC_DISPLAY_RGB_WHITE_CEILING = 0.76
 PUBLIC_DISPLAY_RGB_GAMMA = 0.90
@@ -896,9 +897,15 @@ def _build_field_xml(
         collision.get("geom_center_after_translation_m"), count=3, label="碰撞中心"
     )
     maximum_height = float(collision.get("maximum_height_m", math.nan))
+    minimum_height = float(collision.get("minimum_height_m", math.nan))
     base_depth = float(collision.get("base_depth_m", math.nan))
-    if not math.isfinite(maximum_height) or maximum_height <= 0.0:
-        raise ExportBlocked("maximum_height_m必须是有限正数")
+    if (
+        not math.isfinite(maximum_height)
+        or not math.isfinite(minimum_height)
+        or maximum_height <= 0.0
+        or minimum_height >= maximum_height
+    ):
+        raise ExportBlocked("高度场最小/最大高度必须是有限递增范围")
     if not math.isfinite(base_depth) or base_depth < 0.0:
         raise ExportBlocked("base_depth_m必须是有限非负数")
 
@@ -945,7 +952,14 @@ def _build_field_xml(
             "file": Path(str(collision["image_file"])).as_posix(),
             "nrow": str(int(collision["rows_y"])),
             "ncol": str(int(collision["columns_x"])),
-            "size": " ".join(f"{value:.9g}" for value in (*half_size, maximum_height, base_depth)),
+            "size": " ".join(
+                f"{value:.9g}"
+                for value in (
+                    *half_size,
+                    maximum_height - min(0.0, minimum_height),
+                    base_depth,
+                )
+            ),
         },
     )
     worldbody = ET.SubElement(root, "worldbody")
@@ -1065,7 +1079,9 @@ def _build_field_xml(
             "name": "rmuc2026_field_collision",
             "type": "hfield",
             "hfield": "rmuc2026_collision",
-            "pos": " ".join(f"{value:.9g}" for value in center),
+            "pos": " ".join(
+                f"{value:.9g}" for value in (*center[:2], center[2] + min(0.0, minimum_height))
+            ),
             "rgba": "0.10 0.38 0.62 0" if include_visual_meshes else "0.16 0.42 0.68 1",
             "contype": "2",
             "conaffinity": "1",
@@ -1165,6 +1181,17 @@ def export_runtime_asset_pack(
             )
 
         collision = _json_object(source_manifest.get("collision"), "collision")
+        minimum_height = float(collision.get("minimum_height_m", 0.0))
+        maximum_height = float(collision.get("maximum_height_m", math.nan))
+        if (
+            not math.isfinite(minimum_height)
+            or not math.isfinite(maximum_height)
+            or maximum_height <= max(0.0, minimum_height)
+        ):
+            raise ExportBlocked("源高度场最小/最大高度无效")
+        output_schema_version = (
+            NEGATIVE_HEIGHT_SCHEMA_VERSION if minimum_height < 0.0 else OUTPUT_SCHEMA_VERSION
+        )
         copied_collision: list[tuple[str, str]] = []
         collision_sources: dict[str, Path] = {}
         for file_key, hash_key, suffix, role in (
@@ -1182,6 +1209,21 @@ def export_runtime_asset_pack(
             shutil.copyfile(source, destination)
             copied_collision.append((relative, role))
             collision_sources[file_key] = source
+        edge_void = collision.get("edge_void_provenance")
+        if output_schema_version == NEGATIVE_HEIGHT_SCHEMA_VERSION:
+            edge_void = _json_object(edge_void, "collision.edge_void_provenance")
+            relative, source, _digest = _source_file(
+                field_root,
+                edge_void.get("mask_file"),
+                edge_void.get("mask_sha256"),
+                suffix=".npz",
+            )
+            destination = staging / relative
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(source, destination)
+            copied_collision.append((relative, "heightfield_edge_void_mask"))
+        elif edge_void is not None:
+            raise ExportBlocked("非负高度场不能声明负高度边缘掩码")
 
         livery_xml: dict[str, str] | None = None
         livery_manifest: dict[str, object] | None = None
@@ -1300,6 +1342,10 @@ def export_runtime_asset_pack(
             ),
             "claim_boundary": collision.get("claim_boundary"),
         }
+        if edge_void is not None:
+            compact_collision["edge_void_provenance"] = _json_safe_copy(
+                edge_void, "collision.edge_void_provenance"
+            )
         structural_audit = collision.get("structural_audit")
         if structural_audit is not None:
             compact_collision["structural_audit"] = _json_safe_copy(
@@ -1324,7 +1370,7 @@ def export_runtime_asset_pack(
                 wall_tip_repair, "collision.verified_wall_tip_repair"
             )
         compact_manifest: dict[str, Any] = {
-            "schema_version": OUTPUT_SCHEMA_VERSION,
+            "schema_version": output_schema_version,
             "artifact_type": OUTPUT_ARTIFACT_TYPE,
             "status": "PASS",
             "validation_status": "DRAFT_BLOCKED",
@@ -1408,8 +1454,17 @@ def export_runtime_asset_pack(
                 "rows_y": int(collision["rows_y"]),
                 "columns_x": int(collision["columns_x"]),
                 "maximum_height_m": float(collision["maximum_height_m"]),
+                **(
+                    {"minimum_height_m": minimum_height}
+                    if output_schema_version == NEGATIVE_HEIGHT_SCHEMA_VERSION
+                    else {}
+                ),
                 "npz_array": "height_m",
-                "normalized_model_values": "clip(height_m / maximum_height_m, 0, 1)",
+                "normalized_model_values": (
+                    "(height_m - minimum_height_m) / (maximum_height_m - minimum_height_m)"
+                    if output_schema_version == NEGATIVE_HEIGHT_SCHEMA_VERSION
+                    else "clip(height_m / maximum_height_m, 0, 1)"
+                ),
                 "float_npz_injection_required_before_validated_physics": True,
                 "png_role": "MuJoCo dimensions/bootstrap only",
             },

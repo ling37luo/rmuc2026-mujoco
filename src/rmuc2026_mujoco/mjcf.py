@@ -174,11 +174,22 @@ def inject_exact_heightfield(
     terrain_offset = float(asset.recommended_spawn["terrain_height_m"])
     source_height = world.height_m + terrain_offset
     maximum = float(asset.collision["maximum_height_m"])
+    minimum = float(asset.collision["minimum_height_m"])
     if source_height.shape != (rows, columns):
         raise MujocoModelError(
             f"heightfield shape mismatch: model={(rows, columns)}, asset={source_height.shape}"
         )
-    normalized = np.clip(source_height / maximum, 0.0, 1.0)
+    if int(asset.manifest["schema_version"]) == 3:
+        if (
+            minimum >= 0.0
+            or maximum <= minimum
+            or float(np.min(source_height)) < minimum - 1e-8
+            or float(np.max(source_height)) > maximum + 1e-8
+        ):
+            raise MujocoModelError("schema-3 heightfield range is inconsistent")
+        normalized = (source_height - minimum) / (maximum - minimum)
+    else:
+        normalized = np.clip(source_height / maximum, 0.0, 1.0)
     target = model.hfield_data[address : address + rows * columns]
     target[:] = normalized.reshape(-1).astype(target.dtype, copy=False)
     error = float(np.max(np.abs(np.asarray(target).reshape(rows, columns) - normalized)))

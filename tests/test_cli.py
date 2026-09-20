@@ -263,8 +263,9 @@ def test_setup_cli_downloads_then_builds_locally(monkeypatch, tmp_path: Path, ca
     def fake_build(step_path, output_dir, **options):
         assert Path(step_path) == step
         assert options == {
-            "target_visual_faces": 450_000,
+            "target_visual_faces": 2_300_000,
             "heightfield_resolution_m": 0.02,
+            "include_edge_void": False,
             "include_surface_guide": False,
             "rulebook_pdf": None,
         }
@@ -340,6 +341,7 @@ def test_setup_with_surface_guide_downloads_verified_rulebook(
         assert options["include_surface_guide"] is True
         assert options["rulebook_pdf"] == rulebook
         assert options["heightfield_resolution_m"] == 0.01
+        assert options["include_edge_void"] is True
         return {
             "artifact_type": "rmuc2026_mujoco_runtime_asset_pack",
             "status": "PASS",
@@ -363,6 +365,7 @@ def test_setup_with_surface_guide_downloads_verified_rulebook(
                 str(rulebook),
                 "--heightfield-resolution",
                 "0.01",
+                "--experimental-edge-void",
                 "--include-surface-guide",
             ]
         )

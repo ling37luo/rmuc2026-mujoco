@@ -24,6 +24,15 @@ topology-verified.
 
 ## Planned static-interaction work
 
+- define and validate robot out-of-bounds termination before promoting the
+  source-ray-masked schema-3 pack. Initial frozen-robot edge routes lost field
+  contact and later produced `BADQACC`; keep the finite -5 m floor labeled
+  as a surrogate rather than a source-measured depth;
+- finish the exact 402/403 wall replacement contract and longer robot routes
+  before enabling its convex contacts in a runtime pack;
+- register the chassis perimeter proxy against the official-source boundary,
+  resolve its open stretches and window positions, then repeat robot routes
+  before any default activation;
 - add a versioned registry of robot-validated spawn poses and static routes;
 - add query APIs for semantic, unsupported, or unverified zones;
 - add multi-hit vertical and horizontal-blocker audits before any multi-level
@@ -52,12 +61,15 @@ joints). These are design targets, distinct from the current `full` visual and
 Coordinates and meshes for these features must be generated locally unless
 the upstream rightsholder grants written redistribution permission.
 
-## 0.3 — multi-level and dynamic facilities
+## 0.3 — robot interaction and remaining topology
 
 - represent accepted underpasses and stacked surfaces with hybrid collision;
-- model movable facilities as explicit MuJoCo bodies and joints;
 - register material zones from measured or clearly labeled non-official data;
 - publish paired geometry, contact, and robot-independent traversal tests.
+
+Movable facilities, energy-unit handling, outposts and bases are optional
+test fixtures. They are not prerequisites for the field's main purpose:
+reproducible robot locomotion and contact interaction.
 
 This stage remains blocked until each promoted facility has sufficient source
 evidence and an explicit behavior contract. The project will not replace the
