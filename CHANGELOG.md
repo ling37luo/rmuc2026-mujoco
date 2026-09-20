@@ -6,6 +6,18 @@ project intends to follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-09-20
+
+### Fixed
+
+- The optional `G` rulebook livery no longer bridges low terrain while the
+  robot contacts the lower collision surface. The visual mesh checks signed
+  height error in both directions against the unchanged 1 cm heightfield,
+  refines rejected cells locally from 5 to 2.5 and 1.25 cm, and keeps refined
+  edges aligned with neighboring coarse triangles. Its nominal visual lift is 5 mm rather
+  than 18 mm; retained triangles stay 2–8 mm above the sampled collision
+  surface. This changes appearance only, not contact geometry or materials.
+
 ## [0.2.0] - 2026-09-19
 
 This code-only release improves local visual-guide generation and runtime-pack

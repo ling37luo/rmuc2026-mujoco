@@ -97,9 +97,11 @@ Only the boundary-connected near-white page margin becomes transparent;
 interior RGB pixels and world UV coordinates are preserved. This matches the
 earlier `visual5` display instead of reducing the image to a small set of
 chromatic markings. The full picture follows the collision heightfield on a
-5 cm visual grid; cells crossing sharp height discontinuities or hiding an
-interior terrain protrusion are omitted so the texture is not drawn through
-the field.
+5 cm non-contact visual grid. Cells that would cross a sharp height change or
+float above a low patch are locally refined to 2.5 or 1.25 cm where possible; remaining
+bad cells are omitted to expose the CAD surface. Retained visual triangles
+stay within a few millimetres above the sampled collision surface, so the
+texture does not hide a grounded robot.
 The repository never contains the source or generated images. Press `L` in the
 interactive viewer to switch between the default flat lighting and cast shadows.
 Press `G` to show or hide the optional rulebook livery, which starts hidden and
@@ -208,7 +210,8 @@ and image comparisons and reports `PASS_SIZE_ONLY` instead of `PASS`.
 
 New local builds use runtime-pack schema 2 for the named lighting and optional
 livery contracts. The complete livery uses a 5 cm non-contact visual mesh with
-MuJoCo's fixed-diagonal heightfield interpolation. The loader continues to accept
+local 2.5/1.25 cm refinement and MuJoCo's fixed-diagonal heightfield interpolation.
+The loader continues to accept
 schema 1 packs and both schema 2 livery forms: the complete baked guide and the
 earlier filtered-marking experiment. Missing schema 2 display controls remain
 unavailable instead of being inferred.
@@ -378,7 +381,9 @@ python3 -m venv .venv
 带 `--include-surface-guide` 构建时，规则手册俯视图只在本机处理。运行包保留俯视图的
 地面颜色、场地模块、障碍物、图中烘焙的机器人和阴影；只把与图片边缘连通的近白页边
 变为透明，内部 RGB 像素和世界坐标贴图位置不变，不会再过滤成只有少量彩色标线。
-视觉曲面使用约 5 cm 网格按 MuJoCo 高度场对角线贴合，并在突变高度或局部穿插处断开。
+视觉曲面使用约 5 cm 网格按 MuJoCo 高度场对角线贴合；可能跨越高低落差的位置局部细分至
+2.5 或 1.25 cm，不合格的单元露出原 CAD 表面。保留的涂装面只比采样碰撞面高数毫米，避免遮住
+已经接地的机器人。
 默认是无投影平光和隐藏涂装；窗口内按 `L`
 切换投影阴影，按 `G` 切换组 4 涂装。两项都只改变显示，不会改变机器人状态、场地接触、
 摩擦或求解器参数。读取器仍兼容 schema 1、完整涂装 schema 2 和此前的筛选标线 schema 2。

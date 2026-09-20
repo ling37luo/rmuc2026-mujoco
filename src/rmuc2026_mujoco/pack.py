@@ -43,9 +43,11 @@ SURFACE_GUIDE_GEOM_NAME = "rmuc2026_surface_guide"
 SURFACE_GUIDE_GEOM_GROUP = 4
 SURFACE_GUIDE_BAKED_CONTENT = SOURCE_BAKED_SCENE_CONTENT
 SURFACE_GUIDE_SAMPLING_M = 0.05
-SURFACE_GUIDE_CLEARANCE_M = 0.018
+SURFACE_GUIDE_CLEARANCE_M = 0.005
+SURFACE_GUIDE_MINIMUM_ABOVE_TERRAIN_M = 0.002
+SURFACE_GUIDE_MAXIMUM_ABOVE_TERRAIN_M = 0.008
 SURFACE_GUIDE_MAXIMUM_CELL_HEIGHT_DELTA_M = 0.20
-SURFACE_GUIDE_UNDERCUT_MARGIN_M = 0.002
+SURFACE_GUIDE_MAXIMUM_SURFACE_SLOPE = 0.8
 
 
 class ExportBlocked(RuntimeError):
@@ -270,58 +272,234 @@ def _mujoco_triangle_height_samples(
     return np.where(v > u, upper_triangle, lower_triangle)
 
 
-def _surface_guide_maximum_undercut(
+def _mujoco_triangle_height_points(
+    x: np.ndarray,
+    y: np.ndarray,
+    height: np.ndarray,
+    points_x: np.ndarray,
+    points_y: np.ndarray,
+) -> np.ndarray:
+    """Sample fixed-diagonal hfield triangles at pairwise XY coordinates."""
+
+    x_lower = np.clip(np.searchsorted(x, points_x, side="left") - 1, 0, len(x) - 2)
+    y_lower = np.clip(np.searchsorted(y, points_y, side="left") - 1, 0, len(y) - 2)
+    u = (points_x - x[x_lower]) / (x[x_lower + 1] - x[x_lower])
+    v = (points_y - y[y_lower]) / (y[y_lower + 1] - y[y_lower])
+    ll = height[y_lower, x_lower]
+    lr = height[y_lower, x_lower + 1]
+    ul = height[y_lower + 1, x_lower]
+    ur = height[y_lower + 1, x_lower + 1]
+    lower = ll + (lr - ll) * u + (ur - lr) * v
+    upper = ll + (ur - ul) * u + (ul - ll) * v
+    return np.where(v > u, upper, lower)
+
+
+def _surface_guide_signed_error_bounds(
     x: np.ndarray,
     y: np.ndarray,
     height: np.ndarray,
     selected_x: np.ndarray,
     selected_y: np.ndarray,
     selected_height: np.ndarray,
-) -> np.ndarray:
-    """Measure terrain protrusions hidden between guide-grid vertices.
+) -> tuple[np.ndarray, np.ndarray]:
+    """Bound both signs of guide height error over each candidate cell.
 
-    Four-corner checks alone miss isolated 1 cm heightfield features. Inspect
-    each authoritative sample against the same diagonal used for OBJ faces,
-    in row chunks so a full field does not allocate multiple 4.7M-point arrays.
+    Inspect the 1 cm heightfield nodes, native-cell centres, guide-cell centres,
+    and intersections between guide diagonals/edges and native grid lines.
+    Chunk the Cartesian probes so a full field does not materialize millions
+    of samples at once. Error is guide height minus authoritative terrain.
     """
 
-    x_inside = (x >= selected_x[0]) & (x <= selected_x[-1])
-    x_cells = np.clip(np.searchsorted(selected_x, x, side="right") - 1, 0, len(selected_x) - 2)
-    u = (x - selected_x[x_cells]) / (selected_x[x_cells + 1] - selected_x[x_cells])
-    result = np.full((len(selected_y) - 1, len(selected_x) - 1), -np.inf)
-    for first_row in range(0, len(y), 128):
-        stop_row = min(first_row + 128, len(y))
-        section_y = y[first_row:stop_row]
-        y_inside = (section_y >= selected_y[0]) & (section_y <= selected_y[-1])
-        y_cells = np.clip(
-            np.searchsorted(selected_y, section_y, side="right") - 1,
-            0,
-            len(selected_y) - 2,
-        )
-        v = (section_y - selected_y[y_cells]) / (selected_y[y_cells + 1] - selected_y[y_cells])
-        lower_left = selected_height[np.ix_(y_cells, x_cells)]
-        lower_right = selected_height[np.ix_(y_cells, x_cells + 1)]
-        upper_left = selected_height[np.ix_(y_cells + 1, x_cells)]
-        upper_right = selected_height[np.ix_(y_cells + 1, x_cells + 1)]
-        lower_triangle = (
-            lower_left
-            + (lower_right - lower_left) * u[None, :]
-            + (upper_right - lower_right) * v[:, None]
-        )
-        upper_triangle = (
-            lower_left
-            + (upper_right - upper_left) * u[None, :]
-            + (upper_left - lower_left) * v[:, None]
-        )
-        guide_height = np.where(v[:, None] > u[None, :], upper_triangle, lower_triangle)
-        undercut = height[first_row:stop_row] - guide_height
-        undercut[~(y_inside[:, None] & x_inside[None, :])] = -np.inf
-        np.maximum.at(result, (y_cells[:, None], x_cells[None, :]), undercut)
+    cells_y, cells_x = len(selected_y) - 1, len(selected_x) - 1
+    minimum = np.full((cells_y, cells_x), np.inf)
+    maximum = np.full((cells_y, cells_x), -np.inf)
+    for probe_x, probe_y, native_nodes in (
+        (x, y, True),
+        (0.5 * (x[:-1] + x[1:]), 0.5 * (y[:-1] + y[1:]), False),
+    ):
+        x_inside = (probe_x >= selected_x[0]) & (probe_x <= selected_x[-1])
+        x_cells = np.clip(np.searchsorted(selected_x, probe_x, side="right") - 1, 0, cells_x - 1)
+        u = (probe_x - selected_x[x_cells]) / (selected_x[x_cells + 1] - selected_x[x_cells])
+        for first_row in range(0, len(probe_y), 128):
+            stop_row = min(first_row + 128, len(probe_y))
+            section_y = probe_y[first_row:stop_row]
+            y_inside = (section_y >= selected_y[0]) & (section_y <= selected_y[-1])
+            y_cells = np.clip(
+                np.searchsorted(selected_y, section_y, side="right") - 1,
+                0,
+                cells_y - 1,
+            )
+            v = (section_y - selected_y[y_cells]) / (selected_y[y_cells + 1] - selected_y[y_cells])
+            ll = selected_height[np.ix_(y_cells, x_cells)]
+            lr = selected_height[np.ix_(y_cells, x_cells + 1)]
+            ul = selected_height[np.ix_(y_cells + 1, x_cells)]
+            ur = selected_height[np.ix_(y_cells + 1, x_cells + 1)]
+            lower = ll + (lr - ll) * u[None, :] + (ur - lr) * v[:, None]
+            upper = ll + (ur - ul) * u[None, :] + (ul - ll) * v[:, None]
+            guide = np.where(v[:, None] > u[None, :], upper, lower)
+            terrain = (
+                height[first_row:stop_row]
+                if native_nodes
+                else _mujoco_triangle_height_samples(x, y, height, probe_x, section_y)
+            )
+            error = guide - terrain
+            inside = y_inside[:, None] & x_inside[None, :]
+            np.minimum.at(
+                minimum, (y_cells[:, None], x_cells[None, :]), np.where(inside, error, np.inf)
+            )
+            np.maximum.at(
+                maximum, (y_cells[:, None], x_cells[None, :]), np.where(inside, error, -np.inf)
+            )
+
     center_x = 0.5 * (selected_x[:-1] + selected_x[1:])
     center_y = 0.5 * (selected_y[:-1] + selected_y[1:])
-    center_height = _mujoco_triangle_height_samples(x, y, height, center_x, center_y)
-    guide_center_height = 0.5 * (selected_height[:-1, :-1] + selected_height[1:, 1:])
-    return np.maximum(result, center_height - guide_center_height)
+    center_error = 0.5 * (selected_height[:-1, :-1] + selected_height[1:, 1:]) - (
+        _mujoco_triangle_height_samples(x, y, height, center_x, center_y)
+    )
+    np.minimum(minimum, center_error, out=minimum)
+    np.maximum(maximum, center_error, out=maximum)
+
+    ll = selected_height[:-1, :-1]
+    lr = selected_height[:-1, 1:]
+    ul = selected_height[1:, :-1]
+    ur = selected_height[1:, 1:]
+
+    def include(
+        points_x: np.ndarray, points_y: np.ndarray, guide: np.ndarray, valid: np.ndarray
+    ) -> None:
+        terrain = _mujoco_triangle_height_points(x, y, height, points_x, points_y)
+        error = guide - terrain
+        np.minimum(minimum, np.where(valid, error, np.inf), out=minimum)
+        np.maximum(maximum, np.where(valid, error, -np.inf), out=maximum)
+
+    # The diagonal and four outer edges are the only guide triangle edges.
+    # Probe their crossings with every native horizontal/vertical grid line.
+    first_x = np.searchsorted(x, selected_x[:-1], side="right")
+    first_y = np.searchsorted(y, selected_y[:-1], side="right")
+    max_x_lines = int(np.ceil(np.max(np.diff(selected_x)) / np.min(np.diff(x)))) + 2
+    max_y_lines = int(np.ceil(np.max(np.diff(selected_y)) / np.min(np.diff(y)))) + 2
+    for offset in range(max_x_lines):
+        indices = first_x + offset
+        native_x = x[np.clip(indices, 0, len(x) - 1)]
+        valid_x = (indices < len(x)) & (native_x < selected_x[1:])
+        u = (native_x - selected_x[:-1]) / np.diff(selected_x)
+        points_x = np.broadcast_to(native_x[None, :], minimum.shape)
+        diagonal_y = selected_y[:-1, None] + u[None, :] * np.diff(selected_y)[:, None]
+        include(points_x, diagonal_y, ll + (ur - ll) * u[None, :], valid_x[None, :])
+        for row_edge, guide in (
+            (selected_y[:-1, None], ll + (lr - ll) * u[None, :]),
+            (selected_y[1:, None], ul + (ur - ul) * u[None, :]),
+        ):
+            include(points_x, np.broadcast_to(row_edge, minimum.shape), guide, valid_x[None, :])
+    for offset in range(max_y_lines):
+        indices = first_y + offset
+        native_y = y[np.clip(indices, 0, len(y) - 1)]
+        valid_y = (indices < len(y)) & (native_y < selected_y[1:])
+        v = (native_y - selected_y[:-1]) / np.diff(selected_y)
+        points_y = np.broadcast_to(native_y[:, None], minimum.shape)
+        diagonal_x = selected_x[None, :-1] + v[:, None] * np.diff(selected_x)[None, :]
+        include(diagonal_x, points_y, ll + (ur - ll) * v[:, None], valid_y[:, None])
+        for column_edge, guide in (
+            (selected_x[None, :-1], ll + (ul - ll) * v[:, None]),
+            (selected_x[None, 1:], lr + (ur - lr) * v[:, None]),
+        ):
+            include(np.broadcast_to(column_edge, minimum.shape), points_y, guide, valid_y[:, None])
+    return minimum, maximum
+
+
+def _surface_guide_local_error_bounds(
+    x: np.ndarray,
+    y: np.ndarray,
+    height: np.ndarray,
+    grid_x: np.ndarray,
+    grid_y: np.ndarray,
+    grid_height: np.ndarray,
+    cell_rows: np.ndarray,
+    cell_columns: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Probe only selected subcells against the original 1 cm triangles."""
+
+    x0, x1 = grid_x[cell_columns], grid_x[cell_columns + 1]
+    y0, y1 = grid_y[cell_rows], grid_y[cell_rows + 1]
+    ll = grid_height[cell_rows, cell_columns]
+    lr = grid_height[cell_rows, cell_columns + 1]
+    ul = grid_height[cell_rows + 1, cell_columns]
+    ur = grid_height[cell_rows + 1, cell_columns + 1]
+    minimum = np.full(len(cell_rows), np.inf)
+    maximum = np.full(len(cell_rows), -np.inf)
+
+    def include(
+        points_x: np.ndarray,
+        points_y: np.ndarray,
+        guide: np.ndarray,
+        valid: np.ndarray | None = None,
+    ) -> None:
+        terrain = _mujoco_triangle_height_points(x, y, height, points_x, points_y)
+        error = guide - terrain
+        if valid is not None:
+            error_min = np.where(valid, error, np.inf)
+            error_max = np.where(valid, error, -np.inf)
+        else:
+            error_min = error_max = error
+        np.minimum(minimum, error_min, out=minimum)
+        np.maximum(maximum, error_max, out=maximum)
+
+    def guide_at(points_x: np.ndarray, points_y: np.ndarray) -> np.ndarray:
+        u = (points_x - x0) / (x1 - x0)
+        v = (points_y - y0) / (y1 - y0)
+        lower = ll + (lr - ll) * u + (ur - lr) * v
+        upper = ll + (ur - ul) * u + (ul - ll) * v
+        return np.where(v > u, upper, lower)
+
+    for points_x, points_y, guide in (
+        (x0, y0, ll),
+        (x1, y0, lr),
+        (x0, y1, ul),
+        (x1, y1, ur),
+        (0.5 * (x0 + x1), 0.5 * (y0 + y1), 0.5 * (ll + ur)),
+    ):
+        include(points_x, points_y, guide)
+
+    native_x_mid = 0.5 * (x[:-1] + x[1:])
+    native_y_mid = 0.5 * (y[:-1] + y[1:])
+    for probe_x, probe_y in ((x, y), (native_x_mid, native_y_mid)):
+        first_x = np.searchsorted(probe_x, x0, side="right")
+        first_y = np.searchsorted(probe_y, y0, side="right")
+        max_x = int(math.ceil(float(np.max(x1 - x0)) / float(np.min(np.diff(probe_x))))) + 1
+        max_y = int(math.ceil(float(np.max(y1 - y0)) / float(np.min(np.diff(probe_y))))) + 1
+        for x_offset in range(max_x):
+            index_x = first_x + x_offset
+            points_x = probe_x[np.clip(index_x, 0, len(probe_x) - 1)]
+            valid_x = (index_x < len(probe_x)) & (points_x < x1)
+            for y_offset in range(max_y):
+                index_y = first_y + y_offset
+                points_y = probe_y[np.clip(index_y, 0, len(probe_y) - 1)]
+                valid_y = (index_y < len(probe_y)) & (points_y < y1)
+                include(points_x, points_y, guide_at(points_x, points_y), valid_x & valid_y)
+
+    first_x = np.searchsorted(x, x0, side="right")
+    first_y = np.searchsorted(y, y0, side="right")
+    max_x = int(math.ceil(float(np.max(x1 - x0)) / float(np.min(np.diff(x))))) + 1
+    max_y = int(math.ceil(float(np.max(y1 - y0)) / float(np.min(np.diff(y))))) + 1
+    for offset in range(max_x):
+        index = first_x + offset
+        native_x = x[np.clip(index, 0, len(x) - 1)]
+        valid = (index < len(x)) & (native_x < x1)
+        u = (native_x - x0) / (x1 - x0)
+        diagonal_y = y0 + u * (y1 - y0)
+        include(native_x, diagonal_y, ll + (ur - ll) * u, valid)
+        include(native_x, y0, ll + (lr - ll) * u, valid)
+        include(native_x, y1, ul + (ur - ul) * u, valid)
+    for offset in range(max_y):
+        index = first_y + offset
+        native_y = y[np.clip(index, 0, len(y) - 1)]
+        valid = (index < len(y)) & (native_y < y1)
+        v = (native_y - y0) / (y1 - y0)
+        diagonal_x = x0 + v * (x1 - x0)
+        include(diagonal_x, native_y, ll + (ur - ll) * v, valid)
+        include(x0, native_y, ll + (ul - ll) * v, valid)
+        include(x1, native_y, lr + (ur - lr) * v, valid)
+    return minimum, maximum
 
 
 def _write_surface_guide_mesh(
@@ -334,12 +512,12 @@ def _write_surface_guide_mesh(
 ) -> dict[str, Any]:
     """Write the full non-contact rulebook surface used by the visual5 pack.
 
-    The 5 cm grid follows MuJoCo's fixed-diagonal heightfield surface. Keeping
-    omitted cells this small avoids visible stair-steps at raised platform edges.
-    Cells that cross a height discontinuity are omitted so the picture is not
-    drawn vertically across a wall, while the complete RGB texture remains
-    available on every retained surface cell. Texture alpha never selects the
-    geometry.
+    The 5 cm grid follows MuJoCo's fixed-diagonal heightfield surface. Cells
+    whose interior departs from the physical surface are refined to 2.5 cm;
+    remaining bad cells are omitted rather than drawing false raised bridges
+    or intersecting the terrain. Discontinuity gaps are a known visual limit,
+    while the complete RGB texture remains available on retained cells. Texture
+    alpha never selects geometry.
     """
 
     try:
@@ -373,10 +551,7 @@ def _write_surface_guide_mesh(
         sampling_m=SURFACE_GUIDE_SAMPLING_M,
         label="Y",
     )
-    selected_height = (
-        _mujoco_triangle_height_samples(x, y, height, selected_x, selected_y)
-        + SURFACE_GUIDE_CLEARANCE_M
-    )
+    selected_height = _mujoco_triangle_height_samples(x, y, height, selected_x, selected_y)
     mesh_rows, mesh_columns = len(selected_y), len(selected_x)
     cell_maximum = np.maximum.reduce(
         (
@@ -394,67 +569,288 @@ def _write_surface_guide_mesh(
             selected_height[1:, 1:],
         )
     )
-    maximum_undercut = _surface_guide_maximum_undercut(
-        x, y, height, selected_x, selected_y, selected_height - SURFACE_GUIDE_CLEARANCE_M
+    minimum_error, maximum_error = _surface_guide_signed_error_bounds(
+        x, y, height, selected_x, selected_y, selected_height
     )
-    smooth_cells = cell_maximum - cell_minimum <= SURFACE_GUIDE_MAXIMUM_CELL_HEIGHT_DELTA_M
-    undercut_cells = maximum_undercut > SURFACE_GUIDE_CLEARANCE_M - SURFACE_GUIDE_UNDERCUT_MARGIN_M
-    visible_cells = smooth_cells & ~undercut_cells
-    if not np.any(visible_cells):
+    coarse_maximum_rise = np.minimum(
+        SURFACE_GUIDE_MAXIMUM_CELL_HEIGHT_DELTA_M,
+        SURFACE_GUIDE_MAXIMUM_SURFACE_SLOPE
+        * np.hypot(np.diff(selected_y)[:, None], np.diff(selected_x)[None, :]),
+    )
+    smooth_cells = cell_maximum - cell_minimum <= coarse_maximum_rise
+    below_terrain = minimum_error + SURFACE_GUIDE_CLEARANCE_M < (
+        SURFACE_GUIDE_MINIMUM_ABOVE_TERRAIN_M - 1.0e-10
+    )
+    raised_bridge = maximum_error + SURFACE_GUIDE_CLEARANCE_M > (
+        SURFACE_GUIDE_MAXIMUM_ABOVE_TERRAIN_M + 1.0e-10
+    )
+    coarse_visible = smooth_cells & ~below_terrain & ~raised_bridge
+
+    # Locally refine only rejected 5 cm cells. Where a refined cell meets a
+    # coarse triangle, put its midpoint exactly on the coarse edge; otherwise
+    # a T-junction can open a visible crack even if both heights are valid.
+    fine_x = np.linspace(bounds[0, 0], bounds[1, 0], 2 * (mesh_columns - 1) + 1)
+    fine_y = np.linspace(bounds[0, 1], bounds[1, 1], 2 * (mesh_rows - 1) + 1)
+    fine_height = _mujoco_triangle_height_samples(x, y, height, fine_x, fine_y)
+    horizontal_coarse_edge = np.zeros((mesh_rows, mesh_columns - 1), dtype=bool)
+    horizontal_coarse_edge[:-1] |= coarse_visible
+    horizontal_coarse_edge[1:] |= coarse_visible
+    horizontal_midpoints = fine_height[::2, 1::2]
+    horizontal_linear = 0.5 * (selected_height[:, :-1] + selected_height[:, 1:])
+    horizontal_midpoints[horizontal_coarse_edge] = horizontal_linear[horizontal_coarse_edge]
+    vertical_coarse_edge = np.zeros((mesh_rows - 1, mesh_columns), dtype=bool)
+    vertical_coarse_edge[:, :-1] |= coarse_visible
+    vertical_coarse_edge[:, 1:] |= coarse_visible
+    vertical_midpoints = fine_height[1::2, ::2]
+    vertical_linear = 0.5 * (selected_height[:-1, :] + selected_height[1:, :])
+    vertical_midpoints[vertical_coarse_edge] = vertical_linear[vertical_coarse_edge]
+
+    fine_minimum_error, fine_maximum_error = _surface_guide_signed_error_bounds(
+        x, y, height, fine_x, fine_y, fine_height
+    )
+    fine_cell_maximum = np.maximum.reduce(
+        (
+            fine_height[:-1, :-1],
+            fine_height[:-1, 1:],
+            fine_height[1:, :-1],
+            fine_height[1:, 1:],
+        )
+    )
+    fine_cell_minimum = np.minimum.reduce(
+        (
+            fine_height[:-1, :-1],
+            fine_height[:-1, 1:],
+            fine_height[1:, :-1],
+            fine_height[1:, 1:],
+        )
+    )
+    fine_maximum_rise = np.minimum(
+        SURFACE_GUIDE_MAXIMUM_CELL_HEIGHT_DELTA_M,
+        SURFACE_GUIDE_MAXIMUM_SURFACE_SLOPE
+        * np.hypot(np.diff(fine_y)[:, None], np.diff(fine_x)[None, :]),
+    )
+    fine_valid = (
+        (fine_cell_maximum - fine_cell_minimum <= fine_maximum_rise)
+        & (
+            fine_minimum_error + SURFACE_GUIDE_CLEARANCE_M
+            >= SURFACE_GUIDE_MINIMUM_ABOVE_TERRAIN_M - 1.0e-10
+        )
+        & (
+            fine_maximum_error + SURFACE_GUIDE_CLEARANCE_M
+            <= SURFACE_GUIDE_MAXIMUM_ABOVE_TERRAIN_M + 1.0e-10
+        )
+    )
+    fine_visible = fine_valid & np.repeat(np.repeat(~coarse_visible, 2, axis=0), 2, axis=1)
+    fine_rejected = ~fine_valid & np.repeat(np.repeat(~coarse_visible, 2, axis=0), 2, axis=1)
+
+    # A final local level gives narrow stair treads a chance to retain the
+    # picture. Do not refine accepted cells or flatten the physical risers.
+    quarter_x = np.linspace(bounds[0, 0], bounds[1, 0], 4 * (mesh_columns - 1) + 1)
+    quarter_y = np.linspace(bounds[0, 1], bounds[1, 1], 4 * (mesh_rows - 1) + 1)
+    quarter_height = _mujoco_triangle_height_samples(x, y, height, quarter_x, quarter_y)
+    quarter_height[::2, ::2] = fine_height
+    horizontal_fine_edge = np.zeros((len(fine_y), len(fine_x) - 1), dtype=bool)
+    horizontal_fine_edge[:-1] |= fine_visible
+    horizontal_fine_edge[1:] |= fine_visible
+    quarter_horizontal_midpoints = quarter_height[::2, 1::2]
+    fine_horizontal_linear = 0.5 * (fine_height[:, :-1] + fine_height[:, 1:])
+    quarter_horizontal_midpoints[horizontal_fine_edge] = fine_horizontal_linear[
+        horizontal_fine_edge
+    ]
+    vertical_fine_edge = np.zeros((len(fine_y) - 1, len(fine_x)), dtype=bool)
+    vertical_fine_edge[:, :-1] |= fine_visible
+    vertical_fine_edge[:, 1:] |= fine_visible
+    quarter_vertical_midpoints = quarter_height[1::2, ::2]
+    fine_vertical_linear = 0.5 * (fine_height[:-1, :] + fine_height[1:, :])
+    quarter_vertical_midpoints[vertical_fine_edge] = fine_vertical_linear[vertical_fine_edge]
+
+    # Four quarter-grid segments also meet a 5 cm coarse edge. Their shared
+    # 1/4, 1/2 and 3/4 vertices must lie exactly on its straight triangle edge.
+    for fraction in (1, 2, 3):
+        horizontal = quarter_height[::4, fraction::4]
+        horizontal_linear = selected_height[:, :-1] + (
+            selected_height[:, 1:] - selected_height[:, :-1]
+        ) * (fraction / 4.0)
+        horizontal[horizontal_coarse_edge] = horizontal_linear[horizontal_coarse_edge]
+        vertical = quarter_height[fraction::4, ::4]
+        vertical_linear = selected_height[:-1, :] + (
+            selected_height[1:, :] - selected_height[:-1, :]
+        ) * (fraction / 4.0)
+        vertical[vertical_coarse_edge] = vertical_linear[vertical_coarse_edge]
+
+    quarter_candidates = np.repeat(np.repeat(fine_rejected, 2, axis=0), 2, axis=1)
+    candidate_rows, candidate_columns = np.nonzero(quarter_candidates)
+    quarter_visible = np.zeros(quarter_candidates.shape, dtype=bool)
+    quarter_retained_minimum = math.inf
+    quarter_retained_maximum = -math.inf
+    if len(candidate_rows):
+        quarter_minimum_error, quarter_maximum_error = _surface_guide_local_error_bounds(
+            x,
+            y,
+            height,
+            quarter_x,
+            quarter_y,
+            quarter_height,
+            candidate_rows,
+            candidate_columns,
+        )
+        qll = quarter_height[candidate_rows, candidate_columns]
+        qlr = quarter_height[candidate_rows, candidate_columns + 1]
+        qul = quarter_height[candidate_rows + 1, candidate_columns]
+        qur = quarter_height[candidate_rows + 1, candidate_columns + 1]
+        quarter_maximum_rise = np.minimum(
+            SURFACE_GUIDE_MAXIMUM_CELL_HEIGHT_DELTA_M,
+            SURFACE_GUIDE_MAXIMUM_SURFACE_SLOPE
+            * np.hypot(
+                quarter_y[candidate_rows + 1] - quarter_y[candidate_rows],
+                quarter_x[candidate_columns + 1] - quarter_x[candidate_columns],
+            ),
+        )
+        quarter_smooth = (
+            np.maximum.reduce((qll, qlr, qul, qur)) - np.minimum.reduce((qll, qlr, qul, qur))
+            <= quarter_maximum_rise
+        )
+        valid_candidates = (
+            quarter_smooth
+            & (
+                quarter_minimum_error + SURFACE_GUIDE_CLEARANCE_M
+                >= SURFACE_GUIDE_MINIMUM_ABOVE_TERRAIN_M - 1.0e-10
+            )
+            & (
+                quarter_maximum_error + SURFACE_GUIDE_CLEARANCE_M
+                <= SURFACE_GUIDE_MAXIMUM_ABOVE_TERRAIN_M + 1.0e-10
+            )
+        )
+        quarter_visible[candidate_rows[valid_candidates], candidate_columns[valid_candidates]] = (
+            True
+        )
+        if np.any(valid_candidates):
+            quarter_retained_minimum = float(
+                np.min(quarter_minimum_error[valid_candidates] + SURFACE_GUIDE_CLEARANCE_M)
+            )
+            quarter_retained_maximum = float(
+                np.max(quarter_maximum_error[valid_candidates] + SURFACE_GUIDE_CLEARANCE_M)
+            )
+
+    if not np.any(coarse_visible) and not np.any(fine_visible) and not np.any(quarter_visible):
         raise ExportBlocked("surface_guide跨高度接缝过滤后没有可显示三角面")
 
-    used_vertices = np.zeros((mesh_rows, mesh_columns), dtype=bool)
-    used_vertices[:-1, :-1] |= visible_cells
-    used_vertices[:-1, 1:] |= visible_cells
-    used_vertices[1:, :-1] |= visible_cells
-    used_vertices[1:, 1:] |= visible_cells
-    vertex_indices = np.zeros((mesh_rows, mesh_columns), dtype=np.int64)
+    used_vertices = np.zeros(quarter_height.shape, dtype=bool)
+    coarse_vertices = used_vertices[::4, ::4]
+    coarse_vertices[:-1, :-1] |= coarse_visible
+    coarse_vertices[:-1, 1:] |= coarse_visible
+    coarse_vertices[1:, :-1] |= coarse_visible
+    coarse_vertices[1:, 1:] |= coarse_visible
+    fine_vertices = used_vertices[::2, ::2]
+    fine_vertices[:-1, :-1] |= fine_visible
+    fine_vertices[:-1, 1:] |= fine_visible
+    fine_vertices[1:, :-1] |= fine_visible
+    fine_vertices[1:, 1:] |= fine_visible
+    used_vertices[:-1, :-1] |= quarter_visible
+    used_vertices[:-1, 1:] |= quarter_visible
+    used_vertices[1:, :-1] |= quarter_visible
+    used_vertices[1:, 1:] |= quarter_visible
+    vertex_indices = np.zeros(quarter_height.shape, dtype=np.int64)
     used_rows, used_columns = np.nonzero(used_vertices)
     vertex_indices[used_rows, used_columns] = np.arange(1, len(used_rows) + 1)
 
     lines = ["o rmuc2026_surface_guide"]
     lines.extend(
-        f"v {selected_x[column]:.9g} {selected_y[row]:.9g} {selected_height[row, column]:.9g}"
+        f"v {quarter_x[column]:.9g} {quarter_y[row]:.9g} "
+        f"{quarter_height[row, column] + SURFACE_GUIDE_CLEARANCE_M:.9g}"
         for row, column in zip(used_rows, used_columns)
     )
     span = bounds[1] - bounds[0]
     lines.extend(
-        f"vt {float(np.clip((selected_x[column] - bounds[0, 0]) / span[0], 0.0, 1.0)):.9g} "
-        f"{float(np.clip((selected_y[row] - bounds[0, 1]) / span[1], 0.0, 1.0)):.9g}"
+        f"vt {float(np.clip((quarter_x[column] - bounds[0, 0]) / span[0], 0.0, 1.0)):.9g} "
+        f"{float(np.clip((quarter_y[row] - bounds[0, 1]) / span[1], 0.0, 1.0)):.9g}"
         for row, column in zip(used_rows, used_columns)
     )
-    for row, column in zip(*np.nonzero(visible_cells)):
+
+    def append_cell(row: int, column: int, stride: int) -> None:
         lower_left = int(vertex_indices[row, column])
-        lower_right = int(vertex_indices[row, column + 1])
-        upper_left = int(vertex_indices[row + 1, column])
-        upper_right = int(vertex_indices[row + 1, column + 1])
+        lower_right = int(vertex_indices[row, column + stride])
+        upper_left = int(vertex_indices[row + stride, column])
+        upper_right = int(vertex_indices[row + stride, column + stride])
         lines.append(
             f"f {lower_left}/{lower_left} {lower_right}/{lower_right} {upper_right}/{upper_right}"
         )
         lines.append(
             f"f {lower_left}/{lower_left} {upper_right}/{upper_right} {upper_left}/{upper_left}"
         )
-    visible_cell_count = int(np.count_nonzero(visible_cells))
-    face_count = 2 * visible_cell_count
+
+    for row, column in zip(*np.nonzero(coarse_visible)):
+        append_cell(4 * int(row), 4 * int(column), 4)
+    for row, column in zip(*np.nonzero(fine_visible)):
+        append_cell(2 * int(row), 2 * int(column), 2)
+    for row, column in zip(*np.nonzero(quarter_visible)):
+        append_cell(int(row), int(column), 1)
+    coarse_visible_count = int(np.count_nonzero(coarse_visible))
+    fine_visible_count = int(np.count_nonzero(fine_visible))
+    quarter_visible_count = int(np.count_nonzero(quarter_visible))
+    face_count = 2 * (coarse_visible_count + fine_visible_count + quarter_visible_count)
     cell_count = (mesh_rows - 1) * (mesh_columns - 1)
-    omitted_cell_count = cell_count - visible_cell_count
+    refined_area = fine_visible_count / 4.0
+    quarter_area = quarter_visible_count / 16.0
+    visible_fraction = (coarse_visible_count + refined_area + quarter_area) / cell_count
+    refined_per_coarse = fine_visible.reshape(mesh_rows - 1, 2, mesh_columns - 1, 2).sum(
+        axis=(1, 3)
+    )
+    quarter_per_coarse = quarter_visible.reshape(mesh_rows - 1, 4, mesh_columns - 1, 4).sum(
+        axis=(1, 3)
+    )
+    fully_omitted_cells = int(
+        np.count_nonzero(~coarse_visible & (refined_per_coarse == 0) & (quarter_per_coarse == 0))
+    )
+    retained_minimum = min(
+        float(np.min(minimum_error[coarse_visible] + SURFACE_GUIDE_CLEARANCE_M))
+        if coarse_visible_count
+        else math.inf,
+        float(np.min(fine_minimum_error[fine_visible] + SURFACE_GUIDE_CLEARANCE_M))
+        if fine_visible_count
+        else math.inf,
+        quarter_retained_minimum,
+    )
+    retained_maximum = max(
+        float(np.max(maximum_error[coarse_visible] + SURFACE_GUIDE_CLEARANCE_M))
+        if coarse_visible_count
+        else -math.inf,
+        float(np.max(fine_maximum_error[fine_visible] + SURFACE_GUIDE_CLEARANCE_M))
+        if fine_visible_count
+        else -math.inf,
+        quarter_retained_maximum,
+    )
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(lines) + "\n", encoding="ascii")
     return {
-        "method": "full_rulebook_surface_5cm_mujoco_triangle_height_sampling",
+        "method": "full_rulebook_surface_adaptive_5cm_2p5cm_1p25cm_signed_height_bounds",
         "target_spacing_m": SURFACE_GUIDE_SAMPLING_M,
+        "refined_spacing_m": SURFACE_GUIDE_SAMPLING_M / 2.0,
+        "local_spacing_m": SURFACE_GUIDE_SAMPLING_M / 4.0,
         "actual_max_spacing_xy_m": [
             float(np.max(np.diff(selected_x))),
             float(np.max(np.diff(selected_y))),
         ],
         "clearance_m": SURFACE_GUIDE_CLEARANCE_M,
+        "minimum_above_terrain_m": SURFACE_GUIDE_MINIMUM_ABOVE_TERRAIN_M,
+        "maximum_above_terrain_m": SURFACE_GUIDE_MAXIMUM_ABOVE_TERRAIN_M,
+        "retained_sampled_minimum_above_terrain_m": retained_minimum,
+        "retained_sampled_maximum_above_terrain_m": retained_maximum,
         "maximum_cell_height_delta_m": SURFACE_GUIDE_MAXIMUM_CELL_HEIGHT_DELTA_M,
+        "maximum_surface_slope": SURFACE_GUIDE_MAXIMUM_SURFACE_SLOPE,
         "vertices": int(np.count_nonzero(used_vertices)),
         "faces": face_count,
-        "omitted_cells": omitted_cell_count,
+        "omitted_cells": fully_omitted_cells,
         "cell_count": cell_count,
+        "coarse_visible_cells": coarse_visible_count,
+        "refined_visible_subcells": fine_visible_count,
+        "local_visible_subcells": quarter_visible_count,
+        "visible_area_fraction": visible_fraction,
         "height_discontinuity_filtered_cells": int(np.count_nonzero(~smooth_cells)),
-        "interior_undercut_filtered_cells": int(np.count_nonzero(smooth_cells & undercut_cells)),
+        "interior_undercut_filtered_cells": int(np.count_nonzero(smooth_cells & below_terrain)),
+        "interior_raised_bridge_filtered_cells": int(
+            np.count_nonzero(smooth_cells & raised_bridge)
+        ),
         "mesh_size_bytes": path.stat().st_size,
         "boundary_xy_height_interpolation": True,
         "source_texture_alpha_drives_topology": False,

@@ -507,16 +507,21 @@ def test_surface_guide_uses_five_centimetre_exact_xy_sampling(tmp_path: Path) ->
         world_bounds_xy_m=bounds,
     )
 
-    assert report["method"] == "full_rulebook_surface_5cm_mujoco_triangle_height_sampling"
+    assert (
+        report["method"] == "full_rulebook_surface_adaptive_5cm_2p5cm_1p25cm_signed_height_bounds"
+    )
     assert max(report["actual_max_spacing_xy_m"]) <= 0.05 + 1.0e-9
     assert report["omitted_cells"] == 0
+    assert report["visible_area_fraction"] == pytest.approx(1.0)
+    assert report["retained_sampled_minimum_above_terrain_m"] >= 0.002 - 1.0e-9
+    assert report["retained_sampled_maximum_above_terrain_m"] <= 0.008 + 1.0e-9
     assert report["source_texture_alpha_drives_topology"] is False
     lines = mesh.read_text(encoding="ascii").splitlines()
     vertices = [line for line in lines if line.startswith("v ")]
     first = [float(value) for value in vertices[0].split()[1:]]
     last = [float(value) for value in vertices[-1].split()[1:]]
-    assert first == pytest.approx([0.013, 0.017, 0.1 * 0.013 + 0.2 * 0.017 + 0.018])
-    assert last == pytest.approx([0.987, 0.983, 0.1 * 0.987 + 0.2 * 0.983 + 0.018])
+    assert first == pytest.approx([0.013, 0.017, 0.1 * 0.013 + 0.2 * 0.017 + 0.005])
+    assert last == pytest.approx([0.987, 0.983, 0.1 * 0.987 + 0.2 * 0.983 + 0.005])
 
 
 def test_surface_guide_height_sampler_matches_mujoco_diagonal_on_saddle() -> None:
@@ -557,16 +562,18 @@ def test_surface_guide_keeps_high_surfaces_and_omits_only_height_jumps(tmp_path:
     )
 
     assert 0 < report["height_discontinuity_filtered_cells"] < report["cell_count"]
-    assert report["omitted_cells"] == (
-        report["height_discontinuity_filtered_cells"] + report["interior_undercut_filtered_cells"]
+    assert report["visible_area_fraction"] < 1.0
+    assert report["faces"] == 2 * (
+        report["coarse_visible_cells"]
+        + report["refined_visible_subcells"]
+        + report["local_visible_subcells"]
     )
-    assert report["faces"] == 2 * (report["cell_count"] - report["omitted_cells"])
     vertices = [
         float(line.split()[3])
         for line in (tmp_path / "guide.obj").read_text(encoding="ascii").splitlines()
         if line.startswith("v ")
     ]
-    assert max(vertices) == pytest.approx(2.018)
+    assert max(vertices) == pytest.approx(2.005)
 
 
 def test_surface_guide_omits_hidden_terrain_spike_inside_a_smooth_cell(tmp_path: Path) -> None:
@@ -591,7 +598,130 @@ def test_surface_guide_omits_hidden_terrain_spike_inside_a_smooth_cell(tmp_path:
 
     assert report["height_discontinuity_filtered_cells"] == 0
     assert report["interior_undercut_filtered_cells"] >= 1
-    assert report["faces"] < 2 * report["cell_count"]
+    assert report["visible_area_fraction"] < 1.0
+
+
+def test_surface_guide_rejects_hidden_pit_and_seals_refined_coarse_seam(tmp_path: Path) -> None:
+    x = np.linspace(0.0, 1.0, 101)
+    y = np.linspace(0.0, 1.0, 101)
+    height = np.zeros((101, 101))
+    height[1, 1] = -0.3  # 5 cm cell corners miss the interior pit
+    height[2, 5] = 0.002  # the native midpoint on its right edge is non-linear
+    samples = tmp_path / "heightfield.npz"
+    np.savez_compressed(samples, x_m=x, y_m=y, height_m=height)
+    mesh = tmp_path / "guide.obj"
+
+    report = _write_surface_guide_mesh(
+        mesh,
+        samples_path=samples,
+        collision={"rows_y": 101, "columns_x": 101},
+        recommended_spawn={
+            "x_before_translation_m": 0.0,
+            "y_before_translation_m": 0.0,
+            "terrain_height_m": 0.0,
+        },
+        world_bounds_xy_m=np.asarray([[0.0, 0.0], [1.0, 1.0]]),
+    )
+
+    assert report["interior_raised_bridge_filtered_cells"] >= 1
+    assert report["refined_visible_subcells"] >= 1
+    assert report["visible_area_fraction"] < 1.0
+    assert report["retained_sampled_minimum_above_terrain_m"] >= 0.002 - 1.0e-9
+    assert report["retained_sampled_maximum_above_terrain_m"] <= 0.008 + 1.0e-9
+    vertex_positions = [
+        tuple(float(value) for value in line.split()[1:])
+        for line in mesh.read_text(encoding="ascii").splitlines()
+        if line.startswith("v ")
+    ]
+    faces = [
+        tuple(vertex_positions[int(field.split("/")[0]) - 1] for field in line.split()[1:])
+        for line in mesh.read_text(encoding="ascii").splitlines()
+        if line.startswith("f ")
+    ]
+    assert not any(
+        max(vertex[0] for vertex in face) <= 0.025 and max(vertex[1] for vertex in face) <= 0.025
+        for face in faces
+    )  # no triangle drapes over the pit
+    assert any(
+        min(vertex[0] for vertex in face) >= 0.05
+        and max(vertex[0] for vertex in face) == pytest.approx(0.1)
+        and max(vertex[1] for vertex in face) <= 0.05
+        for face in faces
+    )  # adjacent coarse cell remains intact
+    seam = {
+        round(vertex[1], 6): vertex[2]
+        for vertex in vertex_positions
+        if vertex[0] == pytest.approx(0.05) and vertex[1] <= 0.05
+    }
+    assert {0.0, 0.025, 0.05}.issubset(seam)
+    assert seam[0.025] == pytest.approx(0.5 * (seam[0.0] + seam[0.05]))
+
+
+def test_surface_guide_restores_stair_treads_without_draping_risers(tmp_path: Path) -> None:
+    x = np.linspace(0.0, 1.0, 101)
+    y = np.linspace(0.0, 1.0, 101)
+    height = np.zeros((101, 101))
+    for edge_index in (6, 13, 21, 29, 38):
+        height[:, edge_index:] += 0.08
+    samples = tmp_path / "stairs.npz"
+    np.savez_compressed(samples, x_m=x, y_m=y, height_m=height)
+    mesh = tmp_path / "stairs.obj"
+
+    report = _write_surface_guide_mesh(
+        mesh,
+        samples_path=samples,
+        collision={"rows_y": 101, "columns_x": 101},
+        recommended_spawn={
+            "x_before_translation_m": 0.0,
+            "y_before_translation_m": 0.0,
+            "terrain_height_m": 0.0,
+        },
+        world_bounds_xy_m=np.asarray([[0.0, 0.0], [1.0, 1.0]]),
+    )
+
+    two_level_fraction = (
+        report["coarse_visible_cells"] + report["refined_visible_subcells"] / 4.0
+    ) / report["cell_count"]
+    assert report["local_visible_subcells"] > 0
+    assert report["visible_area_fraction"] - two_level_fraction >= 0.05
+    assert report["retained_sampled_minimum_above_terrain_m"] >= 0.002 - 1.0e-9
+    assert report["retained_sampled_maximum_above_terrain_m"] <= 0.008 + 1.0e-9
+
+    vertices = [
+        tuple(float(value) for value in line.split()[1:])
+        for line in mesh.read_text(encoding="ascii").splitlines()
+        if line.startswith("v ")
+    ]
+    point_array = np.asarray(vertices)
+    checked_shared_midpoints = 0
+    for line in mesh.read_text(encoding="ascii").splitlines():
+        if not line.startswith("f "):
+            continue
+        face = [vertices[int(field.split("/")[0]) - 1] for field in line.split()[1:]]
+        rise = max(vertex[2] for vertex in face) - min(vertex[2] for vertex in face)
+        span_x = max(vertex[0] for vertex in face) - min(vertex[0] for vertex in face)
+        span_y = max(vertex[1] for vertex in face) - min(vertex[1] for vertex in face)
+        assert rise <= 0.8 * np.hypot(span_x, span_y) + 1.0e-8
+        for start, end in ((face[0], face[1]), (face[1], face[2]), (face[2], face[0])):
+            if start[0] == end[0] and abs(start[1] - end[1]) >= 0.025 - 1.0e-8:
+                coordinate, fixed = 1, 0
+            elif start[1] == end[1] and abs(start[0] - end[0]) >= 0.025 - 1.0e-8:
+                coordinate, fixed = 0, 1
+            else:
+                continue
+            fraction = (point_array[:, coordinate] - start[coordinate]) / (
+                end[coordinate] - start[coordinate]
+            )
+            interior = (
+                np.isclose(point_array[:, fixed], start[fixed], atol=1.0e-8)
+                & (fraction > 1.0e-8)
+                & (fraction < 1.0 - 1.0e-8)
+            )
+            if np.any(interior):
+                expected = start[2] + fraction[interior] * (end[2] - start[2])
+                np.testing.assert_allclose(point_array[interior, 2], expected, atol=1.0e-7)
+                checked_shared_midpoints += int(np.count_nonzero(interior))
+    assert checked_shared_midpoints > 0
 
 
 def test_export_carries_heightfield_sample_provenance(tmp_path: Path) -> None:
