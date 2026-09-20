@@ -28,6 +28,7 @@ from .download import (
     download_official_step,
 )
 from .display import FieldDisplayController
+from .energy_unit import load_field_with_energy_unit
 from .errors import Rmuc2026Error
 from .manifest import DEFAULT_RUNTIME_PROFILE, RUNTIME_PROFILE_NAMES, FieldAsset, verify_asset
 from .mjcf import UNOFFICIAL_FRICTION_PRESETS, load_model
@@ -115,6 +116,13 @@ def build_parser() -> argparse.ArgumentParser:
     spawns.add_argument("--max-relief", type=float, default=0.03)
     spawns.add_argument("--ground-height-min", type=float, default=-0.05)
     spawns.add_argument("--ground-height-max", type=float, default=0.05)
+    energy_unit = commands.add_parser(
+        "energy-unit-probe", help="drop an optional rulebook-sized movable prop on verified terrain"
+    )
+    energy_unit.add_argument("asset", type=Path)
+    energy_unit.add_argument("x", type=float)
+    energy_unit.add_argument("y", type=float)
+    energy_unit.add_argument("--steps", type=int, default=1000)
     view = commands.add_parser("view")
     view.add_argument("asset", type=Path)
     view.add_argument("--duration", type=float, default=0.0, help="seconds; 0 waits until close")
@@ -352,6 +360,42 @@ def main(argv: list[str] | None = None) -> int:
                 )
             )
             return 0
+        if args.command == "energy-unit-probe":
+            if args.steps <= 0:
+                raise ValueError("--steps must be positive")
+            import mujoco
+
+            model, data, unit = load_field_with_energy_unit(asset, x_m=args.x, y_m=args.y)
+            for _ in range(args.steps):
+                mujoco.mj_step(model, data)
+            warnings = {
+                mujoco.mjtWarning(index).name: warning.number
+                for index, warning in enumerate(data.warning)
+                if warning.number
+            }
+            status = (
+                "PASS"
+                if not warnings
+                and all(math.isfinite(float(value)) for value in data.qpos)
+                and data.ncon > 0
+                else "FAIL"
+            )
+            print(
+                json.dumps(
+                    {
+                        "status": status,
+                        "unit": unit,
+                        "physics_steps": args.steps,
+                        "sim_time_s": float(data.time),
+                        "final_center_z_m": float(data.qpos[2]),
+                        "final_contact_count": int(data.ncon),
+                        "warnings": warnings,
+                    },
+                    indent=2,
+                    sort_keys=True,
+                )
+            )
+            return 0 if status == "PASS" else 2
         if args.duration < 0.0:
             raise ValueError("--duration must be non-negative")
         model, data = load_model(

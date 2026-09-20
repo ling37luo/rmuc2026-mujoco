@@ -259,6 +259,16 @@ These values support sensitivity tests; they do not label CAD colors as PVC,
 rubber, or metal. Actual material calibration needs measured sliding/stopping
 data, with robot mass, wheel material, surface condition, and test speed recorded.
 
+For a small optional movable-contact test, `energy-unit-probe PACK X Y` drops
+an approximately 400 g free body on screened flat heightfield terrain. Its
+150 mm height and asymmetric 95/80 mm end diameters come from the official
+V2.0.0 rulebook, Figure 4-39; ribs, rim segments, and friction are test proxies.
+It does not modify the runtime pack or certify gripper clearance. For example:
+
+```bash
+.venv/bin/python -m rmuc2026_mujoco.cli energy-unit-probe ./local-rmuc2026-field 0 0.04
+```
+
 ### Optional local planar-ramp correction
 
 `rmuc2026_mujoco.contact.refine_planar_ramps` accepts caller-supplied, audited

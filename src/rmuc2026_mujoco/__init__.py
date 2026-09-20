@@ -20,6 +20,7 @@ from .download import (
     verify_official_step,
 )
 from .display import FieldDisplayController
+from .energy_unit import add_energy_unit, load_field_with_energy_unit
 from .errors import (
     AssetIntegrityError,
     ManifestError,
@@ -95,6 +96,7 @@ __all__ = [
     "ValidationReport",
     "UNOFFICIAL_FRICTION_PRESETS",
     "apply_friction_preset",
+    "add_energy_unit",
     "build_from_official_step",
     "build_runtime_asset_pack",
     "compose_with_robot",
@@ -104,6 +106,7 @@ __all__ = [
     "height_at",
     "inject_exact_heightfield",
     "load_heightfield",
+    "load_field_with_energy_unit",
     "load_model",
     "surface_at",
     "verify_asset",

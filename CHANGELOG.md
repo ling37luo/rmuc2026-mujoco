@@ -8,6 +8,10 @@ project intends to follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- An optional 400 g movable energy-unit collision probe based on the official
+  rulebook's 150 mm height and asymmetric 95/80 mm end diameters. It is a
+  primitive contact test, never part of the default field pack; rib/rim detail
+  and friction remain explicitly approximate.
 - An exact-source 1 cm heightfield repair for seven wall-end roof samples on
   official GLB parts 402/403. The source GLB hash, changed sample values, and
   output collision-file hash are recorded and checked in the manifests. It
