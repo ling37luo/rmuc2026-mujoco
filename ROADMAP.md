@@ -29,9 +29,13 @@ topology-verified.
 - add multi-hit vertical and horizontal-blocker audits before any multi-level
   structure can be promoted;
 - use the source-bound wall and four-edge audit-only candidate registries to
-  select a genuinely missing barrier; the current wall footprints already
-  belong to the heightfield, and the finite perimeter has no demonstrated
-  continuous body-height source wall;
+  select genuinely missing barriers; the current wall footprints already
+  belong to the heightfield except for seven repaired 1 cm wall-end roof
+  samples on exact-source parts 402/403;
+- use the official rulebook's 28 × 15 m, 2.4 m-high perimeter-fence requirement
+  and depicted dart window to scope a labeled fence proxy; the STEP base shell
+  does not fix its exact centerline, thickness, or openings, so keep it out of
+  the default collision pack until placement and contact tests pass;
 - replace only independently accepted structure footprints with mutually
   exclusive primitive or convex collision while preserving the remaining
   heightfield bit-for-bit;

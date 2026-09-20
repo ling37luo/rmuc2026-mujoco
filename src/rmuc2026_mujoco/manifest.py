@@ -30,6 +30,7 @@ from .livery import (
     SOURCE_GUIDE_EDGE_WHITE_MIN,
     SOURCE_SURFACE_GUIDE_KIND,
 )
+from .wall_tip_repair import validate_wall_tip_repair_record, verify_wall_tip_repair_samples
 
 
 RUNTIME_ARTIFACT_TYPE = "rmuc2026_mujoco_runtime_asset_pack"
@@ -498,6 +499,14 @@ def _validate_cross_references(
         for flag in ("underpasses_and_overhangs_preserved", "sealed_underpass_risk"):
             if flag in audit and not isinstance(audit[flag], bool):
                 raise ManifestError(f"collision.structural_audit.{flag} must be a boolean")
+    wall_tip_repair = collision.get("verified_wall_tip_repair")
+    if wall_tip_repair is not None:
+        try:
+            validate_wall_tip_repair_record(
+                wall_tip_repair, collision_samples_sha256=str(collision["samples_sha256"])
+            )
+        except ValueError as exc:
+            raise ManifestError(f"invalid collision.verified_wall_tip_repair: {exc}") from exc
 
     frame = _mapping(manifest.get("coordinate_frame"), label="coordinate_frame")
     if frame.get("world_units") != "metre-radian-kilogram-second" or frame.get("z_up") is not True:
@@ -1512,6 +1521,14 @@ def _verify_collision_bootstrap(
     try:
         with np.load(files[samples_relative], allow_pickle=False) as samples:
             height = np.asarray(samples["height_m"], dtype=np.float64)
+            wall_tip_repair = collision.get("verified_wall_tip_repair")
+            if isinstance(wall_tip_repair, dict) and wall_tip_repair.get("status") == "PASS":
+                verify_wall_tip_repair_samples(
+                    wall_tip_repair,
+                    np.asarray(samples["x_m"], dtype=np.float64),
+                    np.asarray(samples["y_m"], dtype=np.float64),
+                    height,
+                )
     except (OSError, KeyError, ValueError) as exc:
         raise ManifestError(f"collision.samples_file could not be read: {exc}") from exc
     if height.shape != (rows, columns):

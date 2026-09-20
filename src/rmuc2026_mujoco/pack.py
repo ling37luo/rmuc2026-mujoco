@@ -21,6 +21,7 @@ from .livery import (
     SOURCE_SURFACE_GUIDE_KIND,
     mask_rulebook_page_edge,
 )
+from .wall_tip_repair import validate_wall_tip_repair_record
 
 
 EXPECTED_ARTIFACT_TYPE = "rmuc2026_official_field_mujoco_asset"
@@ -1310,6 +1311,17 @@ def export_runtime_asset_pack(
             compact_collision["fixed_fly_ramp_audit"] = _json_safe_copy(
                 _json_object(fixed_ramp_audit, "collision.fixed_fly_ramp_audit"),
                 "collision.fixed_fly_ramp_audit",
+            )
+        wall_tip_repair = collision.get("verified_wall_tip_repair")
+        if wall_tip_repair is not None:
+            try:
+                validate_wall_tip_repair_record(
+                    wall_tip_repair, collision_samples_sha256=str(collision["samples_sha256"])
+                )
+            except ValueError as exc:
+                raise ExportBlocked(f"官方墙端采样修复记录无效：{exc}") from exc
+            compact_collision["verified_wall_tip_repair"] = _json_safe_copy(
+                wall_tip_repair, "collision.verified_wall_tip_repair"
             )
         compact_manifest: dict[str, Any] = {
             "schema_version": OUTPUT_SCHEMA_VERSION,

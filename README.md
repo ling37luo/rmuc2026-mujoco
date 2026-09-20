@@ -286,6 +286,7 @@ For that reason generated manifests deliberately remain `DRAFT_BLOCKED`:
 | Source identity and file integrity | Checked |
 | CAD-derived visual layout | Available, simplified |
 | Static 1–10 cm heightfield collision | Available; 1 cm is the fine seam candidate |
+| Exact-source wall-end roof support | Seven 1 cm samples repaired for parts 402/403; bounded probe evidence only |
 | Fixed 17° fly-ramp interior and seam audit | Bound to parts 392 and 397 |
 | 120 mm wheel dynamics over those two ramps | Separate 12-trial bounded audit |
 | Multi-level / overhanging collision | Not represented |
@@ -334,12 +335,26 @@ edge interval rules out a continuous source wall at that height, while apparent
 coverage alone cannot prove a wall. Keep these locally generated reports out
 of the code repository.
 
-The current wall and edge evidence does not justify adding contact geoms:
-the wall footprints already have heightfield contact, and a trial replacement
-left duplicate wheel-height contacts and an abrupt junction. The source model
-also does not support a continuous body-height perimeter wall. Further static
-collision must replace an explicitly audited heightfield region, prove its
-contact ownership and joins, and pass wheel and robot traversal checks.
+The exact audited official GLB and 1 cm grid have one active, bounded wall-end
+repair: four heightfield nodes at part 402 and three at part 403 are restored
+to their source-triangle roof heights. The record in
+`collision.verified_wall_tip_repair` binds all seven coordinates and resulting
+float samples by hash. The existing heightfield remains the only contact
+owner; this adds no wall geom. It addresses missing roof support at these wall
+tips, not the rest of their vertical faces or whole-wall collision. The other
+wall footprints already have heightfield contact, while a trial convex-mesh
+replacement left duplicate wheel-height contacts and an abrupt junction.
+
+The STEP-derived base shell has no demonstrated continuous body-height fence.
+The official V2.0.0 rulebook, however, specifies a black steel perimeter
+fence whose upper edge is 2.4 m above the field floor around a 28 × 15 m
+battlefield (§4.1, Figure 4-5), and depicts a dart-transfer window in that
+fence (Figure 4-20). Its exact thickness, centerline, and openings cannot be
+recovered from the low base-shell part alone. A fence based on the rulebook
+therefore needs an explicitly labeled geometric proxy and contact probes
+before activation; the current runtime pack does not add one. Other static
+collision still needs source-bounded contact ownership, seam checks, and robot
+traversal evidence.
 
 Run the fixed-ramp dynamics gate against an exported pack with:
 

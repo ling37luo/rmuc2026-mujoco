@@ -1314,6 +1314,7 @@ def _ray_heightfield(
     output: Path,
     *,
     resolution_m: float,
+    source_glb_sha256: str | None = None,
 ) -> tuple[dict[str, Any], np.ndarray, np.ndarray, np.ndarray]:
     import trimesh
     from PIL import Image
@@ -1353,6 +1354,23 @@ def _ray_heightfield(
     median = np.median(windows, axis=(-1, -2))
     isolated = np.abs(height - median) > 0.20
     height[isolated] = median[isolated]
+    from .wall_tip_repair import SOURCE_GLB_SHA256, repair_verified_wall_tips
+
+    if source_glb_sha256 == SOURCE_GLB_SHA256 and resolution_m == 0.01:
+        try:
+            wall_tip_repair = repair_verified_wall_tips(
+                meshes, x, y, height, source_glb_sha256=source_glb_sha256
+            )
+        except ValueError as exc:
+            raise FieldBuildError(f"官方墙端碰撞采样修复失败：{exc}") from exc
+    else:
+        wall_tip_repair = {
+            "status": "NOT_APPLICABLE",
+            "reason": "wall-end repair is audited only for the exact official GLB on a 1 cm grid",
+            "source_glb_sha256": source_glb_sha256,
+            "grid_resolution_m": resolution_m,
+            "repaired_nodes": 0,
+        }
     max_height = float(np.max(height))
     if not math.isfinite(max_height) or max_height <= 0.01:
         raise FieldBuildError("官方场地高度图没有检测到有效障碍")
@@ -1367,6 +1385,7 @@ def _ray_heightfield(
     Image.fromarray(np.flipud(pixels), mode="I;16").save(image_path)
     npz_path = collision_dir / "rmuc2026_heightfield.npz"
     np.savez_compressed(npz_path, x_m=x, y_m=y, height_m=height)
+    wall_tip_repair["collision_samples_sha256"] = sha256_file(npz_path)
     record = {
         "kind": "top_surface_heightfield_proxy",
         "image_file": str(image_path.relative_to(output)),
@@ -1394,6 +1413,7 @@ def _ray_heightfield(
             "or overhanging collision surfaces"
         ),
     }
+    record["verified_wall_tip_repair"] = wall_tip_repair
     return record, x, y, height
 
 
@@ -1822,6 +1842,7 @@ def repack_field_build(
         raw_meshes,
         output,
         resolution_m=heightfield_resolution_m,
+        source_glb_sha256=copied_glb_sha256,
     )
     collision["geometry_source"] = (
         "raw_axis_and_ground_transformed_official_glb_before_visual_simplification"
@@ -1969,6 +1990,7 @@ def build_field(
     if not intermediate.is_file() or intermediate.stat().st_size == 0:
         raise FieldBuildError("OpenCascade未生成有效glTF")
     print("RMUC2026_FIELD_GLTF=PASS", flush=True)
+    intermediate_hash = sha256_file(intermediate)
 
     scene = trimesh.load(intermediate, force="scene", process=False)
     meshes = _scene_meshes(scene)
@@ -1984,7 +2006,10 @@ def build_field(
         target_faces=target_visual_faces,
     )
     collision, x, y, height = _ray_heightfield(
-        meshes, output, resolution_m=heightfield_resolution_m
+        meshes,
+        output,
+        resolution_m=heightfield_resolution_m,
+        source_glb_sha256=intermediate_hash,
     )
     collision["geometry_source"] = (
         "raw_axis_and_ground_transformed_official_glb_before_visual_simplification"
@@ -1996,7 +2021,6 @@ def build_field(
     _translate_final_assets(final_meshes, visual_records, output, spawn=spawn)
     _record_part_geometry_world_bounds(simplification, spawn=spawn)
     translated_outer_bounds = _translated_bounds(raw_transformed_metrics, spawn)
-    intermediate_hash = sha256_file(intermediate)
     manifest: dict[str, Any] = {
         "schema_version": 3,
         "artifact_type": "rmuc2026_official_field_mujoco_asset",

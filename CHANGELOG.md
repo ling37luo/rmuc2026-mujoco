@@ -8,10 +8,23 @@ project intends to follow [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- An exact-source 1 cm heightfield repair for seven wall-end roof samples on
+  official GLB parts 402/403. The source GLB hash, changed sample values, and
+  output collision-file hash are recorded and checked in the manifests. It
+  retains one heightfield contact owner and adds no wall collision geom; other
+  sources or grid resolutions explicitly report the repair as not applicable. This is a
+  bounded physical correction, not whole-wall collision validation.
 - Source- and heightfield-hash-bound, audit-only collision candidate tools for
   STEP-derived wall parts and all four finite field edges. They document
   existing heightfield ownership and definite source-face gaps without adding
   unverified wall or perimeter collision to runtime packs.
+
+### Documentation
+
+- Clarified that the STEP base shell lacks a continuous body-height fence,
+  while official V2.0.0 rulebook §4.1 specifies a 28 × 15 m field with a
+  steel perimeter fence rising 2.4 m above the floor. Its exact placement and
+  openings remain unresolved, so no fence proxy is activated by this change.
 
 ## [0.2.1] - 2026-09-20
 
