@@ -47,6 +47,7 @@ from .mjcf import (
     inject_exact_heightfield,
     load_model,
 )
+from .perimeter_fence import export_fenced_pack, perimeter_fence_contract
 from .query import (
     HEIGHTFIELD_CLAIM_BOUNDARY,
     MAX_SPAWN_CANDIDATES,
@@ -59,6 +60,7 @@ from .query import (
     load_heightfield,
     surface_at,
 )
+from .ramp_source_audit import audit_fly_ramp_source_overlap
 
 __all__ = [
     "AssetIntegrityError",
@@ -98,21 +100,24 @@ __all__ = [
     "ValidationReport",
     "UNOFFICIAL_FRICTION_PRESETS",
     "apply_friction_preset",
+    "audit_fly_ramp_source_overlap",
     "add_energy_unit",
     "build_from_official_step",
     "build_runtime_asset_pack",
     "compose_with_robot",
     "download_official_step",
     "field_bounds",
+    "export_fenced_pack",
     "find_spawn_candidates",
     "height_at",
     "inject_exact_heightfield",
     "load_heightfield",
     "load_field_with_energy_unit",
     "load_model",
+    "perimeter_fence_contract",
     "surface_at",
     "verify_asset",
     "verify_official_step",
 ]
 
-__version__ = "0.3.0a1"
+__version__ = "0.3.0a2"

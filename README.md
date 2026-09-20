@@ -440,6 +440,47 @@ pack does not add it. Other static
 collision still needs source-bounded contact ownership, seam checks, and robot
 traversal evidence.
 
+### Physical perimeter candidate for robot tests
+
+The repository can now make a **new local schema-2 pack** with four touching
+physical fence boxes. The fence centreline follows the inferred 28 × 15 m CAD
+core edge; its top is 2.4 m above the field floor as specified by the official
+rulebook. It contacts the robot through the pack's collision bits and does not
+stop simulation or require RL-Lab to create geometry:
+
+```bash
+rmuc2026-field fence-pack EXISTING_SCHEMA2_PACK NEW_FENCED_PACK
+rmuc2026-field verify NEW_FENCED_PACK
+rmuc2026-field view NEW_FENCED_PACK
+```
+
+Both `full` and `collision_only` profiles contain the same four fence geoms,
+which are bound to the manifest and verified before loading. The 50 mm box
+thickness, 300 mm buried base, solid collision across the dart-transfer
+aperture, and exact line inferred from the CAD shell are simulation choices;
+this is a robot-containment proxy, not a surveyed reproduction of the steel
+mesh or window. It is opt-in and remains `DRAFT_BLOCKED`. Four 6 s Fudan
+approaches and four 120 mm sphere approaches contacted the fence without
+crossing its line or producing a numerical warning. The heightfield still
+reached the 50-contact pair limit in the robot runs, and all perimeter poses,
+speeds, corners and jumps have not been accepted. Schema-3 source-void packs
+are not accepted as fence-pack inputs until their combined contact is tested.
+
+For the two fixed fly ramps, use the local official-source audit rather than
+flattening real overlap with adjacent CAD parts:
+
+```bash
+rmuc2026-field ramp-source-audit NEW_FENCED_PACK SOURCE_BUILD/manifest.json \
+  --output ./runs/ramp-source-audit.json
+```
+
+On the pinned 1 cm source, all 390 nodes that exceeded the dominant ramp's
+1 mm plane target belonged to the higher surface of adjacent official parts
+393/394 or 398/399. The heightfield matched the highest source rays within
+floating-point precision; overlap-aware interior maxima were below 0.00002 mm.
+This is a static interior check. The separate 12-route wheel test and seam
+location check remain the dynamic and transition evidence.
+
 Run the fixed-ramp dynamics gate against an exported pack with:
 
 ```bash

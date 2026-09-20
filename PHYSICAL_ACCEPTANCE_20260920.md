@@ -68,3 +68,49 @@ Additional local evidence under `rmuc2026-v03-acceptance/`:
 - `20260920T_sourcehit_guard_v2/schema3_left_5_field_guard.json` — SHA-256 `0479ca4e3eca21ad2a22bfd6ec551bf26ee992dfa6899d3f40f8f46380071fe2`.
 - `20260920T_new_guard_central1000/result.json` — SHA-256 `444f7093c8d1c6c645f54108c0047ac6a73976b2834639a2086752a1b4337b18`.
 - `20260920T_ramp_overlap_source_v1/result.json` — SHA-256 `db790142cc43fddb72a6f31b210370a05ed42ad4b58b952d0881660ebbb2c6c3`.
+
+## Physical-fence and complete ramp-overlap follow-up
+
+The `0.3.0a2` code can derive a new local schema-2 pack with four touching
+box-shaped physical fence geoms at the inferred 28 × 15 m core edge. They
+reach 2.4 m above the field floor and use the field's collision bits and
+solver settings. No boundary-stop signal is used for this pack. The first
+0.15 m outside-core placement sat over source-miss terrain; it was rejected.
+The core-edge candidate places its inner contact faces on source-supported
+ground in the inspected side stretches. The official fence thickness,
+centerline, mesh compliance and dart-window collision are still unknown;
+this is an explicitly solid robot-containment proxy.
+
+Four 120 mm sphere approaches (one per side) each completed 1,200 physics
+steps, contacted the fence, and remained at least 80 mm inside its centerline
+without a numerical warning. Four separate Fudan 0.6 m/s approaches each
+completed 3,000 steps with fence contacts, no centerline crossing, no warning
+or exception, and a minimum base height above 0.16 m. The field/robot pair
+still reached MuJoCo's 50-contact cap in these robot runs. A corner probe
+contacted one corner cleanly; the other three were blocked by interior CAD
+structures before reaching the fence. The full set of corner poses, speed,
+repeated impacts and jumps remains untested. The standard RL-Lab read-only
+consumer loaded this exact core-edge candidate and completed a central 2 s
+robot run without numerical warnings. It preserved the four declared fence
+geoms in the imported field model; its global solver settings still belong
+to the robot scene, so this is a compatibility smoke, not perimeter acceptance.
+
+The new full-source ramp audit checked every 1 cm interior sample above the
+strict 1 mm dominant-plane target, not just the earlier two representative
+nodes. The 197 north and 193 south outliers are the highest surfaces of
+adjacent official CAD parts 393/394 and 398/399. Their heightfield/source-top
+maximum difference is below `9e-16 m`; overlap-aware interior maximum error
+is `1.15e-8 m` north and `9.30e-9 m` south. The ramp samples remain unchanged.
+The existing 12/12 two-way wheel routes and 5 mm seam localization evidence
+still apply because the heightfield SHA-256 is unchanged.
+
+Local evidence, not distributed with source or release packages:
+
+- Fenced candidate manifest: `rmuc2026-mujoco-package/20260920T_rulebook_perimeter_coreline_candidate_v2/manifest.json` — SHA-256 `72d1094780ab471860cc29ff875a6abf1bbd2ccb621ca9a28a5528ce78c4ee2f`.
+- Four robot routes: `rmuc2026-v03-acceptance/20260920T_fence_robot_four_sides_v2/result.json` — SHA-256 `57d9951e541f377adab283b1390b878c6432b75981bbf96a2a075db35fbc1a7f`.
+- Standard read-only robot load: `rmuc2026-v03-acceptance/20260920T_fence_robot_readonly_load_coreline_v2/result.json` — SHA-256 `7f2ba025ec20f874794a0e5ca8b2e4d72172f6ccc4b77b1e35e1904888af57e6`.
+- Full-source ramp audit: `rmuc2026-v03-acceptance/20260920T_fence_ramp_overlap_v2.json` — SHA-256 `e5c5aa434c188c2060296b5e50e7e44f1d3a70e7d12857e0ec61b9f67a3c3175`.
+
+Decision: **CANDIDATE_ONLY**. The physical fence replaces stop-on-boundary
+behavior for this schema-2 pack, but exact official fidelity and full robot
+perimeter acceptance remain `DRAFT_BLOCKED`.

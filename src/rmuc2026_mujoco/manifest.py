@@ -31,6 +31,7 @@ from .livery import (
     SOURCE_GUIDE_EDGE_WHITE_MIN,
     SOURCE_SURFACE_GUIDE_KIND,
 )
+from .perimeter_fence import FENCE_NAMES, perimeter_fence_contract
 from .wall_tip_repair import validate_wall_tip_repair_record, verify_wall_tip_repair_samples
 
 
@@ -559,6 +560,15 @@ def _validate_cross_references(
             schema_version=schema_version,
         )
 
+    fence_contract = None
+    if manifest.get("perimeter_fence") is not None:
+        try:
+            fence_contract = perimeter_fence_contract(dict(manifest))
+        except (IndexError, KeyError, TypeError, ValueError) as exc:
+            raise ManifestError(f"invalid perimeter_fence frame: {exc}") from exc
+        if manifest["perimeter_fence"] != fence_contract:
+            raise ManifestError("perimeter_fence disagrees with the pinned proxy contract")
+
     _validate_runtime_profiles(
         manifest,
         files,
@@ -578,6 +588,7 @@ def _validate_cross_references(
         ),
         require_named_lighting=schema_version >= 2,
         livery_contract=livery_contract,
+        fence_contract=fence_contract,
     )
 
 
@@ -951,6 +962,7 @@ def _validate_runtime_profiles(
     collision_contract: _RuntimeCollisionContract,
     require_named_lighting: bool,
     livery_contract: _RuntimeLiveryContract | None,
+    fence_contract: Mapping[str, Any] | None,
 ) -> None:
     """Validate the optional schema-1 profile extension and its MJCF semantics.
 
@@ -1022,6 +1034,7 @@ def _validate_runtime_profiles(
             collision_contract=collision_contract,
             require_named_lighting=require_named_lighting,
             livery_contract=(livery_contract if name == "full" else None),
+            fence_contract=fence_contract,
         )
 
     if manifest["contents"]["entrypoint"] != profiles["full"]["entrypoint"]:
@@ -1037,6 +1050,7 @@ def _validate_runtime_profile_xml(
     collision_contract: _RuntimeCollisionContract,
     require_named_lighting: bool,
     livery_contract: _RuntimeLiveryContract | None,
+    fence_contract: Mapping[str, Any] | None,
 ) -> None:
     try:
         root = ET.parse(path).getroot()
@@ -1171,6 +1185,53 @@ def _validate_runtime_profile_xml(
             f"runtime profile {profile!r} canonical collision geom must be a direct worldbody child"
         )
     collision_geom = collision_geoms[0]
+    fence_geoms = [geom for geom in worldbody.findall("./geom") if geom.get("name") in FENCE_NAMES]
+    expected_fence_names = set(FENCE_NAMES) if fence_contract is not None else set()
+    if {geom.get("name") for geom in fence_geoms} != expected_fence_names or len(
+        fence_geoms
+    ) != len(expected_fence_names):
+        raise ManifestError(f"runtime profile {profile!r} perimeter geoms disagree with manifest")
+    if fence_contract is not None:
+        contact = fence_contract["contact"]
+        for panel in fence_contract["panels"]:
+            geom = next(geom for geom in fence_geoms if geom.get("name") == panel["name"])
+            expected_attributes = {
+                "name",
+                "type",
+                "pos",
+                "size",
+                "contype",
+                "conaffinity",
+                "friction",
+                "solref",
+                "rgba",
+            }
+            if (
+                set(geom.attrib) != expected_attributes
+                or geom.get("type") != "box"
+                or geom.get("contype") != str(contact["contype"])
+                or geom.get("conaffinity") != str(contact["conaffinity"])
+                or geom.get("rgba") != "0.08 0.09 0.10 0.55"
+            ):
+                raise ManifestError(
+                    f"runtime profile {profile!r} fence contact contract is invalid"
+                )
+            for attribute, expected in (
+                ("pos", panel["pos"]),
+                ("size", panel["size"]),
+                ("friction", contact["friction"]),
+                ("solref", contact["solref"]),
+            ):
+                _require_xml_numbers_close(
+                    _xml_number_list_attribute(
+                        geom,
+                        attribute,
+                        label=f"runtime profile {profile!r} fence {panel['name']} {attribute}",
+                        length=len(expected),
+                    ),
+                    tuple(expected),
+                    label=f"runtime profile {profile!r} fence {panel['name']} {attribute}",
+                )
     for mesh_geom in mesh_geoms:
         if mesh_geom not in worldbody.findall("./geom"):
             raise ManifestError(

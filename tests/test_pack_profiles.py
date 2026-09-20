@@ -37,6 +37,7 @@ from rmuc2026_mujoco.livery import (
     GROUND_MARKING_REMOVED_BY_DESIGN,
     GROUND_MARKING_RETAINED_CONTENT,
 )
+from rmuc2026_mujoco.perimeter_fence import FENCE_NAMES, export_fenced_pack
 
 
 def _sha(path: Path) -> str:
@@ -331,6 +332,76 @@ def test_export_emits_full_and_collision_only_runtime_profiles(tmp_path: Path) -
     collision_geom = collision_only.find("./worldbody/geom[@name='rmuc2026_field_collision']")
     assert collision_geom is not None
     assert collision_geom.get("rgba", "").split()[-1] == "1"
+
+
+def test_fenced_pack_is_new_hash_bound_physical_pack(tmp_path: Path) -> None:
+    source = _synthetic_source_build(tmp_path / "source")
+    source_manifest_path = source / "manifest.json"
+    source_manifest = json.loads(source_manifest_path.read_text(encoding="utf-8"))
+    source_manifest["dimensions"]["official_core_battlefield_m"] = [28.0, 15.0]
+    source_manifest["collision"]["resolution_m"] = 1.0
+    source_manifest["dimensions"]["cad_assembly_outer_bounds_after_translation_m"] = [
+        [-14.876004137464, -8.001565456391, 0.0],
+        [14.876004137464, 8.001565456391, 1.0],
+    ]
+    source_manifest_path.write_text(json.dumps(source_manifest), encoding="utf-8")
+    plain = tmp_path / "plain"
+    fenced = tmp_path / "fenced"
+    export_runtime_asset_pack(source, plain)
+    contract = export_fenced_pack(plain, fenced)
+    plain_asset = FieldAsset.open(plain)
+    fenced_asset = FieldAsset.open(fenced)
+    assert plain_asset.manifest.get("perimeter_fence") is None
+    assert fenced_asset.manifest["perimeter_fence"] == contract
+    assert contract["official_fence_top_above_field_floor_m"] == 2.4
+    assert len(contract["panels"]) == 4
+    for profile in ("full", "collision_only"):
+        root = ET.parse(fenced_asset.entrypoint_for(profile)).getroot()
+        geoms = [
+            geom for geom in root.findall("./worldbody/geom") if geom.get("name") in FENCE_NAMES
+        ]
+        assert {geom.get("name") for geom in geoms} == set(FENCE_NAMES)
+        assert all(geom.get("contype") == "2" and geom.get("conaffinity") == "1" for geom in geoms)
+    model, _ = load_model(fenced_asset, profile="collision_only")
+    assert all(
+        mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, name) >= 0 for name in FENCE_NAMES
+    )
+
+    full_xml = fenced_asset.entrypoint
+    tree = ET.parse(full_xml)
+    geom = tree.getroot().find("./worldbody/geom[@name='rmuc2026_perimeter_left']")
+    assert geom is not None
+    position = [float(value) for value in geom.get("pos", "").split()]
+    position[0] += 1.0
+    geom.set("pos", " ".join(str(value) for value in position))
+    tree.write(full_xml, encoding="utf-8", xml_declaration=True)
+    manifest_path = fenced / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    record = next(row for row in manifest["contents"]["files"] if row["file"] == full_xml.name)
+    record["sha256"] = _sha(full_xml)
+    record["size_bytes"] = full_xml.stat().st_size
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    with pytest.raises(ManifestError, match="fence rmuc2026_perimeter_left pos disagrees"):
+        FieldAsset.open(fenced)
+
+    geom.set("pos", " ".join(str(value) for value in contract["panels"][0]["pos"]))
+    geom.set("margin", "0.1")
+    tree.write(full_xml, encoding="utf-8", xml_declaration=True)
+    record["sha256"] = _sha(full_xml)
+    record["size_bytes"] = full_xml.stat().st_size
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    with pytest.raises(ManifestError, match="fence contact contract is invalid"):
+        FieldAsset.open(fenced)
+
+
+def test_fence_pack_rejects_source_void_profile_until_joint_physics_is_audited(
+    tmp_path: Path,
+) -> None:
+    source = _negative_source_build(tmp_path / "source")
+    plain = tmp_path / "plain"
+    export_runtime_asset_pack(source, plain)
+    with pytest.raises(ValueError, match="schema-2"):
+        export_fenced_pack(plain, tmp_path / "fenced")
 
 
 def test_export_preserves_bound_fixed_fly_ramp_audit(tmp_path: Path) -> None:

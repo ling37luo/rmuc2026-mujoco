@@ -33,12 +33,14 @@ from .errors import Rmuc2026Error
 from .manifest import DEFAULT_RUNTIME_PROFILE, RUNTIME_PROFILE_NAMES, FieldAsset, verify_asset
 from .mjcf import UNOFFICIAL_FRICTION_PRESETS, load_model
 from .pack import ExportBlocked
+from .perimeter_fence import export_fenced_pack
 from .query import (
     HEIGHTFIELD_CLAIM_BOUNDARY,
     field_bounds,
     find_spawn_candidates,
     surface_at,
 )
+from .ramp_source_audit import audit_fly_ramp_source_overlap
 from .viewer import (
     FocusScopedKeyboardListener,
     SafePassiveViewerSession,
@@ -108,6 +110,17 @@ def build_parser() -> argparse.ArgumentParser:
     for name in ("verify", "info"):
         command = commands.add_parser(name)
         command.add_argument("asset", type=Path)
+    fence = commands.add_parser(
+        "fence-pack", help="make a new local pack with a physical perimeter proxy"
+    )
+    fence.add_argument("source", type=Path)
+    fence.add_argument("output", type=Path)
+    ramp_source = commands.add_parser(
+        "ramp-source-audit", help="verify fly-ramp overlaps against the pinned local CAD"
+    )
+    ramp_source.add_argument("asset", type=Path)
+    ramp_source.add_argument("source_manifest", type=Path)
+    ramp_source.add_argument("--output", type=Path, required=True)
     surface = commands.add_parser("surface", help="query local heightfield geometry")
     surface.add_argument("asset", type=Path)
     surface.add_argument("x", type=float)
@@ -302,6 +315,30 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "verify":
             print(json.dumps(verify_asset(args.asset).to_dict(), indent=2, sort_keys=True))
             return 0
+        if args.command == "fence-pack":
+            contract = export_fenced_pack(args.source, args.output)
+            print(
+                json.dumps(
+                    {
+                        "output": str(args.output.expanduser().resolve()),
+                        "perimeter_fence": contract,
+                    },
+                    indent=2,
+                    sort_keys=True,
+                )
+            )
+            return 0
+        if args.command == "ramp-source-audit":
+            report = audit_fly_ramp_source_overlap(
+                FieldAsset.open(args.asset, verify=True), args.source_manifest
+            )
+            output = args.output.expanduser().resolve()
+            if output.exists():
+                raise ValueError(f"output already exists: {output}")
+            output.parent.mkdir(parents=True, exist_ok=True)
+            output.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+            print(json.dumps({"status": report["status"], "output": str(output)}, sort_keys=True))
+            return 0 if report["status"] == "PASS_STATIC" else 2
         asset = FieldAsset.open(args.asset, verify=True)
         if args.command == "info":
             report = asset.report().to_dict()

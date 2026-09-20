@@ -6,6 +6,32 @@ project intends to follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.3.0a2] - 2026-09-20
+
+This remains a code-only, `DRAFT_BLOCKED` pre-release. No generated pack or
+official asset is distributed.
+
+### Added
+
+- A repository-owned `fence-pack` command that derives a new, fully verified
+  schema-2 runtime pack with four touching physical perimeter geoms in both
+  display and collision-only profiles. They sit on the inferred 28 × 15 m core
+  edge and reach the rulebook's 2.4 m top height. Four sphere and four Fudan
+  approach routes contacted the fence without crossing it or producing a
+  numerical warning; full perimeter physics remains unaccepted.
+- A source-hash-bound `ramp-source-audit` command. It proves that the 390
+  greater-than-1 mm dominant-plane samples on the two 17-degree fly ramps
+  match higher adjacent official CAD parts, rather than an erroneous
+  heightfield. It preserves the existing collision samples.
+- Manifest and MJCF verification for the optional fence contract. RL-Lab may
+  copy the declared field geoms but does not generate them.
+
+### Changed
+
+- The fence centreline was moved from an earlier local 0.15 m outside-core
+  experiment to the inferred core edge, so its inner contact face is on
+  source-supported ground. The earlier pack is not promoted.
+
 ## [0.3.0a1] - 2026-09-20
 
 This is a code-only prerelease of bounded field-contact tools. It does not

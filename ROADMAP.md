@@ -83,6 +83,12 @@ wall contact cap and source-hit edge instability still block this stage.
 The code-only `0.3.0a1` prerelease adds a bounded edge stop signal while the
 experimental collision candidates remain disabled; it is not this stage's
 physical acceptance.
+The `0.3.0a2` code adds an opt-in physical perimeter pack at the inferred
+official core edge. Four sphere and four robot approach routes are stable,
+but the heightfield contact cap, exact fence/window construction and wider
+perimeter routes still block default activation. A source-ray audit resolves
+the two fly-ramp plane-error bands as adjacent official CAD overlap without
+changing their collision geometry.
 
 - represent accepted underpasses and stacked surfaces with hybrid collision;
 - register material zones from measured or clearly labeled non-official data;
