@@ -77,6 +77,10 @@ the upstream rightsholder grants written redistribution permission.
 
 ## 0.3 — robot interaction and remaining topology
 
+The 2026-09-20 [bounded physical acceptance](PHYSICAL_ACCEPTANCE_20260920.md)
+found passing fly-ramp wheel routes and short central robot runs, but the
+wall contact cap and source-hit edge instability still block this stage.
+
 - represent accepted underpasses and stacked surfaces with hybrid collision;
 - register material zones from measured or clearly labeled non-official data;
 - publish paired geometry, contact, and robot-independent traversal tests.

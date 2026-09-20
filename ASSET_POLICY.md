@@ -33,11 +33,13 @@ or generated run directories are present.
 
 ## Runtime accuracy boundary
 
-The currently recognized local asset manifest uses an unofficial 2.5-D
+The default schema-2 local asset manifest uses an unofficial 2.5-D
 top-surface heightfield proxy for collision. Downward-ray locations with no
-geometry hit are filled with ground height, and the artifact has no validity
-mask that distinguishes measured hits from those filled samples. It therefore
-must not be described as conservative. It cannot represent overhangs, tunnels,
+geometry hit are filled with ground height, and that pack has no validity
+mask distinguishing measured hits from filled samples. Experimental schema 3
+binds a source-miss mask at audited outer edges, but replaces those samples
+with a finite surrogate void rather than a true hole or safe robot exit. Neither
+model must be described as conservative. A single heightfield cannot represent overhangs, tunnels,
 stacked surfaces, vertical walls, moving mechanisms, or the open space below
 bridges, and it may seal a route that is visibly open in the CAD-derived mesh.
 A manifest whose validation scope is `DRAFT_BLOCKED` remains a draft even when
