@@ -37,7 +37,14 @@ from rmuc2026_mujoco.livery import (
     GROUND_MARKING_REMOVED_BY_DESIGN,
     GROUND_MARKING_RETAINED_CONTENT,
 )
-from rmuc2026_mujoco.perimeter_fence import FENCE_NAMES, export_fenced_pack
+from rmuc2026_mujoco.perimeter_fence import (
+    FENCE_NAMES,
+    LEGACY_FENCE_SCHEMA,
+    RAMP_CLEARANCE_FENCE_SCHEMA,
+    export_fenced_pack,
+    perimeter_fence_contract,
+)
+from rmuc2026_mujoco.ramp_audit import FIXED_FLY_RAMPS
 
 
 def _sha(path: Path) -> str:
@@ -355,6 +362,20 @@ def test_fenced_pack_is_new_hash_bound_physical_pack(tmp_path: Path) -> None:
     assert fenced_asset.manifest["perimeter_fence"] == contract
     assert contract["official_fence_top_above_field_floor_m"] == 2.4
     assert len(contract["panels"]) == 4
+    assert contract["outward_offset_xy_m"] == [0.0, 0.4]
+    assert contract["contact"]["solref"] == [0.04, 1.0]
+    legacy = tmp_path / "legacy-fenced"
+    legacy_contract = export_fenced_pack(plain, legacy, schema=LEGACY_FENCE_SCHEMA)
+    assert FieldAsset.open(legacy).manifest["perimeter_fence"] == legacy_contract
+    assert contract["panels"][3]["pos"][1] - legacy_contract["panels"][3]["pos"][
+        1
+    ] == pytest.approx(0.4)
+    ramp_clearance = tmp_path / "ramp-clearance-fenced"
+    ramp_clearance_contract = export_fenced_pack(
+        plain, ramp_clearance, schema=RAMP_CLEARANCE_FENCE_SCHEMA
+    )
+    assert FieldAsset.open(ramp_clearance).manifest["perimeter_fence"] == ramp_clearance_contract
+    assert ramp_clearance_contract["contact"]["solref"] == [0.02, 1.0]
     for profile in ("full", "collision_only"):
         root = ET.parse(fenced_asset.entrypoint_for(profile)).getroot()
         geoms = [
@@ -402,6 +423,52 @@ def test_fence_pack_rejects_source_void_profile_until_joint_physics_is_audited(
     export_runtime_asset_pack(source, plain)
     with pytest.raises(ValueError, match="schema-2"):
         export_fenced_pack(plain, tmp_path / "fenced")
+
+
+def test_current_perimeter_clears_both_pinned_fly_ramp_outer_edges() -> None:
+    manifest = {
+        "schema_version": 2,
+        "dimensions": {
+            "official_core_battlefield_m": [28.0, 15.0],
+            "cad_assembly_outer_bounds_after_translation_m": [
+                [-26.04, -13.78, -0.151692429593],
+                [3.712008274928, 2.223130912781, 3.649624647153],
+            ],
+        },
+        "collision": {"geom_center_after_translation_m": [-11.163995862536, -5.778434543609, 0.0]},
+        "coordinate_frame": {
+            "recommended_spawn": {
+                "x_before_translation_m": 11.164002933086,
+                "y_before_translation_m": 7.402777938842,
+                "terrain_height_m": 0.009595520909,
+            }
+        },
+    }
+    contract = perimeter_fence_contract(manifest)
+    panels = {panel["name"].rsplit("_", 1)[-1]: panel for panel in contract["panels"]}
+    spawn = manifest["coordinate_frame"]["recommended_spawn"]
+    for ramp in FIXED_FLY_RAMPS:
+        low = np.asarray(ramp.low_edge_center_xyz_m[:2]) - np.asarray(
+            [spawn["x_before_translation_m"], spawn["y_before_translation_m"]]
+        )
+        uphill = np.asarray(ramp.uphill_unit_xy)
+        lateral = np.asarray([-uphill[1], uphill[0]])
+        corners = np.asarray(
+            [
+                low + along * uphill + across * lateral
+                for along in (0.0, ramp.horizontal_run_m)
+                for across in (-ramp.surface_width_m / 2, ramp.surface_width_m / 2)
+            ]
+        )
+        side = "top" if "north" in ramp.route_id else "bottom"
+        panel = panels[side]
+        inner_face_y = panel["pos"][1] + (-panel["size"][1] if side == "top" else panel["size"][1])
+        clearance = (
+            inner_face_y - float(np.max(corners[:, 1]))
+            if side == "top"
+            else float(np.min(corners[:, 1])) - inner_face_y
+        )
+        assert clearance >= 0.35
 
 
 def test_export_preserves_bound_fixed_fly_ramp_audit(tmp_path: Path) -> None:

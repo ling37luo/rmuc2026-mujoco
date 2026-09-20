@@ -443,9 +443,12 @@ traversal evidence.
 ### Physical perimeter candidate for robot tests
 
 The repository can now make a **new local schema-2 pack** with four touching
-physical fence boxes. The fence centreline follows the inferred 28 × 15 m CAD
-core edge; its top is 2.4 m above the field floor as specified by the official
-rulebook. It contacts the robot through the pack's collision bits and does not
+physical fence boxes. East/west walls follow the inferred 28 × 15 m CAD core
+edge. North/south walls sit 0.40 m farther out on the source-supported flat
+apron: the previous core-edge placement overlapped the two fly ramps by about
+5.5 mm, whereas this placement leaves about 0.395 m between each ramp's outer
+edge and the fence inner face. The fence top remains 2.4 m above the field
+floor. It contacts the robot through the pack's collision bits and does not
 stop simulation or require RL-Lab to create geometry:
 
 ```bash
@@ -455,16 +458,20 @@ rmuc2026-field view NEW_FENCED_PACK
 ```
 
 Both `full` and `collision_only` profiles contain the same four fence geoms,
-which are bound to the manifest and verified before loading. The 50 mm box
-thickness, 300 mm buried base, solid collision across the dart-transfer
-aperture, and exact line inferred from the CAD shell are simulation choices;
+which are bound to the manifest and verified before loading. The verifier also
+continues to read the previous core-edge and hard-fence contracts. The 50 mm
+box thickness, 300 mm buried base, solid collision across the dart-transfer
+aperture, and placement inferred from the CAD shell are simulation choices;
 this is a robot-containment proxy, not a surveyed reproduction of the steel
-mesh or window. It is opt-in and remains `DRAFT_BLOCKED`. Four 6 s Fudan
+mesh or window. The new fence-only `solref` is `0.04 1`, softer than the
+previous `0.02 1` after a matched Fudan north-wall approach exposed `BADQACC`
+with the hard contact. The heightfield's `solref`, friction and samples remain
+unchanged. It is opt-in and remains `DRAFT_BLOCKED`: four revised 6 s Fudan
 approaches and four 120 mm sphere approaches contacted the fence without
-crossing its line or producing a numerical warning. The heightfield still
-reached the 50-contact pair limit in the robot runs, and all perimeter poses,
-speeds, corners and jumps have not been accepted. Schema-3 source-void packs
-are not accepted as fence-pack inputs until their combined contact is tested.
+crossing its line or producing a numerical warning. Robot heightfield contact
+pairs still reached the 50-point cap; all perimeter poses, speeds, corners and
+jumps have not been accepted. Schema-3 source-void packs are not accepted as
+fence-pack inputs until their combined contact is tested.
 
 For the two fixed fly ramps, use the local official-source audit rather than
 flattening real overlap with adjacent CAD parts:

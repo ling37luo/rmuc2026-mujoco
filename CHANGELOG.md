@@ -6,6 +6,29 @@ project intends to follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.3.0a3] - 2026-09-20
+
+This code-only prerelease corrects the physical fence's interference with
+the two fly ramps. Local runtime packs remain `DRAFT_BLOCKED` and are not
+distributed.
+
+### Fixed
+
+- The previous north/south fence inner faces overlapped the outer corners of
+  both fixed fly ramps by about 5.5 mm. Fresh `fence-pack` exports now keep
+  the east/west walls on the supported core edge and move only the north/south
+  walls 0.40 m onto the source-supported outer apron. This leaves about
+  0.395 m between each ramp edge and the fence inner face, without modifying
+  the heightfield or ramp friction. The lighter visual alpha makes the solid
+  proxy less obstructive.
+- A hard-fence Fudan approach from the north apron produced `BADQACC` during
+  sustained wall contact. The fence-only `solref` time constant is now 0.04 s
+  instead of 0.02 s; matched A/B routes and all four 6 s robot approaches
+  complete without solver warnings. The heightfield solver setting remains
+  unchanged, and its 50-contact pair limit is still reached in robot trials.
+- The verifier recognizes v1, v2 and v3 perimeter contracts, so existing
+  verified fenced packs remain readable. New exports use v3.
+
 ## [0.3.0a2] - 2026-09-20
 
 This remains a code-only, `DRAFT_BLOCKED` pre-release. No generated pack or

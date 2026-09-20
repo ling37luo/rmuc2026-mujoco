@@ -31,7 +31,7 @@ from .livery import (
     SOURCE_GUIDE_EDGE_WHITE_MIN,
     SOURCE_SURFACE_GUIDE_KIND,
 )
-from .perimeter_fence import FENCE_NAMES, perimeter_fence_contract
+from .perimeter_fence import FENCE_NAMES, LEGACY_FENCE_SCHEMA, perimeter_fence_contract
 from .wall_tip_repair import validate_wall_tip_repair_record, verify_wall_tip_repair_samples
 
 
@@ -563,7 +563,9 @@ def _validate_cross_references(
     fence_contract = None
     if manifest.get("perimeter_fence") is not None:
         try:
-            fence_contract = perimeter_fence_contract(dict(manifest))
+            fence_contract = perimeter_fence_contract(
+                dict(manifest), schema=manifest["perimeter_fence"]["schema"]
+            )
         except (IndexError, KeyError, TypeError, ValueError) as exc:
             raise ManifestError(f"invalid perimeter_fence frame: {exc}") from exc
         if manifest["perimeter_fence"] != fence_contract:
@@ -1211,7 +1213,12 @@ def _validate_runtime_profile_xml(
                 or geom.get("type") != "box"
                 or geom.get("contype") != str(contact["contype"])
                 or geom.get("conaffinity") != str(contact["conaffinity"])
-                or geom.get("rgba") != "0.08 0.09 0.10 0.55"
+                or geom.get("rgba")
+                != (
+                    "0.08 0.09 0.10 0.55"
+                    if fence_contract["schema"] == LEGACY_FENCE_SCHEMA
+                    else "0.08 0.09 0.10 0.22"
+                )
             ):
                 raise ManifestError(
                     f"runtime profile {profile!r} fence contact contract is invalid"

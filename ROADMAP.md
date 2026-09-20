@@ -88,7 +88,13 @@ official core edge. Four sphere and four robot approach routes are stable,
 but the heightfield contact cap, exact fence/window construction and wider
 perimeter routes still block default activation. A source-ray audit resolves
 the two fly-ramp plane-error bands as adjacent official CAD overlap without
-changing their collision geometry.
+changing their collision geometry. `0.3.0a3` moves only the north/south proxy
+walls to the supported outer apron after detecting 5.5 mm overlap with the fly-ramp
+edges. The new 0.395 m clearance is a geometry correction, not whole-robot
+acceptance. Its fence-only contact time constant was increased from 0.02 s to
+0.04 s after a matched north-wall robot route with the harder setting became
+numerically unstable. The softer candidate completed four bounded side
+approaches, but heightfield contact saturation remains.
 
 - represent accepted underpasses and stacked surfaces with hybrid collision;
 - register material zones from measured or clearly labeled non-official data;

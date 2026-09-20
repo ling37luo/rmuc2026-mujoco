@@ -1,10 +1,11 @@
 """A bounded, rulebook-sized physical perimeter for local robot experiments.
 
 The rulebook specifies the 28 by 15 m battlefield and a 2.4 m fence top. The
-CAD shell does not locate a continuous steel fence. This proxy places its
-centerline at the inferred core edge. Its 50 mm thickness, buried base, and
-solid treatment of the dart aperture are simulation choices, not official
-dimensions.
+CAD shell does not locate a continuous steel fence. The current proxy keeps
+its side walls at the inferred core edge and moves its north/south walls onto
+the source-supported outer apron to clear the two fly ramps. Its 50 mm
+thickness, buried base, and solid dart-aperture treatment are simulation
+choices, not official dimensions.
 """
 
 from __future__ import annotations
@@ -18,7 +19,9 @@ from typing import Any
 import xml.etree.ElementTree as ET
 
 
-FENCE_SCHEMA = "rmuc2026_rulebook_perimeter_proxy_v1"
+LEGACY_FENCE_SCHEMA = "rmuc2026_rulebook_perimeter_proxy_v1"
+RAMP_CLEARANCE_FENCE_SCHEMA = "rmuc2026_rulebook_perimeter_proxy_v2"
+FENCE_SCHEMA = "rmuc2026_rulebook_perimeter_proxy_v3"
 FENCE_NAMES = (
     "rmuc2026_perimeter_left",
     "rmuc2026_perimeter_right",
@@ -28,15 +31,20 @@ FENCE_NAMES = (
 CORE_LENGTH_M = 28.0
 CORE_WIDTH_M = 15.0
 TOP_ABOVE_FIELD_FLOOR_M = 2.4
-OUTWARD_OFFSET_M = 0.0
+OUTWARD_OFFSET_X_M = 0.0
+OUTWARD_OFFSET_Y_M = 0.40
 THICKNESS_M = 0.05
 BURIAL_M = 0.30
 _APPROX_CAD_EXTENTS_M = (29.752008274927, 16.003130912781)
 
 
-def perimeter_fence_contract(manifest: dict[str, Any]) -> dict[str, Any]:
+def perimeter_fence_contract(
+    manifest: dict[str, Any], *, schema: str = FENCE_SCHEMA
+) -> dict[str, Any]:
     """Derive four touching collision boxes from the pinned CAD core frame."""
 
+    if schema not in {LEGACY_FENCE_SCHEMA, RAMP_CLEARANCE_FENCE_SCHEMA, FENCE_SCHEMA}:
+        raise ValueError(f"unsupported perimeter fence schema: {schema}")
     if manifest.get("schema_version") != 2:
         raise ValueError("the physical fence currently requires a schema-2 field pack")
     dimensions = manifest["dimensions"]
@@ -64,10 +72,12 @@ def perimeter_fence_contract(manifest: dict[str, Any]) -> dict[str, Any]:
     floor_z = -float(manifest["coordinate_frame"]["recommended_spawn"]["terrain_height_m"])
     if not all(math.isfinite(value) for value in (cx, cy, floor_z)):
         raise ValueError("the fence frame must be finite")
-    x_left = cx - CORE_LENGTH_M / 2 - OUTWARD_OFFSET_M
-    x_right = cx + CORE_LENGTH_M / 2 + OUTWARD_OFFSET_M
-    y_bottom = cy - CORE_WIDTH_M / 2 - OUTWARD_OFFSET_M
-    y_top = cy + CORE_WIDTH_M / 2 + OUTWARD_OFFSET_M
+    x_offset = 0.0 if schema == LEGACY_FENCE_SCHEMA else OUTWARD_OFFSET_X_M
+    y_offset = 0.0 if schema == LEGACY_FENCE_SCHEMA else OUTWARD_OFFSET_Y_M
+    x_left = cx - CORE_LENGTH_M / 2 - x_offset
+    x_right = cx + CORE_LENGTH_M / 2 + x_offset
+    y_bottom = cy - CORE_WIDTH_M / 2 - y_offset
+    y_top = cy + CORE_WIDTH_M / 2 + y_offset
     half_thickness = THICKNESS_M / 2
     half_height = (TOP_ABOVE_FIELD_FLOOR_M + BURIAL_M) / 2
     z = floor_z + (TOP_ABOVE_FIELD_FLOOR_M - BURIAL_M) / 2
@@ -93,13 +103,16 @@ def perimeter_fence_contract(manifest: dict[str, Any]) -> dict[str, Any]:
             "size": [(x_right - x_left + THICKNESS_M) / 2, half_thickness, half_height],
         },
     ]
-    return {
-        "schema": FENCE_SCHEMA,
+    contract = {
+        "schema": schema,
         "status": "EXPERIMENTAL_PHYSICAL_PROXY",
         "official_core_battlefield_m": [CORE_LENGTH_M, CORE_WIDTH_M],
         "official_fence_top_above_field_floor_m": TOP_ABOVE_FIELD_FLOOR_M,
-        "placement_basis": "pinned_CAD_outer_bounds_center_plus_rulebook_core_rectangle",
-        "outward_offset_m": OUTWARD_OFFSET_M,
+        "placement_basis": (
+            "pinned_CAD_outer_bounds_center_plus_rulebook_core_rectangle"
+            if schema == LEGACY_FENCE_SCHEMA
+            else "pinned_CAD_center_plus_core_x_and_source_supported_outer_y_apron"
+        ),
         "thickness_m": THICKNESS_M,
         "burial_below_field_floor_m": BURIAL_M,
         "dart_aperture_collision": "solid_for_robot_containment_not_an_official_window_model",
@@ -108,10 +121,16 @@ def perimeter_fence_contract(manifest: dict[str, Any]) -> dict[str, Any]:
             "contype": 2,
             "conaffinity": 1,
             "friction": [1.0, 0.005, 0.0001],
-            "solref": [0.02, 1.0],
+            "solref": [0.04 if schema == FENCE_SCHEMA else 0.02, 1.0],
         },
         "validation_status": "DRAFT_BLOCKED",
     }
+    if schema == LEGACY_FENCE_SCHEMA:
+        contract["outward_offset_m"] = 0.0
+    else:
+        contract["outward_offset_xy_m"] = [x_offset, y_offset]
+        contract["visual_rgba"] = [0.08, 0.09, 0.10, 0.22]
+    return contract
 
 
 def _format(values: list[float]) -> str:
@@ -140,12 +159,16 @@ def append_perimeter_fence(root: ET.Element, contract: dict[str, Any]) -> None:
                 "conaffinity": str(contact["conaffinity"]),
                 "friction": _format(contact["friction"]),
                 "solref": _format(contact["solref"]),
-                "rgba": "0.08 0.09 0.10 0.55",
+                "rgba": (
+                    "0.08 0.09 0.10 0.55"
+                    if contract["schema"] == LEGACY_FENCE_SCHEMA
+                    else "0.08 0.09 0.10 0.22"
+                ),
             },
         )
 
 
-def export_fenced_pack(source: Path, output: Path) -> dict[str, Any]:
+def export_fenced_pack(source: Path, output: Path, *, schema: str = FENCE_SCHEMA) -> dict[str, Any]:
     """Copy a verified pack, bind fence geoms in both profiles, and reverify."""
 
     from .manifest import FieldAsset, sha256_file
@@ -153,7 +176,7 @@ def export_fenced_pack(source: Path, output: Path) -> dict[str, Any]:
     asset = FieldAsset.open(source, verify=True)
     if asset.manifest.get("perimeter_fence") is not None:
         raise ValueError("input pack already has a perimeter fence")
-    contract = perimeter_fence_contract(dict(asset.manifest))
+    contract = perimeter_fence_contract(dict(asset.manifest), schema=schema)
     destination = Path(output).expanduser().resolve()
     if destination.exists():
         raise ValueError(f"output already exists: {destination}")

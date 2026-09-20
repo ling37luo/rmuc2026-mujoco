@@ -114,3 +114,56 @@ Local evidence, not distributed with source or release packages:
 Decision: **CANDIDATE_ONLY**. The physical fence replaces stop-on-boundary
 behavior for this schema-2 pack, but exact official fidelity and full robot
 perimeter acceptance remain `DRAFT_BLOCKED`.
+
+## Fly-ramp/perimeter interference correction
+
+The first four-box fence candidate had a specific placement defect: each
+fixed fly ramp's outer low corner extended about 5.47 mm beyond the inner
+face of its adjacent north/south wall. This could obstruct a robot using the
+outer tread even though earlier constrained wheel routes followed the
+centerlines and passed. The `0.3.0a3` placement keeps the east/west walls in
+place and moves the north/south walls 0.40 m toward the CAD outer apron.
+Each ramp now has 0.3945 m of geometric clearance to the wall inner face.
+The visual alpha was reduced. The previous v1/v2 fence contracts remain
+readable; fresh local exports use v3.
+
+The first moved-wall pack retained a hard fence contact (`solref="0.02 1"`).
+A Fudan approach from the north apron reached the wall, then reported
+`BADQACC` at 1.400 s; the previous core-edge fence failed at 1.458 s from
+the same start. The unfenced control escaped and fell below the field, so it
+was not a contact solution. In a matched local A/B, increasing only the
+fence contact time constant to 0.04 s completed the 6 s route with no solver
+warning and no wall crossing. The candidate pack adopts `solref="0.04 1"`
+for the fence alone. Its friction, contact bits, and the entire heightfield
+(including the heightfield's `solref="0.02 1"`) are unchanged. This is a
+solver-stability sensitivity choice, not measured steel-fence compliance.
+[MuJoCo's solver documentation](https://mujoco.readthedocs.io/en/latest/modeling.html#solver-parameters)
+explains the time-constant parameter; the route A/B, rather than that
+general guidance, is the evidence for this specific model.
+
+The source-ray-miss mask found 0 misses at 5 cm spacing along all four new
+inner wall faces (316 samples on each east/west wall; 560 on each north/south
+wall). The final candidate pack passed all 12 two-way, three-speed 120 mm
+wheel-probe routes with no solver warning. Four 120 mm sphere approaches
+contacted the revised fence, had no centerline crossing or solver warning
+over 1,200 steps each. Four bounded 6 s Fudan side approaches contacted the
+fence with no warning or centerline crossing; every route still reached the
+50-contact heightfield pair cap. The ordinary read-only Fudan viewer
+completed a 2 s central robot run; the SCUT `rough_dash` adapter completed a
+separate 2 s central closed loop. These central runs do not prove a free
+robot can climb, jump, and land across either full fly-ramp route. Robot
+contact saturation and official fence details remain open.
+
+Local evidence (not redistributed):
+
+- Final candidate manifest: `rmuc2026-mujoco-package/20260920T_perimeter_ramp_clearance_soft_contact_candidate_v4/manifest.json` — SHA-256 `8e4678b1ac4a5188eba007e9fa14260cfd02b5489b13584ae2627781710e8236`.
+- Fence/ramp geometry and source-hit check: `rmuc2026-v03-acceptance/20260920T_perimeter_ramp_clearance_v4_static.json` — SHA-256 `1cb16e0bd2db73c3b5daa4b4b799f61e1fe217f728df1c6821b19a72dc61d85d`.
+- Twelve dynamic wheel routes: `rmuc2026-v03-acceptance/20260920T_perimeter_ramp_clearance_v4_wheel.json` — SHA-256 `8fcf9e0be3555fe28a6bf7fd7c34043122c1efc298c4acc74f91d231aa504b24`.
+- Four Fudan wall approaches: `rmuc2026-v03-acceptance/20260920T_perimeter_ramp_clearance_v4_robot_four_sides/result.json` — SHA-256 `0eb69dab6fc41bb1e8dffefab683a112281d259b748564a25ef4e5f38364a80a`.
+- Hard-fence north-route failure: `rmuc2026-v03-acceptance/20260920T_perimeter_ramp_clearance_v3_robot_four_sides/result.json` — SHA-256 `3bb72a56a904cd251294200372ad364118f2e1f0e9c19db76faa139f2121c14f`.
+- Fudan read-only load: `rmuc2026-v03-acceptance/20260920T_perimeter_ramp_clearance_v4_fudan2s/result.json` — SHA-256 `e898b911ae3031f6a3b27cc49ba174fd7de18ae4d91b44b32ebd3fc314a6d5c6`.
+- SCUT central closed loop: `scut-rmuc-view/20260920T091215.371060Z/report.json` — SHA-256 `7afefeb6524d1a1b72e07a2e251f78b614960991be8ae22155ba8bb5843352fb`.
+
+Decision: **CANDIDATE_ONLY / DRAFT_BLOCKED**. The demonstrated fence overlap
+and one matched hard-contact instability are removed; free robot ramp
+traversals and full perimeter physics are not yet accepted.
