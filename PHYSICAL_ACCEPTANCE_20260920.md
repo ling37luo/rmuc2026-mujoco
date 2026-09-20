@@ -40,3 +40,31 @@ safe out-of-bounds stop that covers source-hit edges as well as source misses.
 Then rerun matched robot routes at the required speeds and close the strict
 ramp maximum, hybrid topology, and material-zone gates. Do not promote the
 current experimental candidates to a default pack on this evidence.
+
+## Code-prerelease safety follow-up
+
+The `0.3.0a1` code adds a read-only schema-3 boundary stop signal. It was
+checked against a new matched 0.5 m/s top-edge start: without the stop, the
+robot crossed the source edge and fell to -1.009 m by 1.984 s; with the stop,
+four consecutive outward steps at the 50-contact pair limit ended the run at
+1.164 s, before the fall and without a numerical warning. A left-edge run
+stopped after 20 source-miss/no-contact steps at 3.592 s without a warning.
+A separate central 1,000-step run had no guard trigger or numerical warning.
+These tests validate bounded termination, not the contact geometry, the
+unreproduced earlier top-edge `BADQACC`, or every approach to the perimeter.
+
+Two representative 1.046 mm fly-ramp plane-error nodes were raycast against
+the original source GLB. At those nodes the highest source surface is adjacent
+part 394 or 398, respectively; the heightfield matches that higher source hit
+to floating-point precision. The existing single-ramp-plane maximum is thus
+not a valid physical error measurement at those two overlapping nodes. A
+full overlap-aware ramp audit is still needed before replacing the strict
+1 mm gate.
+
+Additional local evidence under `rmuc2026-v03-acceptance/`:
+
+- `20260920T_sourcehit_guard_v3_nearedge/schema3_top_5_field_guard.json` — SHA-256 `411c6c2b9ba4aa04fb2f193cda28fcdef07f8dc1634be74e119abf17d860eaa2`.
+- `20260920T_top_nearedge_control_v1/schema3_top_5.json` — SHA-256 `d2c74a04dc64cc94ed146e7019a961b0557c22d40adcdd6a093c4385f5d2c3dc`.
+- `20260920T_sourcehit_guard_v2/schema3_left_5_field_guard.json` — SHA-256 `0479ca4e3eca21ad2a22bfd6ec551bf26ee992dfa6899d3f40f8f46380071fe2`.
+- `20260920T_new_guard_central1000/result.json` — SHA-256 `444f7093c8d1c6c645f54108c0047ac6a73976b2834639a2086752a1b4337b18`.
+- `20260920T_ramp_overlap_source_v1/result.json` — SHA-256 `db790142cc43fddb72a6f31b210370a05ed42ad4b58b952d0881660ebbb2c6c3`.

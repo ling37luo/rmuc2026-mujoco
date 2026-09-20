@@ -13,7 +13,7 @@ import pytest
 from PIL import Image
 import mujoco
 
-from rmuc2026_mujoco import FieldAsset, ManifestError, height_at, load_model
+from rmuc2026_mujoco import FieldAsset, FieldBoundaryGuard, ManifestError, height_at, load_model
 from rmuc2026_mujoco.collision_candidate import SOURCE_GLB_SHA256
 from rmuc2026_mujoco.download import OFFICIAL_STEP_SHA256, OFFICIAL_STEP_SIZE
 from rmuc2026_mujoco.pack import (
@@ -246,6 +246,9 @@ def test_negative_heightfield_uses_schema3_offset_encoding(tmp_path: Path) -> No
     assert exported["schema_version"] == 3
     assert exported["collision"]["edge_void_provenance"]["changed_count"] == 1
     assert height_at(asset, -0.5, -0.5) == pytest.approx(-5.0)
+    guard = FieldBoundaryGuard.from_asset(asset)
+    assert guard._over_source_miss(-0.5, -0.5)
+    assert not guard._over_source_miss(0.5, 0.5)
     model, _ = load_model(asset, profile="collision_only")
     hid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_HFIELD, "rmuc2026_collision")
     gid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, "rmuc2026_field_collision")

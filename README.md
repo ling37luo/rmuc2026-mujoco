@@ -400,6 +400,16 @@ robot. The source-ray correction is therefore **experimental and disabled by
 default** until robot out-of-bounds termination is validated. The runtime
 remains `DRAFT_BLOCKED`.
 
+For a fully verified schema-3 pack, `FieldBoundaryGuard.from_asset(asset)`
+provides a read-only stop signal for robot consumers. Call `observe()` once
+before each physics step with the simulation time, robot base XY, total
+heightfield contacts, and the largest contact count for one heightfield/robot
+geom pair. Stop stepping when it returns a record; call `reset()` after a robot
+reset. It stops after 20 source-miss/no-contact steps, or four consecutive
+outward steps with one pair at MuJoCo's 50-contact limit within 0.4 m of the
+grid edge. Bounded left and top robot trials stopped before the tested fall;
+this does not make an edge traversable or change `DRAFT_BLOCKED`.
+
 One separate local physics experiment replaced a single convex roof triangle
 of official part 236 with its exact-source prism and transferred 59,387 roof
 nodes from the heightfield to the official base below. The matched robot

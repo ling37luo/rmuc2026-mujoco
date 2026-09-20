@@ -80,6 +80,9 @@ the upstream rightsholder grants written redistribution permission.
 The 2026-09-20 [bounded physical acceptance](PHYSICAL_ACCEPTANCE_20260920.md)
 found passing fly-ramp wheel routes and short central robot runs, but the
 wall contact cap and source-hit edge instability still block this stage.
+The code-only `0.3.0a1` prerelease adds a bounded edge stop signal while the
+experimental collision candidates remain disabled; it is not this stage's
+physical acceptance.
 
 - represent accepted underpasses and stacked surfaces with hybrid collision;
 - register material zones from measured or clearly labeled non-official data;

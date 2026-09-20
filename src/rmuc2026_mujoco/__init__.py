@@ -1,6 +1,7 @@
 """Public API for the standalone, unofficial RMUC 2026 MuJoCo field loader."""
 
 from .builder import BuilderUnavailable, build_from_official_step, build_runtime_asset_pack
+from .boundary_guard import FieldBoundaryGuard
 from .download import (
     LAST_REVIEWED_RULEBOOK_PUBLICATION_DATE,
     LAST_REVIEWED_RULEBOOK_SHA256,
@@ -68,6 +69,7 @@ __all__ = [
     "FIELD_ATTACH_PREFIX",
     "FIELD_COLLISION_GEOM_NAME",
     "FieldAsset",
+    "FieldBoundaryGuard",
     "FieldDisplayController",
     "HEIGHTFIELD_CLAIM_BOUNDARY",
     "HFIELD_NAME",
@@ -113,4 +115,4 @@ __all__ = [
     "verify_official_step",
 ]
 
-__version__ = "0.2.1"
+__version__ = "0.3.0a1"

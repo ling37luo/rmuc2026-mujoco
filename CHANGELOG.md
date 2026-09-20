@@ -6,7 +6,21 @@ project intends to follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.3.0a1] - 2026-09-20
+
+This is a code-only prerelease of bounded field-contact tools. It does not
+promote any generated runtime pack beyond `DRAFT_BLOCKED` or activate the
+experimental wall and edge candidates by default. The final 0.3 physical
+acceptance gate remains open.
+
 ### Added
+
+- A field-owned, read-only `FieldBoundaryGuard` for fully verified schema-3
+  packs. It signals a stop after persistent source-miss contact loss or when
+  one heightfield/robot pair stays at MuJoCo's 50-contact limit while moving
+  outward within 0.4 m of the grid edge. It does not alter geometry, state,
+  controls, or the solver; short top and left robot routes stopped before
+  falling or a numerical warning. Safe travel on those edges is not claimed.
 
 - Experimental runtime schema 3 for the audited 1 cm official-source field. A hashed ray
   mask removes 277,806 unsupported outer-edge samples using a finite -5 m
@@ -14,8 +28,9 @@ project intends to follow [Semantic Versioning](https://semver.org/).
   MJCF origin, height range, PNG bootstrap and exact float injection share one
   versioned formula; schema 1/2 packs remain readable. This removes false
   playable-height support, not the single-heightfield topology limit. It is
-  opt-in: a frozen robot leaving the edge can later produce `BADQACC` without
-  an accepted out-of-bounds termination rule.
+  opt-in: a frozen robot leaving the edge can later produce `BADQACC` if its
+  consumer continues stepping without a stop rule; full edge traversal is
+  still unaccepted.
 - Local-only exact wall-contact and chassis perimeter candidates with bounded
   wheel, sphere and frozen-robot evidence. They are disabled in exported packs
   until contact-owner and placement contracts are complete.
