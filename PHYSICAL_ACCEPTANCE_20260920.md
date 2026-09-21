@@ -252,3 +252,47 @@ Local evidence (not redistributed):
 Decision: **CANDIDATE_ONLY / DRAFT_BLOCKED**. This supersedes the v4
 heightfield-edge placement for local robot testing. Official fence placement,
 free high-speed impacts and full-field robot acceptance remain open.
+
+## Free-flight fly-ramp follow-up (2026-09-21)
+
+The earlier 12-route wheel gate ended at the high seam, so it could establish
+slope and seam contact but could not establish gap clearance or landing. A new
+read-only free-flight probe now removes longitudinal drive at that seam and
+requires the 120 mm wheel centre to clear the landing face, contact the top and
+remain at top height for 0.15 s.
+
+On the raised-deck v6 candidate, the heightfield gap measured 0.650 m north and
+0.648 m south against the rulebook's 0.650 m dimension. Both ramps produced no
+solver warning. The wheel hit short or at the lip at 1.5, 1.8 and 2.0 m/s; it
+reached and remained on the landing top at 2.2 and 2.5 m/s. This threshold is
+specific to the constrained probe and is not an official robot requirement.
+
+The rulebook's 1.145 × 0.860 m dimensions describe the marked interaction
+surface. The official STEP structural slope faces measure about 1.213 × 0.963 m
+and include border/support geometry. Their 17.064-degree slope differs from the
+nominal 17 degrees by 0.064 degree, so the current evidence does not indicate a
+field scale error.
+
+A read-only analysis of the user's 418 s SCUT session found five centreline
+takeoffs. Three approaches near 1.48, 1.51 and 1.85 m/s fell short. One at about
+2.14 m/s cleared and remained stable; one near 2.03 m/s cleared the leading
+edge but did not stabilize on the landing. Some aborted approaches also had
+0.20–0.30 m lateral centre error, but the three short takeoffs were nearly
+centred. The observed low success rate is therefore consistent with takeoff
+speed and landing attitude, rather than a missing ramp contact surface.
+
+Local evidence (not redistributed):
+
+- Free-flight wheel probe:
+  `rmuc2026-v03-acceptance/20260921T_fly_ramp_free_flight_probe_v2.json`
+  — SHA-256 `c1277d0e9dca499727626290ebd799bef8b82d96f7a5e24e5762ae349b0b8b7a`.
+- User-operated SCUT report:
+  `scut-rmuc-view/20260921T060218.086268Z/report.json`
+  — SHA-256 `68760ec0830c8d69ce487cac8e6f5b27480ee10ce888736d84b1777a25e75bdd`.
+- User-operated SCUT telemetry:
+  `scut-rmuc-view/20260921T060218.086268Z/telemetry.csv`
+  — SHA-256 `89bd1e46fb034ccf588ad89b884588a112363d0c6745e5f523a7544989753145`.
+
+Decision: **CANDIDATE_ONLY / DRAFT_BLOCKED**. The field geometry is retained.
+Whole-robot suspension, launch attitude and landing recovery remain outside the
+field-only probe's claim.

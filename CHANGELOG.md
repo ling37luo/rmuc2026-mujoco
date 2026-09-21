@@ -6,6 +6,14 @@ project intends to follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Added a field-owned free-flight wheel probe for the two fixed fly ramps. It
+  measures the runtime heightfield gap, removes drive force after the takeoff
+  seam, and distinguishes a lip impact from reaching and remaining on the
+  landing top. The report keeps the rulebook's marked interaction dimensions
+  separate from the larger structural STEP face dimensions.
+
 ## [0.3.1] - 2026-09-21
 
 ### Fixed

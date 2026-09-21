@@ -502,6 +502,29 @@ Run the fixed-ramp dynamics gate against an exported pack with:
 The 12 trials use the hash-bound CAD seam endpoints for both directions at
 0.3, 0.5, and 1.0 m/s. The nominal part vertex extent is retained as geometry
 metadata, but it is not used as a wheel start point beyond the fly-ramp lip.
+Those trials stop at the takeoff seam and therefore do not prove that a robot
+can clear the gap.
+
+Use the free-flight characterization to measure the runtime gap and continue a
+120 mm centreline wheel through takeoff and landing:
+
+```bash
+.venv/bin/python -m rmuc2026_mujoco.jump_probe ./local-rmuc2026-field \
+  --output ./runs/jump-probe-result.json
+```
+
+The ten trials use 1.5, 1.8, 2.0, 2.2, and 2.5 m/s approach commands. Drive
+force is removed at the hash-bound takeoff seam. A trial counts as a top
+landing only after the wheel centre clears the landing face and remains at
+landing-top height for another 0.15 s. The 2.2 m/s required-success threshold
+is a repeatable diagnostic gate for this constrained wheel, not an official
+robot speed requirement.
+
+Rulebook Figure 4-38 gives a marked interaction surface of 1.145 × 0.860 m, a
+17-degree slope and a 0.650 m gap. The hash-bound STEP parts have approximately
+1.213 m horizontal run and 0.963 m structural face width because their border
+and support are included. The report records both bases instead of treating
+that expected difference as a scale error.
 
 Do not use a successful load as proof of official geometry, competition-rule
 compliance, robot recovery, policy quality, or source-to-target equivalence.

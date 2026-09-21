@@ -37,6 +37,12 @@ from .manifest import (
     ValidationReport,
     verify_asset,
 )
+from .jump_probe import (
+    JumpProbeConfig,
+    LandingProfile,
+    measure_runtime_landing_profile,
+    run_fixed_fly_ramp_jump_probe,
+)
 from .mjcf import (
     FIELD_ATTACH_PREFIX,
     FIELD_COLLISION_GEOM_NAME,
@@ -82,6 +88,8 @@ __all__ = [
     "LAST_REVIEWED_RULEBOOK_URL",
     "LAST_REVIEWED_RULEBOOK_VERSION",
     "LAST_RULE_REVIEW_DATE",
+    "JumpProbeConfig",
+    "LandingProfile",
     "ManifestError",
     "MAX_SPAWN_CANDIDATES",
     "MujocoModelError",
@@ -114,7 +122,9 @@ __all__ = [
     "load_heightfield",
     "load_field_with_energy_unit",
     "load_model",
+    "measure_runtime_landing_profile",
     "perimeter_fence_contract",
+    "run_fixed_fly_ramp_jump_probe",
     "surface_at",
     "verify_asset",
     "verify_official_step",
