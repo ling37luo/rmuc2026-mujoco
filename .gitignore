@@ -14,6 +14,7 @@ venv/
 build/
 dist/
 wheelhouse/
+uv.lock
 
 # Editors and operating systems
 .idea/

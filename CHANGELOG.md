@@ -6,6 +6,11 @@ project intends to follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-09-21
+
+This code-only release adds bounded physical interaction tools for local RMUC
+runtime packs. Generated packs remain `DRAFT_BLOCKED` and are not distributed.
+
 ### Fixed
 
 - Fresh `fence-pack` exports put the four wall centrelines on the inferred

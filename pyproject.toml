@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "rmuc2026-mujoco"
-version = "0.3.0a4"
+version = "0.3.0"
 description = "Unofficial, integrity-checked RMUC 2026 field builder and loader for MuJoCo"
 readme = "README.md"
 license = "MIT"
@@ -56,6 +56,9 @@ test = [
 [project.scripts]
 rmuc2026-field = "rmuc2026_mujoco.cli:main"
 rmuc2026-mujoco = "rmuc2026_mujoco.cli:main"
+
+[tool.hatch.build]
+exclude = ["uv.lock"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/rmuc2026_mujoco"]
