@@ -207,3 +207,48 @@ Decision: **CANDIDATE_ONLY / DRAFT_BLOCKED**. The geometric strip that caused
 the reported edge/fence trap is removed. Free SCUT/Fudan impacts, repeated
 high-speed impacts, and official fence mesh/window dimensions remain outside
 this bounded acceptance.
+
+## Raised-deck perimeter correction (2026-09-21)
+
+The preceding heightfield-edge placement closed the finite grid boundary but
+did not close the boundary the robot actually drives on. User driving showed
+the robot falling from the raised competition deck into the lower CAD skirt
+and then becoming trapped against the farther-out wall. At the reported north
+route (`x ≈ -1.26 m`), the collision surface drops about 0.162 m between
+`y = 1.70 m` and `y = 1.72 m`; the v4 wall was near `y = 2.20 m`.
+
+Fresh v5 fence contracts place each wall centreline on the inferred 28 × 15 m
+raised-deck edge. The 50 mm wall therefore overlaps the playable surface by
+25 mm and leaves no robot-traversable lower skirt on the inside. The fixed
+north and south fly-ramp outer corners overlap the adjacent wall by about
+5.5 mm, below the heightfield's 10 mm sample spacing. Height samples,
+friction, collision bits and the fence-only `solref="0.04 1"` remain unchanged.
+The verifier continues to read v1–v4 contracts.
+
+Four 120 mm sphere wall-middle pushes made direct fence contact and entered the
+deck-edge tolerance by at most 7.3 mm, without reaching the lower skirt. Four
+diagonal corner pushes also stayed on the raised deck; two were arrested by
+existing CAD structures before fence contact. All states remained finite and
+no solver warning occurred. Both fixed fly ramps passed all 12 uphill/downhill
+trials at 0.3, 0.5 and 1.0 m/s. A SCUT `rough_dash` route aimed directly at the
+north wall completed 6 s and 300 inferences, stopped at `y ≈ 1.450 m`, retained
+`0.084 rad` tilt, and produced no terrain-probe excursion or numerical warning.
+
+Local evidence (not redistributed):
+
+- Raised-deck candidate manifest:
+  `rmuc2026-mujoco-package/20260921T_playable_deck_edge_fence_candidate_v6/manifest.json`
+  — SHA-256 `ade3e578caf1fd217330b8ff0f6717cd0bd6b1f14fec0a081e67d9eefe1e02be`.
+- Four-side and four-corner sphere pushes:
+  `rmuc2026-v03-acceptance/20260921T_playable_deck_edge_v6_probe.json`
+  — SHA-256 `183dcc29e43380331de655412115f5fedd1c670b40a7427892666ed1e9c50bd4`.
+- Twelve fixed-ramp wheel routes:
+  `rmuc2026-v03-acceptance/20260921T_playable_deck_edge_v6_wheel.json`
+  — SHA-256 `1a299f13a93b9a7cdfd0ac29f194e5a35a2fc3b24127adda857f686eb53f2b33`.
+- SCUT north-wall route:
+  `scut-rmuc-view/20260921T034615.761954Z/report.json`
+  — SHA-256 `8e602c30d50bfa64b533d4d37c91f3aa1e8696777b963f3c28268ddac546ba72`.
+
+Decision: **CANDIDATE_ONLY / DRAFT_BLOCKED**. This supersedes the v4
+heightfield-edge placement for local robot testing. Official fence placement,
+free high-speed impacts and full-field robot acceptance remain open.

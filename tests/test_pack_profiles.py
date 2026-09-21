@@ -39,6 +39,7 @@ from rmuc2026_mujoco.livery import (
 )
 from rmuc2026_mujoco.perimeter_fence import (
     FENCE_NAMES,
+    HEIGHTFIELD_EDGE_FENCE_SCHEMA,
     LEGACY_FENCE_SCHEMA,
     RAMP_CLEARANCE_FENCE_SCHEMA,
     SOFT_CONTACT_FENCE_SCHEMA,
@@ -379,17 +380,18 @@ def test_fenced_pack_is_new_hash_bound_physical_pack(tmp_path: Path) -> None:
     assert fenced_asset.manifest["perimeter_fence"] == contract
     assert contract["official_fence_top_above_field_floor_m"] == 2.4
     assert len(contract["panels"]) == 4
-    assert contract["outward_offset_xy_m"] == pytest.approx([0.975, 0.475])
+    assert contract["outward_offset_xy_m"] == [0.0, 0.0]
     assert contract["contact"]["solref"] == [0.04, 1.0]
-    alignment = contract["heightfield_edge_alignment"]
-    assert alignment["heightfield_bounds_xy_m"] == [[-15.0, -8.0], [15.0, 8.0]]
-    assert alignment["traversable_strip_outside_wall_m"] == [0.0, 0.0, 0.0, 0.0]
+    alignment = contract["playable_deck_edge_alignment"]
+    assert alignment["inferred_core_bounds_xy_m"] == [[-14.0, -7.5], [14.0, 7.5]]
+    assert alignment["wall_inner_face_overlap_into_core_xy_m"] == pytest.approx([0.025, 0.025])
+    assert alignment["traversable_lower_skirt_inside_wall_m"] == [0.0, 0.0, 0.0, 0.0]
     panels = {panel["name"]: panel for panel in contract["panels"]}
     half_thickness = contract["thickness_m"] / 2
-    assert panels["rmuc2026_perimeter_left"]["pos"][0] - half_thickness == pytest.approx(-15.0)
-    assert panels["rmuc2026_perimeter_right"]["pos"][0] + half_thickness == pytest.approx(15.0)
-    assert panels["rmuc2026_perimeter_bottom"]["pos"][1] - half_thickness == pytest.approx(-8.0)
-    assert panels["rmuc2026_perimeter_top"]["pos"][1] + half_thickness == pytest.approx(8.0)
+    assert panels["rmuc2026_perimeter_left"]["pos"][0] + half_thickness == pytest.approx(-13.975)
+    assert panels["rmuc2026_perimeter_right"]["pos"][0] - half_thickness == pytest.approx(13.975)
+    assert panels["rmuc2026_perimeter_bottom"]["pos"][1] + half_thickness == pytest.approx(-7.475)
+    assert panels["rmuc2026_perimeter_top"]["pos"][1] - half_thickness == pytest.approx(7.475)
     legacy = tmp_path / "legacy-fenced"
     legacy_contract = export_fenced_pack(plain, legacy, schema=LEGACY_FENCE_SCHEMA)
     assert FieldAsset.open(legacy).manifest["perimeter_fence"] == legacy_contract
@@ -409,6 +411,18 @@ def test_fenced_pack_is_new_hash_bound_physical_pack(tmp_path: Path) -> None:
     assert FieldAsset.open(soft_contact).manifest["perimeter_fence"] == soft_contact_contract
     assert soft_contact_contract["outward_offset_xy_m"] == [0.0, 0.4]
     assert soft_contact_contract["contact"]["solref"] == [0.04, 1.0]
+    heightfield_edge = tmp_path / "heightfield-edge-fenced"
+    heightfield_edge_contract = export_fenced_pack(
+        plain, heightfield_edge, schema=HEIGHTFIELD_EDGE_FENCE_SCHEMA
+    )
+    assert FieldAsset.open(heightfield_edge).manifest["perimeter_fence"] == (
+        heightfield_edge_contract
+    )
+    assert heightfield_edge_contract["outward_offset_xy_m"] == pytest.approx([0.975, 0.475])
+    assert heightfield_edge_contract["heightfield_edge_alignment"]["heightfield_bounds_xy_m"] == [
+        [-15.0, -8.0],
+        [15.0, 8.0],
+    ]
     for profile in ("full", "collision_only"):
         root = ET.parse(fenced_asset.entrypoint_for(profile)).getroot()
         geoms = [
@@ -458,7 +472,7 @@ def test_fence_pack_rejects_source_void_profile_until_joint_physics_is_audited(
         export_fenced_pack(plain, tmp_path / "fenced")
 
 
-def test_current_perimeter_clears_both_pinned_fly_ramp_outer_edges() -> None:
+def test_current_perimeter_limits_both_pinned_fly_ramp_outer_overlap() -> None:
     manifest = {
         "schema_version": 2,
         "dimensions": {
@@ -504,7 +518,7 @@ def test_current_perimeter_clears_both_pinned_fly_ramp_outer_edges() -> None:
             if side == "top"
             else float(np.min(corners[:, 1])) - inner_face_y
         )
-        assert clearance >= 0.35
+        assert -0.01 <= clearance <= 0.0
 
 
 def test_export_preserves_bound_fixed_fly_ramp_audit(tmp_path: Path) -> None:

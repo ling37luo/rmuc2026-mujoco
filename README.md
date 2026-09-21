@@ -443,15 +443,14 @@ traversal evidence.
 ### Physical perimeter candidate for robot tests
 
 The repository can now make a **new local schema-2 pack** with four touching
-physical fence boxes. Every 50 mm wall lies inside the collision heightfield,
-and its outer face matches that heightfield's edge. This removes the exterior
-terrain strip left by the earlier core-based placement (about 0.09 m at the
-north/south sides and 0.88 m at the east/west sides), where a robot could
-straddle the terrain edge and fence. The two fly-ramp outer corners retain
-about 0.488 m and 0.491 m of clearance to the adjacent wall inner faces. The
-fence top remains 2.4 m above the field floor. It contacts the robot through
-the pack's collision bits and does not stop simulation or require RL-Lab to
-create geometry:
+physical fence boxes. Their centrelines follow the inferred 28 × 15 m raised
+deck edge and their inner faces overlap that deck by 25 mm. This prevents a
+robot from dropping into the lower CAD skirt and becoming trapped between the
+deck edge and a farther-out fence. The two fly-ramp outer corners overlap the
+adjacent wall by about 5.5 mm, below the 10 mm heightfield sample spacing; the
+ramp centrelines remain open. The fence top remains 2.4 m above the field
+floor. It contacts the robot through the pack's collision bits and does not
+stop simulation or require RL-Lab to create geometry:
 
 ```bash
 rmuc2026-field fence-pack EXISTING_SCHEMA2_PACK NEW_FENCED_PACK
@@ -461,7 +460,8 @@ rmuc2026-field view NEW_FENCED_PACK
 
 Both `full` and `collision_only` profiles contain the same four fence geoms,
 which are bound to the manifest and verified before loading. The verifier also
-continues to read the previous core-edge, moved-wall, and hard-fence contracts.
+continues to read the previous core-edge, moved-wall, hard-fence, and
+heightfield-edge contracts.
 The 50 mm box thickness, 300 mm buried base, solid collision across the
 dart-transfer aperture, and placement inferred from the runtime heightfield
 are simulation choices;
@@ -470,11 +470,12 @@ mesh or window. The new fence-only `solref` is `0.04 1`, softer than the
 previous `0.02 1` after a matched Fudan north-wall approach exposed `BADQACC`
 with the hard contact. The heightfield's `solref`, friction and samples remain
 unchanged. It is opt-in and remains `DRAFT_BLOCKED`: four revised 6 s Fudan
-approaches and four 120 mm sphere approaches contacted the fence without
-crossing its line or producing a numerical warning. Robot heightfield contact
-pairs still reached the 50-point cap; all perimeter poses, speeds, corners and
-jumps have not been accepted. Schema-3 source-void packs are not accepted as
-fence-pack inputs until their combined contact is tested.
+approaches and four 120 mm sphere wall-middle approaches contacted the fence
+without entering the lower skirt or producing a numerical warning. Four
+diagonal corner pushes also stayed on the raised deck. Robot heightfield
+contact pairs can still reach the 50-point cap; all perimeter poses, speeds,
+corners and jumps have not been accepted. Schema-3 source-void packs are not
+accepted as fence-pack inputs until their combined contact is tested.
 
 For the two fixed fly ramps, use the local official-source audit rather than
 flattening real overlap with adjacent CAD parts:

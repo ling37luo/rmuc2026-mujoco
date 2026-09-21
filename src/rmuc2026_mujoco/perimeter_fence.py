@@ -2,11 +2,12 @@
 
 The rulebook specifies the 28 by 15 m battlefield and a 2.4 m fence top. The
 CAD shell does not locate a continuous steel fence. The current containment
-proxy places each wall fully on the collision heightfield and aligns its outer
-face with that heightfield's edge. This removes the narrow exterior strip in
-which a robot could straddle the terrain edge and the fence. Its 50 mm
-thickness, buried base, and solid dart-aperture treatment are simulation
-choices, not official dimensions.
+proxy follows the inferred 28 by 15 m raised deck edge. Its inner face overlaps
+the deck by 25 mm, blocking a robot before it can drop into the lower skirt
+between the playable deck and the outer CAD bounds. The resulting 5.5 mm
+overlap at the two fixed fly-ramp outer corners is below the 10 mm heightfield
+sample spacing. The wall thickness, buried base, and solid dart-aperture
+treatment are simulation choices, not official dimensions.
 """
 
 from __future__ import annotations
@@ -23,7 +24,8 @@ import xml.etree.ElementTree as ET
 LEGACY_FENCE_SCHEMA = "rmuc2026_rulebook_perimeter_proxy_v1"
 RAMP_CLEARANCE_FENCE_SCHEMA = "rmuc2026_rulebook_perimeter_proxy_v2"
 SOFT_CONTACT_FENCE_SCHEMA = "rmuc2026_rulebook_perimeter_proxy_v3"
-FENCE_SCHEMA = "rmuc2026_rulebook_perimeter_proxy_v4"
+HEIGHTFIELD_EDGE_FENCE_SCHEMA = "rmuc2026_rulebook_perimeter_proxy_v4"
+FENCE_SCHEMA = "rmuc2026_rulebook_perimeter_proxy_v5"
 FENCE_NAMES = (
     "rmuc2026_perimeter_left",
     "rmuc2026_perimeter_right",
@@ -35,6 +37,7 @@ CORE_WIDTH_M = 15.0
 TOP_ABOVE_FIELD_FLOOR_M = 2.4
 OUTWARD_OFFSET_X_M = 0.0
 OUTWARD_OFFSET_Y_M = 0.40
+DECK_EDGE_OUTWARD_OFFSET_Y_M = 0.0
 THICKNESS_M = 0.05
 BURIAL_M = 0.30
 _APPROX_CAD_EXTENTS_M = (29.752008274927, 16.003130912781)
@@ -49,6 +52,7 @@ def perimeter_fence_contract(
         LEGACY_FENCE_SCHEMA,
         RAMP_CLEARANCE_FENCE_SCHEMA,
         SOFT_CONTACT_FENCE_SCHEMA,
+        HEIGHTFIELD_EDGE_FENCE_SCHEMA,
         FENCE_SCHEMA,
     }
     if schema not in supported_schemas:
@@ -82,7 +86,7 @@ def perimeter_fence_contract(
     if not all(math.isfinite(value) for value in (cx, cy, floor_z)):
         raise ValueError("the fence frame must be finite")
     half_thickness = THICKNESS_M / 2
-    if schema == FENCE_SCHEMA:
+    if schema == HEIGHTFIELD_EDGE_FENCE_SCHEMA:
         half_size_xy = collision.get("half_size_xy_m")
         if (
             not isinstance(half_size_xy, list)
@@ -111,7 +115,13 @@ def perimeter_fence_contract(
         ]
     else:
         x_offset = 0.0 if schema == LEGACY_FENCE_SCHEMA else OUTWARD_OFFSET_X_M
-        y_offset = 0.0 if schema == LEGACY_FENCE_SCHEMA else OUTWARD_OFFSET_Y_M
+        y_offset = (
+            0.0
+            if schema == LEGACY_FENCE_SCHEMA
+            else DECK_EDGE_OUTWARD_OFFSET_Y_M
+            if schema == FENCE_SCHEMA
+            else OUTWARD_OFFSET_Y_M
+        )
         x_left = cx - CORE_LENGTH_M / 2 - x_offset
         x_right = cx + CORE_LENGTH_M / 2 + x_offset
         y_bottom = cy - CORE_WIDTH_M / 2 - y_offset
@@ -153,6 +163,8 @@ def perimeter_fence_contract(
             else "pinned_CAD_center_plus_core_x_and_source_supported_outer_y_apron"
             if schema in {RAMP_CLEARANCE_FENCE_SCHEMA, SOFT_CONTACT_FENCE_SCHEMA}
             else "collision_heightfield_outer_edge_with_wall_footprint_inside_terrain"
+            if schema == HEIGHTFIELD_EDGE_FENCE_SCHEMA
+            else "inferred_raised_core_deck_edge"
         ),
         "thickness_m": THICKNESS_M,
         "burial_below_field_floor_m": BURIAL_M,
@@ -163,7 +175,10 @@ def perimeter_fence_contract(
             "conaffinity": 1,
             "friction": [1.0, 0.005, 0.0001],
             "solref": [
-                0.04 if schema in {SOFT_CONTACT_FENCE_SCHEMA, FENCE_SCHEMA} else 0.02,
+                0.04
+                if schema
+                in {SOFT_CONTACT_FENCE_SCHEMA, HEIGHTFIELD_EDGE_FENCE_SCHEMA, FENCE_SCHEMA}
+                else 0.02,
                 1.0,
             ],
         },
@@ -174,12 +189,28 @@ def perimeter_fence_contract(
     else:
         contract["outward_offset_xy_m"] = [x_offset, y_offset]
         contract["visual_rgba"] = [0.08, 0.09, 0.10, 0.22]
-    if schema == FENCE_SCHEMA:
+    if schema == HEIGHTFIELD_EDGE_FENCE_SCHEMA:
         contract["heightfield_edge_alignment"] = {
             "heightfield_bounds_xy_m": heightfield_bounds,
             "wall_outer_faces_match_heightfield_edges": True,
             "traversable_strip_outside_wall_m": [0.0, 0.0, 0.0, 0.0],
             "wall_footprint_inside_heightfield": True,
+        }
+    if schema == FENCE_SCHEMA:
+        contract["playable_deck_edge_alignment"] = {
+            "inferred_core_bounds_xy_m": [
+                [cx - CORE_LENGTH_M / 2, cy - CORE_WIDTH_M / 2],
+                [cx + CORE_LENGTH_M / 2, cy + CORE_WIDTH_M / 2],
+            ],
+            "wall_inner_face_overlap_into_core_xy_m": [
+                half_thickness - x_offset,
+                half_thickness - y_offset,
+            ],
+            "traversable_lower_skirt_inside_wall_m": [0.0, 0.0, 0.0, 0.0],
+            "claim_boundary": (
+                "containment proxy follows the inferred raised 28x15m deck edge; "
+                "not a surveyed official fence centerline"
+            ),
         }
     return contract
 

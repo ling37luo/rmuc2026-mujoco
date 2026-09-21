@@ -6,6 +6,18 @@ project intends to follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Fresh `fence-pack` exports put the four wall centrelines on the inferred
+  28 × 15 m raised-deck edge. This blocks the lower CAD skirt where a robot
+  could fall and become trapped against the heightfield-edge fence introduced
+  in `0.3.0a4`.
+- The wall inner faces overlap the raised deck by 25 mm. The two fixed fly-ramp
+  outer corners overlap the adjacent wall by about 5.5 mm, below the 10 mm
+  heightfield sample spacing; all 12 fixed-ramp wheel trials still pass.
+- The verifier keeps support for the v1–v4 contracts. New local exports use
+  the v5 perimeter contract and retain the stable `solref="0.04 1"` contact.
+
 ## [0.3.0a4] - 2026-09-21
 
 This code-only prerelease closes the traversable strip between the physical
