@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "rmuc2026-mujoco"
-version = "0.3.0"
+version = "0.3.1"
 description = "Unofficial, integrity-checked RMUC 2026 field builder and loader for MuJoCo"
 readme = "README.md"
 license = "MIT"
@@ -49,6 +49,7 @@ test = [
   "pillow>=10,<13",
   "pytest>=8,<9",
   "python-xlib>=0.17,<1",
+  "rtree==1.4.1",
   "ruff>=0.12,<0.15",
   "trimesh==4.8.3",
 ]
