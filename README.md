@@ -443,13 +443,15 @@ traversal evidence.
 ### Physical perimeter candidate for robot tests
 
 The repository can now make a **new local schema-2 pack** with four touching
-physical fence boxes. East/west walls follow the inferred 28 × 15 m CAD core
-edge. North/south walls sit 0.40 m farther out on the source-supported flat
-apron: the previous core-edge placement overlapped the two fly ramps by about
-5.5 mm, whereas this placement leaves about 0.395 m between each ramp's outer
-edge and the fence inner face. The fence top remains 2.4 m above the field
-floor. It contacts the robot through the pack's collision bits and does not
-stop simulation or require RL-Lab to create geometry:
+physical fence boxes. Every 50 mm wall lies inside the collision heightfield,
+and its outer face matches that heightfield's edge. This removes the exterior
+terrain strip left by the earlier core-based placement (about 0.09 m at the
+north/south sides and 0.88 m at the east/west sides), where a robot could
+straddle the terrain edge and fence. The two fly-ramp outer corners retain
+about 0.488 m and 0.491 m of clearance to the adjacent wall inner faces. The
+fence top remains 2.4 m above the field floor. It contacts the robot through
+the pack's collision bits and does not stop simulation or require RL-Lab to
+create geometry:
 
 ```bash
 rmuc2026-field fence-pack EXISTING_SCHEMA2_PACK NEW_FENCED_PACK
@@ -459,9 +461,10 @@ rmuc2026-field view NEW_FENCED_PACK
 
 Both `full` and `collision_only` profiles contain the same four fence geoms,
 which are bound to the manifest and verified before loading. The verifier also
-continues to read the previous core-edge and hard-fence contracts. The 50 mm
-box thickness, 300 mm buried base, solid collision across the dart-transfer
-aperture, and placement inferred from the CAD shell are simulation choices;
+continues to read the previous core-edge, moved-wall, and hard-fence contracts.
+The 50 mm box thickness, 300 mm buried base, solid collision across the
+dart-transfer aperture, and placement inferred from the runtime heightfield
+are simulation choices;
 this is a robot-containment proxy, not a surveyed reproduction of the steel
 mesh or window. The new fence-only `solref` is `0.04 1`, softer than the
 previous `0.02 1` after a matched Fudan north-wall approach exposed `BADQACC`

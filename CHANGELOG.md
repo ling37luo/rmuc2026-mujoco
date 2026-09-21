@@ -6,6 +6,26 @@ project intends to follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.3.0a4] - 2026-09-21
+
+This code-only prerelease closes the traversable strip between the physical
+perimeter proxy and the finite heightfield. Local packs remain
+`DRAFT_BLOCKED` and are not distributed.
+
+### Fixed
+
+- Fresh `fence-pack` exports place every 50 mm wall fully inside the runtime
+  heightfield and align each wall's outer face with the corresponding
+  heightfield edge. The previous candidate left about 0.09 m outside its
+  north/south walls and about 0.88 m outside its east/west walls, where a
+  robot could straddle the terrain edge and fence.
+- The manifest records the exact heightfield bounds, zero traversable exterior
+  strip, and edge-alignment contract. The verifier continues to accept v1–v3
+  fence contracts; fresh exports use v4 with the v3 soft-contact parameters.
+- Moving the walls to the collision edge increases clearance from the fixed
+  north/south fly-ramp outer corners to about 0.488 m and 0.491 m without
+  changing the heightfield, ramp geometry, friction, or solver parameters.
+
 ## [0.3.0a3] - 2026-09-20
 
 This code-only prerelease corrects the physical fence's interference with

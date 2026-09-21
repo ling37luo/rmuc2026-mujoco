@@ -167,3 +167,43 @@ Local evidence (not redistributed):
 Decision: **CANDIDATE_ONLY / DRAFT_BLOCKED**. The demonstrated fence overlap
 and one matched hard-contact instability are removed; free robot ramp
 traversals and full perimeter physics are not yet accepted.
+
+## Heightfield-edge perimeter correction (2026-09-21)
+
+User driving exposed a containment defect that the previous centreline tests
+did not cover. The v3 wall positions left playable heightfield outside the
+fence: about 0.093–0.097 m north/south and 0.871–0.879 m east/west. A robot
+could therefore place part of its body on the finite terrain edge while
+pressing another part against the fence.
+
+Fresh v4 fence contracts derive all four walls from the runtime heightfield's
+declared centre and half-size. Each 50 mm wall footprint is inside the
+heightfield, and each outer face equals the corresponding heightfield bound;
+the manifest records a zero-width traversable exterior strip. No height
+sample, field contact parameter, friction value, or fly-ramp surface changed.
+The fly-ramp outer-corner clearances increased to 0.48796 m north and
+0.49109 m south.
+
+Eight 120 mm sphere pushes covered all four wall middles and four corners for
+3,000 steps each. Every required wall made contact, all states remained
+finite, no solver warning occurred, and the probe surface retained at least
+17.5 mm of heightfield before its outer edge. The complete 12-route,
+two-direction, three-speed fixed-ramp wheel matrix also passed with no solver
+warning.
+
+Local evidence (not redistributed):
+
+- Edge-sealed candidate manifest:
+  `rmuc2026-mujoco-package/20260921T_perimeter_edge_sealed_candidate_v5/manifest.json`
+  — SHA-256 `f52608524a07af4573e5689dc727b14a268e643f07c02d9baf914d9d5b3d3c20`.
+- Four-side and four-corner sphere pushes:
+  `rmuc2026-v03-acceptance/20260921T_perimeter_edge_sealed_v5_probe_v2.json`
+  — SHA-256 `f6dc0647a981b6734477b24a41fdf3ef7eb8504c7fcd403f198fb224de216f6f`.
+- Twelve fixed-ramp wheel routes:
+  `rmuc2026-v03-acceptance/20260921T_perimeter_edge_sealed_v5_wheel.json`
+  — SHA-256 `2e0b34cc8feb59c83ad869d8741efd8c442e7a3e2fd76e25a27d5ae8fbd169e2`.
+
+Decision: **CANDIDATE_ONLY / DRAFT_BLOCKED**. The geometric strip that caused
+the reported edge/fence trap is removed. Free SCUT/Fudan impacts, repeated
+high-speed impacts, and official fence mesh/window dimensions remain outside
+this bounded acceptance.

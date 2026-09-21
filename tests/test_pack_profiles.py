@@ -41,6 +41,7 @@ from rmuc2026_mujoco.perimeter_fence import (
     FENCE_NAMES,
     LEGACY_FENCE_SCHEMA,
     RAMP_CLEARANCE_FENCE_SCHEMA,
+    SOFT_CONTACT_FENCE_SCHEMA,
     export_fenced_pack,
     perimeter_fence_contract,
 )
@@ -347,6 +348,22 @@ def test_fenced_pack_is_new_hash_bound_physical_pack(tmp_path: Path) -> None:
     source_manifest = json.loads(source_manifest_path.read_text(encoding="utf-8"))
     source_manifest["dimensions"]["official_core_battlefield_m"] = [28.0, 15.0]
     source_manifest["collision"]["resolution_m"] = 1.0
+    source_manifest["collision"]["half_size_xy_m"] = [15.0, 8.0]
+    source_manifest["collision"]["rows_y"] = 17
+    source_manifest["collision"]["columns_x"] = 31
+    height = np.zeros((17, 31), dtype=np.float64)
+    height[-1, -1] = 0.2
+    image = source / source_manifest["collision"]["image_file"]
+    image.write_bytes(_heightfield_bootstrap_png(height, 1.0))
+    source_manifest["collision"]["image_sha256"] = _sha(image)
+    samples = source / source_manifest["collision"]["samples_file"]
+    np.savez_compressed(
+        samples,
+        x_m=np.linspace(-15.0, 15.0, 31),
+        y_m=np.linspace(-8.0, 8.0, 17),
+        height_m=height,
+    )
+    source_manifest["collision"]["samples_sha256"] = _sha(samples)
     source_manifest["dimensions"]["cad_assembly_outer_bounds_after_translation_m"] = [
         [-14.876004137464, -8.001565456391, 0.0],
         [14.876004137464, 8.001565456391, 1.0],
@@ -362,20 +379,36 @@ def test_fenced_pack_is_new_hash_bound_physical_pack(tmp_path: Path) -> None:
     assert fenced_asset.manifest["perimeter_fence"] == contract
     assert contract["official_fence_top_above_field_floor_m"] == 2.4
     assert len(contract["panels"]) == 4
-    assert contract["outward_offset_xy_m"] == [0.0, 0.4]
+    assert contract["outward_offset_xy_m"] == pytest.approx([0.975, 0.475])
     assert contract["contact"]["solref"] == [0.04, 1.0]
+    alignment = contract["heightfield_edge_alignment"]
+    assert alignment["heightfield_bounds_xy_m"] == [[-15.0, -8.0], [15.0, 8.0]]
+    assert alignment["traversable_strip_outside_wall_m"] == [0.0, 0.0, 0.0, 0.0]
+    panels = {panel["name"]: panel for panel in contract["panels"]}
+    half_thickness = contract["thickness_m"] / 2
+    assert panels["rmuc2026_perimeter_left"]["pos"][0] - half_thickness == pytest.approx(-15.0)
+    assert panels["rmuc2026_perimeter_right"]["pos"][0] + half_thickness == pytest.approx(15.0)
+    assert panels["rmuc2026_perimeter_bottom"]["pos"][1] - half_thickness == pytest.approx(-8.0)
+    assert panels["rmuc2026_perimeter_top"]["pos"][1] + half_thickness == pytest.approx(8.0)
     legacy = tmp_path / "legacy-fenced"
     legacy_contract = export_fenced_pack(plain, legacy, schema=LEGACY_FENCE_SCHEMA)
     assert FieldAsset.open(legacy).manifest["perimeter_fence"] == legacy_contract
-    assert contract["panels"][3]["pos"][1] - legacy_contract["panels"][3]["pos"][
-        1
-    ] == pytest.approx(0.4)
     ramp_clearance = tmp_path / "ramp-clearance-fenced"
     ramp_clearance_contract = export_fenced_pack(
         plain, ramp_clearance, schema=RAMP_CLEARANCE_FENCE_SCHEMA
     )
     assert FieldAsset.open(ramp_clearance).manifest["perimeter_fence"] == ramp_clearance_contract
     assert ramp_clearance_contract["contact"]["solref"] == [0.02, 1.0]
+    assert ramp_clearance_contract["panels"][3]["pos"][1] - legacy_contract["panels"][3]["pos"][
+        1
+    ] == pytest.approx(0.4)
+    soft_contact = tmp_path / "soft-contact-fenced"
+    soft_contact_contract = export_fenced_pack(
+        plain, soft_contact, schema=SOFT_CONTACT_FENCE_SCHEMA
+    )
+    assert FieldAsset.open(soft_contact).manifest["perimeter_fence"] == soft_contact_contract
+    assert soft_contact_contract["outward_offset_xy_m"] == [0.0, 0.4]
+    assert soft_contact_contract["contact"]["solref"] == [0.04, 1.0]
     for profile in ("full", "collision_only"):
         root = ET.parse(fenced_asset.entrypoint_for(profile)).getroot()
         geoms = [
@@ -435,7 +468,10 @@ def test_current_perimeter_clears_both_pinned_fly_ramp_outer_edges() -> None:
                 [3.712008274928, 2.223130912781, 3.649624647153],
             ],
         },
-        "collision": {"geom_center_after_translation_m": [-11.163995862536, -5.778434543609, 0.0]},
+        "collision": {
+            "geom_center_after_translation_m": [-11.16, -5.78, 0.0],
+            "half_size_xy_m": [14.9, 8.02],
+        },
         "coordinate_frame": {
             "recommended_spawn": {
                 "x_before_translation_m": 11.164002933086,

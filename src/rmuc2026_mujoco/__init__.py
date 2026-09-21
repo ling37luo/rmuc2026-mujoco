@@ -120,4 +120,4 @@ __all__ = [
     "verify_official_step",
 ]
 
-__version__ = "0.3.0a3"
+__version__ = "0.3.0a4"

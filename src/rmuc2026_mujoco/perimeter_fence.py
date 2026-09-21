@@ -1,9 +1,10 @@
-"""A bounded, rulebook-sized physical perimeter for local robot experiments.
+"""A bounded physical perimeter for local robot experiments.
 
 The rulebook specifies the 28 by 15 m battlefield and a 2.4 m fence top. The
-CAD shell does not locate a continuous steel fence. The current proxy keeps
-its side walls at the inferred core edge and moves its north/south walls onto
-the source-supported outer apron to clear the two fly ramps. Its 50 mm
+CAD shell does not locate a continuous steel fence. The current containment
+proxy places each wall fully on the collision heightfield and aligns its outer
+face with that heightfield's edge. This removes the narrow exterior strip in
+which a robot could straddle the terrain edge and the fence. Its 50 mm
 thickness, buried base, and solid dart-aperture treatment are simulation
 choices, not official dimensions.
 """
@@ -21,7 +22,8 @@ import xml.etree.ElementTree as ET
 
 LEGACY_FENCE_SCHEMA = "rmuc2026_rulebook_perimeter_proxy_v1"
 RAMP_CLEARANCE_FENCE_SCHEMA = "rmuc2026_rulebook_perimeter_proxy_v2"
-FENCE_SCHEMA = "rmuc2026_rulebook_perimeter_proxy_v3"
+SOFT_CONTACT_FENCE_SCHEMA = "rmuc2026_rulebook_perimeter_proxy_v3"
+FENCE_SCHEMA = "rmuc2026_rulebook_perimeter_proxy_v4"
 FENCE_NAMES = (
     "rmuc2026_perimeter_left",
     "rmuc2026_perimeter_right",
@@ -41,9 +43,15 @@ _APPROX_CAD_EXTENTS_M = (29.752008274927, 16.003130912781)
 def perimeter_fence_contract(
     manifest: dict[str, Any], *, schema: str = FENCE_SCHEMA
 ) -> dict[str, Any]:
-    """Derive four touching collision boxes from the pinned CAD core frame."""
+    """Derive four touching collision boxes from a pinned runtime pack."""
 
-    if schema not in {LEGACY_FENCE_SCHEMA, RAMP_CLEARANCE_FENCE_SCHEMA, FENCE_SCHEMA}:
+    supported_schemas = {
+        LEGACY_FENCE_SCHEMA,
+        RAMP_CLEARANCE_FENCE_SCHEMA,
+        SOFT_CONTACT_FENCE_SCHEMA,
+        FENCE_SCHEMA,
+    }
+    if schema not in supported_schemas:
         raise ValueError(f"unsupported perimeter fence schema: {schema}")
     if manifest.get("schema_version") != 2:
         raise ValueError("the physical fence currently requires a schema-2 field pack")
@@ -62,7 +70,8 @@ def perimeter_fence_contract(
         raise ValueError("the CAD assembly does not match the calibrated fence frame")
     cx = (low[0] + high[0]) / 2
     cy = (low[1] + high[1]) / 2
-    terrain_centre = manifest["collision"]["geom_center_after_translation_m"]
+    collision = manifest["collision"]
+    terrain_centre = collision["geom_center_after_translation_m"]
     if (
         len(terrain_centre) != 3
         or abs(float(terrain_centre[0]) - cx) > 0.05
@@ -72,34 +81,64 @@ def perimeter_fence_contract(
     floor_z = -float(manifest["coordinate_frame"]["recommended_spawn"]["terrain_height_m"])
     if not all(math.isfinite(value) for value in (cx, cy, floor_z)):
         raise ValueError("the fence frame must be finite")
-    x_offset = 0.0 if schema == LEGACY_FENCE_SCHEMA else OUTWARD_OFFSET_X_M
-    y_offset = 0.0 if schema == LEGACY_FENCE_SCHEMA else OUTWARD_OFFSET_Y_M
-    x_left = cx - CORE_LENGTH_M / 2 - x_offset
-    x_right = cx + CORE_LENGTH_M / 2 + x_offset
-    y_bottom = cy - CORE_WIDTH_M / 2 - y_offset
-    y_top = cy + CORE_WIDTH_M / 2 + y_offset
     half_thickness = THICKNESS_M / 2
+    if schema == FENCE_SCHEMA:
+        half_size_xy = collision.get("half_size_xy_m")
+        if (
+            not isinstance(half_size_xy, list)
+            or len(half_size_xy) != 2
+            or any(
+                not math.isfinite(float(value)) or float(value) <= half_thickness
+                for value in half_size_xy
+            )
+        ):
+            raise ValueError("the collision heightfield half-size is invalid")
+        terrain_cx, terrain_cy = (float(terrain_centre[index]) for index in range(2))
+        half_x, half_y = (float(value) for value in half_size_xy)
+        x_left = terrain_cx - half_x + half_thickness
+        x_right = terrain_cx + half_x - half_thickness
+        y_bottom = terrain_cy - half_y + half_thickness
+        y_top = terrain_cy + half_y - half_thickness
+        panel_cx = terrain_cx
+        panel_cy = terrain_cy
+        x_offset = half_x - half_thickness - CORE_LENGTH_M / 2
+        y_offset = half_y - half_thickness - CORE_WIDTH_M / 2
+        if x_offset < 0.0 or y_offset < 0.0:
+            raise ValueError("the collision heightfield is too small to contain the official core")
+        heightfield_bounds = [
+            [terrain_cx - half_x, terrain_cy - half_y],
+            [terrain_cx + half_x, terrain_cy + half_y],
+        ]
+    else:
+        x_offset = 0.0 if schema == LEGACY_FENCE_SCHEMA else OUTWARD_OFFSET_X_M
+        y_offset = 0.0 if schema == LEGACY_FENCE_SCHEMA else OUTWARD_OFFSET_Y_M
+        x_left = cx - CORE_LENGTH_M / 2 - x_offset
+        x_right = cx + CORE_LENGTH_M / 2 + x_offset
+        y_bottom = cy - CORE_WIDTH_M / 2 - y_offset
+        y_top = cy + CORE_WIDTH_M / 2 + y_offset
+        panel_cx = cx
+        panel_cy = cy
     half_height = (TOP_ABOVE_FIELD_FLOOR_M + BURIAL_M) / 2
     z = floor_z + (TOP_ABOVE_FIELD_FLOOR_M - BURIAL_M) / 2
     panels = [
         {
             "name": FENCE_NAMES[0],
-            "pos": [x_left, cy, z],
+            "pos": [x_left, panel_cy, z],
             "size": [half_thickness, (y_top - y_bottom - THICKNESS_M) / 2, half_height],
         },
         {
             "name": FENCE_NAMES[1],
-            "pos": [x_right, cy, z],
+            "pos": [x_right, panel_cy, z],
             "size": [half_thickness, (y_top - y_bottom - THICKNESS_M) / 2, half_height],
         },
         {
             "name": FENCE_NAMES[2],
-            "pos": [cx, y_bottom, z],
+            "pos": [panel_cx, y_bottom, z],
             "size": [(x_right - x_left + THICKNESS_M) / 2, half_thickness, half_height],
         },
         {
             "name": FENCE_NAMES[3],
-            "pos": [cx, y_top, z],
+            "pos": [panel_cx, y_top, z],
             "size": [(x_right - x_left + THICKNESS_M) / 2, half_thickness, half_height],
         },
     ]
@@ -112,6 +151,8 @@ def perimeter_fence_contract(
             "pinned_CAD_outer_bounds_center_plus_rulebook_core_rectangle"
             if schema == LEGACY_FENCE_SCHEMA
             else "pinned_CAD_center_plus_core_x_and_source_supported_outer_y_apron"
+            if schema in {RAMP_CLEARANCE_FENCE_SCHEMA, SOFT_CONTACT_FENCE_SCHEMA}
+            else "collision_heightfield_outer_edge_with_wall_footprint_inside_terrain"
         ),
         "thickness_m": THICKNESS_M,
         "burial_below_field_floor_m": BURIAL_M,
@@ -121,7 +162,10 @@ def perimeter_fence_contract(
             "contype": 2,
             "conaffinity": 1,
             "friction": [1.0, 0.005, 0.0001],
-            "solref": [0.04 if schema == FENCE_SCHEMA else 0.02, 1.0],
+            "solref": [
+                0.04 if schema in {SOFT_CONTACT_FENCE_SCHEMA, FENCE_SCHEMA} else 0.02,
+                1.0,
+            ],
         },
         "validation_status": "DRAFT_BLOCKED",
     }
@@ -130,6 +174,13 @@ def perimeter_fence_contract(
     else:
         contract["outward_offset_xy_m"] = [x_offset, y_offset]
         contract["visual_rgba"] = [0.08, 0.09, 0.10, 0.22]
+    if schema == FENCE_SCHEMA:
+        contract["heightfield_edge_alignment"] = {
+            "heightfield_bounds_xy_m": heightfield_bounds,
+            "wall_outer_faces_match_heightfield_edges": True,
+            "traversable_strip_outside_wall_m": [0.0, 0.0, 0.0, 0.0],
+            "wall_footprint_inside_heightfield": True,
+        }
     return contract
 
 
