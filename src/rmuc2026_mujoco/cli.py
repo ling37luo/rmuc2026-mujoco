@@ -10,7 +10,10 @@ import sys
 import threading
 import time
 
+import numpy as np
+
 from .builder import BuilderUnavailable, build_runtime_asset_pack
+from .control import NoOpController, load_controller
 from .download import (
     LAST_REVIEWED_RULEBOOK_PUBLICATION_DATE,
     LAST_REVIEWED_RULEBOOK_SHA256,
@@ -31,7 +34,7 @@ from .display import FieldDisplayController
 from .energy_unit import load_field_with_energy_unit
 from .errors import Rmuc2026Error
 from .manifest import DEFAULT_RUNTIME_PROFILE, RUNTIME_PROFILE_NAMES, FieldAsset, verify_asset
-from .mjcf import UNOFFICIAL_FRICTION_PRESETS, load_model
+from .mjcf import UNOFFICIAL_FRICTION_PRESETS, compose_with_robot, load_model
 from .pack import ExportBlocked
 from .perimeter_fence import export_fenced_pack
 from .query import (
@@ -41,6 +44,7 @@ from .query import (
     surface_at,
 )
 from .ramp_source_audit import audit_fly_ramp_source_overlap
+from .scenarios import get_scenario, list_scenarios, scenario_descriptor
 from .viewer import (
     FocusScopedKeyboardListener,
     SafePassiveViewerSession,
@@ -146,8 +150,23 @@ def build_parser() -> argparse.ArgumentParser:
     energy_unit.add_argument("x", type=float)
     energy_unit.add_argument("y", type=float)
     energy_unit.add_argument("--steps", type=int, default=1000)
+    scenarios = commands.add_parser("scenarios", help="list the public field scenario registry")
+    scenarios.add_argument("--asset", type=Path, help="bind the registry to a verified runtime pack")
+    scenarios.add_argument("--scenario", choices=(
+        "full_eval", "turn_basic", "stairs_basic", "fly_ramp_north", "fly_ramp_south", "boundary_contact"
+    ))
+    scenarios.add_argument("--profile", choices=RUNTIME_PROFILE_NAMES)
     view = commands.add_parser("view")
     view.add_argument("asset", type=Path)
+    view.add_argument("--robot", type=Path, help="user-owned robot MJCF to attach to the field")
+    view.add_argument("--control", choices=("human", "policy"), default="human")
+    view.add_argument("--controller", help="optional user controller factory, module:object")
+    view.add_argument("--scenario", choices=(
+        "full_eval", "turn_basic", "stairs_basic", "fly_ramp_north", "fly_ramp_south", "boundary_contact"
+    ), default="full_eval")
+    view.add_argument("--headless", action="store_true", help="run physics without opening a viewer")
+    view.add_argument("--steps", type=int, default=1000, help="headless physics steps")
+    view.add_argument("--telemetry", type=Path, help="write headless step telemetry as JSON")
     view.add_argument("--duration", type=float, default=0.0, help="seconds; 0 waits until close")
     view.add_argument(
         "--profile",
@@ -339,6 +358,25 @@ def main(argv: list[str] | None = None) -> int:
             output.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
             print(json.dumps({"status": report["status"], "output": str(output)}, sort_keys=True))
             return 0 if report["status"] == "PASS_STATIC" else 2
+        if args.command == "scenarios":
+            if args.asset is None:
+                if args.scenario is not None or args.profile is not None:
+                    raise ValueError("--asset is required when binding a scenario or profile")
+                print(json.dumps({"scenarios": list_scenarios()}, indent=2, sort_keys=True))
+                return 0
+            bound_asset = FieldAsset.open(args.asset, verify=True)
+            if args.scenario is None:
+                payload = {
+                    "manifest_sha256": bound_asset.manifest_sha256,
+                    "scenarios": [
+                        scenario_descriptor(bound_asset, item["scenario_id"], profile=args.profile)
+                        for item in list_scenarios()
+                    ],
+                }
+            else:
+                payload = scenario_descriptor(bound_asset, args.scenario, profile=args.profile)
+            print(json.dumps(payload, indent=2, sort_keys=True))
+            return 0
         asset = FieldAsset.open(args.asset, verify=True)
         if args.command == "info":
             report = asset.report().to_dict()
@@ -451,11 +489,89 @@ def main(argv: list[str] | None = None) -> int:
             return 0 if status == "PASS" else 2
         if args.duration < 0.0:
             raise ValueError("--duration must be non-negative")
-        model, data = load_model(
-            asset,
-            profile=args.profile,
-            friction_preset=args.friction_preset,
+        selected_scenario = get_scenario(args.scenario)
+        if args.robot is None and args.control == "policy":
+            raise ValueError("--control policy requires --robot and --controller")
+        if args.control == "policy" and args.controller is None:
+            raise ValueError("--control policy requires --controller module:object")
+        if args.robot is None:
+            model, data = load_model(
+                asset,
+                profile=args.profile,
+                friction_preset=args.friction_preset,
+            )
+        else:
+            model, data = compose_with_robot(
+                asset,
+                args.robot,
+                profile=args.profile,
+                friction_preset=args.friction_preset,
+            )
+        controller = (
+            load_controller(args.controller, model, data, mode=args.control)
+            if args.controller is not None
+            else NoOpController()
         )
+        if args.headless:
+            if args.steps < 0:
+                raise ValueError("--steps must be non-negative")
+            import mujoco
+
+            started = time.perf_counter()
+            warnings: dict[str, int] = {}
+            finite = True
+            contacts = 0
+            telemetry_rows: list[dict[str, object]] = []
+            for step in range(args.steps):
+                controller(model, data, step=step, mode=args.control)
+                mujoco.mj_step(model, data)
+                contacts = int(data.ncon)
+                finite = bool(np.isfinite(data.qpos).all() and np.isfinite(data.qvel).all())
+                warnings = {
+                    mujoco.mjtWarning(index).name: int(warning.number)
+                    for index, warning in enumerate(data.warning)
+                    if int(warning.number)
+                }
+                telemetry_rows.append(
+                    {
+                        "step": step,
+                        "time_s": float(data.time),
+                        "qpos": np.asarray(data.qpos, dtype=float).tolist(),
+                        "qvel": np.asarray(data.qvel, dtype=float).tolist(),
+                        "contacts": contacts,
+                        "warnings": warnings,
+                        "finite": finite,
+                    }
+                )
+                if not finite:
+                    break
+            elapsed = time.perf_counter() - started
+            if args.telemetry is not None:
+                telemetry_path = args.telemetry.expanduser().resolve()
+                telemetry_path.parent.mkdir(parents=True, exist_ok=True)
+                telemetry_path.write_text(
+                    json.dumps(telemetry_rows, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+                )
+            print(
+                json.dumps(
+                    {
+                        "scenario_id": selected_scenario.scenario_id,
+                        "profile": args.profile,
+                        "steps": step + 1 if args.steps else 0,
+                        "sim_time_s": float(data.time),
+                        "steps_per_second": (step + 1) / elapsed if args.steps and elapsed else None,
+                        "contacts": contacts,
+                        "warnings": warnings,
+                        "finite": finite,
+                        "telemetry": str(args.telemetry.expanduser().resolve())
+                        if args.telemetry is not None
+                        else None,
+                    },
+                    indent=2,
+                    sort_keys=True,
+                )
+            )
+            return 0 if finite and not warnings else 2
         import mujoco.viewer
 
         display = FieldDisplayController(
@@ -502,6 +618,11 @@ def main(argv: list[str] | None = None) -> int:
                 with viewer.lock():
                     if needs_refit:
                         fitted_viewport = _configure_camera(viewer, asset, args.camera)
+                    if args.robot is not None:
+                        controller(model, data, step=int(data.time / model.opt.timestep), mode=args.control)
+                        import mujoco
+
+                        mujoco.mj_step(model, data)
                     display.apply(model, viewer.opt.geomgroup)
                 viewer.sync()
                 time.sleep(1.0 / 60.0)
@@ -511,7 +632,9 @@ def main(argv: list[str] | None = None) -> int:
         DownloadError,
         BuilderUnavailable,
         ExportBlocked,
+        ImportError,
         OSError,
+        TypeError,
         ValueError,
     ) as exc:
         print(f"rmuc2026-field: {exc}", file=sys.stderr)

@@ -188,6 +188,40 @@ or world bodies in another complete scene should be removed. See
 [`examples/arena_only.py`](examples/arena_only.py) and
 [`examples/compose_robot.py`](examples/compose_robot.py).
 
+### Shared scenarios and training adapters
+
+The field repository exposes a small, robot-agnostic scenario registry. It
+keeps the complete `full_eval` baseline separate from lightweight
+`collision_only` stages such as `turn_basic`, `stairs_basic`, the two audited
+fly ramps, and `boundary_contact`. A scenario is metadata bound to a verified
+pack; it never creates or patches field geometry.
+
+```bash
+rmuc2026-field scenarios
+rmuc2026-field scenarios --asset ./local-rmuc2026-field --scenario turn_basic
+```
+
+The same composition is used for an interactive robot viewer and a headless
+run. Robot-specific control stays outside this repository and can be loaded as
+`module:factory`; the factory may return a callback that writes `data.ctrl` or
+applies forces according to the robot's actuator model:
+
+```bash
+rmuc2026-field view ./local-rmuc2026-field \
+  --robot my_robot.xml --control human --controller my_controller:make \
+  --profile full --lighting flat --livery off
+rmuc2026-field view ./local-rmuc2026-field \
+  --robot my_robot.xml --control policy --controller my_policy:make \
+  --profile collision_only --headless --steps 1000 \
+  --telemetry runs/turn_basic.json
+```
+
+For Python users, `MuJoCoScenario` provides `reset()`, `step()`, telemetry,
+and run metadata without importing PPO/SAC or another RL framework. The
+optional `load_isaac_heightfield()` adapter returns the verified heightfield,
+field bounds, scenario descriptor, and hashes for an Isaac consumer; Isaac is
+not a core dependency and the adapter does not alter source geometry.
+
 ## Runtime-pack contract
 
 A generated pack contains:

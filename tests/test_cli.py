@@ -76,6 +76,42 @@ def test_view_cli_accepts_headless_profile_and_unofficial_friction() -> None:
     assert args.friction_preset == "low"
 
 
+def test_view_cli_accepts_generic_robot_control_options() -> None:
+    args = build_parser().parse_args(
+        [
+            "view",
+            "field",
+            "--robot",
+            "robot.xml",
+            "--control",
+            "policy",
+            "--controller",
+            "controller:make",
+            "--headless",
+            "--steps",
+            "12",
+        ]
+    )
+    assert args.robot == Path("robot.xml")
+    assert args.control == "policy"
+    assert args.controller == "controller:make"
+    assert args.headless is True
+    assert args.steps == 12
+
+
+def test_scenarios_cli_lists_public_registry(capsys) -> None:
+    assert main(["scenarios"]) == 0
+    output = json.loads(capsys.readouterr().out)
+    assert [item["scenario_id"] for item in output["scenarios"]] == [
+        "full_eval",
+        "turn_basic",
+        "stairs_basic",
+        "fly_ramp_north",
+        "fly_ramp_south",
+        "boundary_contact",
+    ]
+
+
 def test_overview_camera_uses_verified_field_bounds(field_asset_dir: Path) -> None:
     class Camera:
         lookat = [99.0, 99.0, 99.0]

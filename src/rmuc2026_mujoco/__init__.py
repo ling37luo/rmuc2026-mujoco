@@ -21,6 +21,7 @@ from .download import (
     verify_official_step,
 )
 from .display import FieldDisplayController
+from .control import ControlCallback, NoOpController, load_controller
 from .energy_unit import add_energy_unit, load_field_with_energy_unit
 from .errors import (
     AssetIntegrityError,
@@ -53,6 +54,7 @@ from .mjcf import (
     inject_exact_heightfield,
     load_model,
 )
+from .isaac import IsaacHeightfieldInput, load_isaac_heightfield
 from .perimeter_fence import export_fenced_pack, perimeter_fence_contract
 from .query import (
     HEIGHTFIELD_CLAIM_BOUNDARY,
@@ -67,6 +69,8 @@ from .query import (
     surface_at,
 )
 from .ramp_source_audit import audit_fly_ramp_source_overlap
+from .scenarios import SCENARIOS, ScenarioSpec, get_scenario, list_scenarios, scenario_descriptor
+from .training import MuJoCoScenario, StepResult, TelemetryRecorder
 
 __all__ = [
     "AssetIntegrityError",
@@ -79,9 +83,12 @@ __all__ = [
     "FieldAsset",
     "FieldBoundaryGuard",
     "FieldDisplayController",
+    "ControlCallback",
+    "NoOpController",
     "HEIGHTFIELD_CLAIM_BOUNDARY",
     "HFIELD_NAME",
     "HeightFieldData",
+    "IsaacHeightfieldInput",
     "LAST_REVIEWED_RULEBOOK_PUBLICATION_DATE",
     "LAST_REVIEWED_RULEBOOK_SHA256",
     "LAST_REVIEWED_RULEBOOK_SIZE",
@@ -103,10 +110,15 @@ __all__ = [
     "RUNTIME_ARTIFACT_TYPE",
     "RUNTIME_PROFILE_NAMES",
     "Rmuc2026Error",
+    "MuJoCoScenario",
+    "SCENARIOS",
+    "ScenarioSpec",
     "SpawnCandidate",
+    "StepResult",
     "SurfaceSample",
     "ValidationReport",
     "UNOFFICIAL_FRICTION_PRESETS",
+    "TelemetryRecorder",
     "apply_friction_preset",
     "audit_fly_ramp_source_overlap",
     "add_energy_unit",
@@ -122,12 +134,17 @@ __all__ = [
     "load_heightfield",
     "load_field_with_energy_unit",
     "load_model",
+    "load_controller",
+    "load_isaac_heightfield",
+    "get_scenario",
+    "list_scenarios",
     "measure_runtime_landing_profile",
     "perimeter_fence_contract",
     "run_fixed_fly_ramp_jump_probe",
     "surface_at",
+    "scenario_descriptor",
     "verify_asset",
     "verify_official_step",
 ]
 
-__version__ = "0.3.1"
+__version__ = "1.0.0"

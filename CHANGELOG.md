@@ -4,15 +4,35 @@ All notable changes to this project will be documented in this file. The format
 is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the
 project intends to follow [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [1.0.0] - 2026-09-22
 
 ### Added
 
+- Added the public scenario registry: `full_eval`, `turn_basic`,
+  `stairs_basic`, both audited fly ramps, and `boundary_contact`.
+- Added the robot-agnostic controller callback interface and a shared viewer,
+  headless, and MuJoCo scenario runner based on `compose_with_robot`.
+- Added per-step telemetry and run metadata for contacts, solver warnings,
+  finite state, profile hashes, robot MJCF hashes, throughput, and memory.
+- Added a dependency-free Isaac heightfield input adapter and documentation for
+  optional high-parallel consumers.
+- Added the `view --robot`, `--control`, `--scenario`, `--headless`, and
+  `--telemetry` entry points, plus local controller-module loading.
 - Added a field-owned free-flight wheel probe for the two fixed fly ramps. It
-  measures the runtime heightfield gap, removes drive force after the takeoff
-  seam, and distinguishes a lip impact from reaching and remaining on the
-  landing top. The report keeps the rulebook's marked interaction dimensions
-  separate from the larger structural STEP face dimensions.
+  measures the runtime heightfield gap and separates takeoff-lip contact from
+  reaching the landing top.
+
+### Changed
+
+- The public Python package and project metadata are now version `1.0.0`.
+- Documentation now describes the complete field baseline and the lightweight
+  collision-only training profiles without adding an RL framework dependency.
+
+This is a code and interface release. Generated runtime packs remain local and
+`DRAFT_BLOCKED`; official STEP/rulebook assets and private robot or policy
+files are not distributed.
+
+## [Unreleased]
 
 ## [0.3.1] - 2026-09-21
 
