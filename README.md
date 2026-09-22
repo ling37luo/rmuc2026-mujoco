@@ -183,8 +183,10 @@ model, data = compose_with_robot(
 )
 ```
 
-Supply a **robot-only** MJCF. The package does not guess which floors, lights,
-or world bodies in another complete scene should be removed. See
+Supply a **robot-only** MJCF. If an exported viewer XML carries the package's
+recognizable root-level RMUC field copy, the loader removes that old copy
+before attaching the verified pack; ordinary robot floors, lights and world
+bodies are preserved. See
 [`examples/arena_only.py`](examples/arena_only.py) and
 [`examples/compose_robot.py`](examples/compose_robot.py).
 
@@ -221,6 +223,38 @@ and run metadata without importing PPO/SAC or another RL framework. The
 optional `load_isaac_heightfield()` adapter returns the verified heightfield,
 field bounds, scenario descriptor, and hashes for an Isaac consumer; Isaac is
 not a core dependency and the adapter does not alter source geometry.
+
+#### Turning benchmark and parallel runs
+
+`turn_basic` is the first executable benchmark. It screens up to eight starts
+from the verified collision heightfield (0.35 m footprint, 0.50 m boundary
+margin, 3 degree slope and 0.02 m relief limits), then reuses those starts
+across independent environments. The command grid is intentionally small:
+`spin` tests zero-speed yaw, `arc` tests low-speed curves, and `reversal`
+tests both continuous left/right changes. The first 100 Hz policy cycle (five
+2 ms physics steps) is a zero-action warmup; controllers then update at 100 Hz
+while MuJoCo steps at 500 Hz.
+
+The runner owns loading, reset, stepping and diagnostics. A controller owns
+robot-specific observations and actuator mapping through
+`reset(model, data, spawn, seed)`, `step(model, data, command, step_index)`
+and optional `observe(model, data)`. See
+[`examples/turn_controller_template.py`](examples/turn_controller_template.py).
+
+```bash
+rmuc2026-field run ./local-rmuc2026-field \
+  --robot my_robot.xml --controller my_controller:make \
+  --scenario turn_basic --phase spin --backend mujoco \
+  --workers 4 --envs-per-worker 8 --duration 8 --seed 20260922 \
+  --telemetry runs/turn_basic_spin.json
+```
+
+Each worker owns one `MjModel` and creates independent `MjData` objects. The
+result records worker and aggregate steps/s, scene/profile/robot hashes,
+contact and warning counts, non-finite values, failure reasons and per-episode
+turning diagnostics. Use `--backend isaac` to emit the same verified scene
+descriptor for an external Isaac consumer; the core package does not import
+Isaac or a training framework.
 
 ## Runtime-pack contract
 

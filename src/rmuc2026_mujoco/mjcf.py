@@ -60,9 +60,10 @@ def compose_with_robot(
 ) -> tuple[Any, Any]:
     """Attach the field to a robot MJCF using MjSpec and return a compiled pair.
 
-    The caller must provide a robot MJCF rather than a complete scene. This
-    function does not silently delete the robot XML's floors, lights, or other
-    world elements.
+    The caller normally provides a robot-only MJCF. If an exported viewer XML
+    contains the recognizable root-level RMUC field copy, that old field copy
+    is removed before attachment so the verified pack remains the only field
+    source; ordinary robot floors, lights and world elements are preserved.
     """
 
     mujoco = _mujoco()
@@ -70,6 +71,7 @@ def compose_with_robot(
     if robot_path.is_symlink() or not robot_path.is_file():
         raise MujocoModelError(f"robot_xml is missing or is a symlink: {robot_path}")
     robot_spec = _load_spec(mujoco, robot_path, label="robot XML")
+    _strip_embedded_field_scene(robot_spec)
     field_spec = _load_spec(
         mujoco,
         asset.entrypoint_for(profile),
@@ -224,3 +226,36 @@ def _compile_spec(spec: Any, *, label: str) -> Any:
         return spec.compile()
     except (RuntimeError, ValueError) as exc:
         raise MujocoModelError(f"MuJoCo could not compile {label}: {exc}") from exc
+
+
+def _strip_embedded_field_scene(robot_spec: Any) -> None:
+    """Remove an old root-level RMUC field from a complete robot scene.
+
+    Some externally supplied robot XML files are exported from a viewer and
+    contain both the robot and an older RMUC field copy.  Keeping that copy
+    would create duplicate collision, livery and light objects when the
+    verified field is attached.  Only run this narrow cleanup when a known
+    RMUC field marker is present; ordinary robot XML files, including their
+    own floors and lights, are left untouched.
+    """
+
+    worldbody = robot_spec.worldbody
+    root_geoms = list(worldbody.geoms)
+    marker_names = {
+        str(geom.name)
+        for geom in root_geoms
+        if getattr(geom, "name", None) is not None
+    }
+    embedded_field = (
+        "rmuc2026_field_collision" in marker_names
+        or "rmuc2026_surface_guide" in marker_names
+        or any(name.startswith("rmuc2026_visual_") for name in marker_names)
+    )
+    if not embedded_field:
+        return
+    for geom in root_geoms:
+        robot_spec.delete(geom)
+    for light in list(worldbody.lights):
+        robot_spec.delete(light)
+    for camera in list(worldbody.cameras):
+        robot_spec.delete(camera)

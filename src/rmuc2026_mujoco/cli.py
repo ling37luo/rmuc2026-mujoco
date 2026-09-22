@@ -45,6 +45,7 @@ from .query import (
 )
 from .ramp_source_audit import audit_fly_ramp_source_overlap
 from .scenarios import get_scenario, list_scenarios, scenario_descriptor
+from .turning import reset_turn_spawn, run_turn_batch, screen_turn_spawns
 from .viewer import (
     FocusScopedKeyboardListener,
     SafePassiveViewerSession,
@@ -156,6 +157,22 @@ def build_parser() -> argparse.ArgumentParser:
         "full_eval", "turn_basic", "stairs_basic", "fly_ramp_north", "fly_ramp_south", "boundary_contact"
     ))
     scenarios.add_argument("--profile", choices=RUNTIME_PROFILE_NAMES)
+    run = commands.add_parser(
+        "run",
+        help="run a robot-agnostic turning benchmark with optional multiprocessing",
+    )
+    run.add_argument("asset", type=Path)
+    run.add_argument("--robot", type=Path, required=True)
+    run.add_argument("--controller", help="user controller factory, module:object")
+    run.add_argument("--scenario", choices=("turn_basic",), default="turn_basic")
+    run.add_argument("--phase", choices=("spin", "arc", "reversal"), default="spin")
+    run.add_argument("--backend", choices=("mujoco", "isaac"), default="mujoco")
+    run.add_argument("--workers", type=int, default=1)
+    run.add_argument("--envs-per-worker", type=int, default=1)
+    run.add_argument("--duration", type=float, default=8.0)
+    run.add_argument("--seed", type=int, default=20260922)
+    run.add_argument("--profile", choices=RUNTIME_PROFILE_NAMES, default="collision_only")
+    run.add_argument("--telemetry", type=Path, help="write the aggregate run manifest as JSON")
     view = commands.add_parser("view")
     view.add_argument("asset", type=Path)
     view.add_argument("--robot", type=Path, help="user-owned robot MJCF to attach to the field")
@@ -377,6 +394,47 @@ def main(argv: list[str] | None = None) -> int:
                 payload = scenario_descriptor(bound_asset, args.scenario, profile=args.profile)
             print(json.dumps(payload, indent=2, sort_keys=True))
             return 0
+        if args.command == "run":
+            if args.scenario != "turn_basic":
+                raise ValueError("the first runner only supports scenario=turn_basic")
+            if args.backend == "isaac":
+                from .isaac import load_isaac_heightfield
+
+                if args.profile != "collision_only":
+                    raise ValueError("Isaac turn_basic descriptor requires profile=collision_only")
+                descriptor = load_isaac_heightfield(
+                    args.asset, scenario=args.scenario, profile=args.profile
+                )
+                payload = descriptor.to_dict()
+                payload.update(
+                    {
+                        "backend": "isaac",
+                        "status": "DESCRIPTOR_READY",
+                        "robot_mjcf": str(args.robot.expanduser().resolve()),
+                        "note": "Isaac consumer builds its own parallel backend from this descriptor",
+                    }
+                )
+            else:
+                payload = run_turn_batch(
+                    args.asset,
+                    robot_mjcf=args.robot,
+                    controller=args.controller,
+                    phase=args.phase,
+                    workers=args.workers,
+                    envs_per_worker=args.envs_per_worker,
+                    duration_s=args.duration,
+                    seed=args.seed,
+                    profile=args.profile,
+                )
+            if args.telemetry is not None:
+                telemetry_path = args.telemetry.expanduser().resolve()
+                telemetry_path.parent.mkdir(parents=True, exist_ok=True)
+                telemetry_path.write_text(
+                    json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+                )
+                payload["telemetry"] = str(telemetry_path)
+            print(json.dumps(payload, indent=2, sort_keys=True))
+            return 0 if payload.get("status") in {"PASS", "DESCRIPTOR_READY"} else 2
         asset = FieldAsset.open(args.asset, verify=True)
         if args.command == "info":
             report = asset.report().to_dict()
@@ -507,6 +565,10 @@ def main(argv: list[str] | None = None) -> int:
                 profile=args.profile,
                 friction_preset=args.friction_preset,
             )
+        if args.robot is not None and args.scenario == "turn_basic":
+            turn_spawns = screen_turn_spawns(asset, count=1)
+            if turn_spawns:
+                reset_turn_spawn(model, data, turn_spawns[0])
         controller = (
             load_controller(args.controller, model, data, mode=args.control)
             if args.controller is not None

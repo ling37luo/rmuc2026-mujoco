@@ -71,6 +71,22 @@ from .query import (
 from .ramp_source_audit import audit_fly_ramp_source_overlap
 from .scenarios import SCENARIOS, ScenarioSpec, get_scenario, list_scenarios, scenario_descriptor
 from .training import MuJoCoScenario, StepResult, TelemetryRecorder
+from .turning import (
+    NoOpTurnController,
+    TurnCommand,
+    TurnController,
+    TurnEpisodeResult,
+    TurnPhase,
+    TurnSpawn,
+    load_turn_controller,
+    reset_turn_spawn,
+    run_turn_batch,
+    run_turn_episode,
+    screen_turn_spawns,
+    turn_phase,
+    turn_phase_registry,
+    turn_spawn_manifest,
+)
 
 __all__ = [
     "AssetIntegrityError",
@@ -135,14 +151,28 @@ __all__ = [
     "load_field_with_energy_unit",
     "load_model",
     "load_controller",
+    "load_turn_controller",
     "load_isaac_heightfield",
     "get_scenario",
     "list_scenarios",
     "measure_runtime_landing_profile",
     "perimeter_fence_contract",
     "run_fixed_fly_ramp_jump_probe",
+    "run_turn_batch",
+    "run_turn_episode",
+    "reset_turn_spawn",
+    "screen_turn_spawns",
     "surface_at",
     "scenario_descriptor",
+    "NoOpTurnController",
+    "TurnCommand",
+    "TurnController",
+    "TurnEpisodeResult",
+    "TurnPhase",
+    "TurnSpawn",
+    "turn_phase",
+    "turn_phase_registry",
+    "turn_spawn_manifest",
     "verify_asset",
     "verify_official_step",
 ]

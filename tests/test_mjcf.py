@@ -125,6 +125,29 @@ def test_compose_with_robot_uses_mjspec_and_preserves_robot(field_asset_dir: Pat
     assert np.max(np.abs(actual - _expected_heightfield())) <= 2.0e-7
 
 
+def test_compose_strips_recognizable_embedded_field_copy(field_asset_dir: Path) -> None:
+    robot = field_asset_dir.parent / "complete_viewer_scene.xml"
+    robot.write_text(
+        """<mujoco model="complete_scene"><worldbody>
+<geom name="rmuc2026_field_collision" type="box" size="1 1 .01"/>
+<light name="rmuc2026_key_light"/>
+<body name="robot" pos="0 0 1"><freejoint/>
+<geom name="robot_geom" type="sphere" size=".1"/>
+</body></worldbody></mujoco>""",
+        encoding="utf-8",
+    )
+    model, _data = compose_with_robot(FieldAsset.open(field_asset_dir), robot, profile="full")
+    assert mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "robot") >= 0
+    assert mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, "rmuc2026_field_collision") == -1
+    assert mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_LIGHT, "rmuc2026_key_light") == -1
+    assert (
+        mujoco.mj_name2id(
+            model, mujoco.mjtObj.mjOBJ_GEOM, "rmuc2026_field/rmuc2026_field_collision"
+        )
+        >= 0
+    )
+
+
 def test_compose_collision_only_profile_and_unofficial_friction(field_asset_dir: Path) -> None:
     robot = field_asset_dir.parent / "robot-collision-only.xml"
     robot.write_text(
