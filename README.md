@@ -487,8 +487,9 @@ terrain = load_isaac_training_region_export(
 # terrain.heightfield_contact records MuJoCo contact values for consumers.
 ```
 
-This is a data handoff and hash/scale check, not an Isaac Sim/PhysX contact
-validation or a completed robot training adapter.
+The export itself is a data handoff and hash/scale check. The separate
+Isaac Sim 6.1 PhysX probe passed terrain and fence contact checks on both
+fly-ramp crops at 1, 4 and 16 environments; it is not a robot training adapter.
 The bounded fly-pack contact and parallel integration results are summarized in
 [`FLY_TRAINING_PACK_STATUS_20260923.md`](FLY_TRAINING_PACK_STATUS_20260923.md).
 
@@ -508,10 +509,10 @@ footprint leaves the local heightfield.
 In local 120 mm sphere contact probes, Isaac Lab's kit-less Newton XPBD backend
 supported the 1 cm grid on both ramps; MJWarp's heightfield contact path
 overflowed its contact-pair budget and did not support the sphere correctly.
-This validates terrain probes only, not robot flight or PhysX. Articulated
-robot training requires a separate
-source-faithful flat hold and ramp-contact check; Isaac Sim/PhysX collision
-and scale have not yet been measured for this region.
+This Newton result validates terrain probes only, not robot flight. The
+separate PhysX run measured terrain scale and neutral sphere/fence contact
+for both regions at 1, 4 and 16 environments. Articulated robot training
+still requires robot-specific control and landing checks.
 The local rectangle is for training throughput; evaluate learned robot
 policies on the complete `collision_only` or `full` field because long robot
 trajectories can diverge after many contacts even when grid vertices and local
