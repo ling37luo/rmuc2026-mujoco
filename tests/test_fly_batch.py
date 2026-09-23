@@ -120,7 +120,7 @@ def test_cli_dispatches_fly_matrix_and_saves_full_report(monkeypatch, tmp_path, 
     assert json.loads(open(shown["telemetry"]).read())["episodes"] == [{"outcome": "FAIL"}]
     assert calls[0]["scenarios"] == ("fly_ramp_north", "fly_ramp_south")
     assert calls[0]["speeds"] == (1.5, 1.8, 2.0, 2.2, 2.5)
-    assert calls[0]["approach_distances"] == [0.6]
+    assert calls[0]["approach_distances"] is None
     args = build_parser().parse_args(["run", "pack", "--scenario", "fly_ramp_north"])
     assert args.lateral_offsets == [0.0]
 

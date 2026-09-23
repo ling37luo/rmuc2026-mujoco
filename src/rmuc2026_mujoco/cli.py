@@ -227,8 +227,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--approach-distances",
         nargs="+",
         type=float,
-        default=[APPROACH_BEFORE_LOW_EDGE_M],
-        help="fly-ramp distance before the low seam in m; spawn footprint must be clear",
+        help="fly-ramp distance before the low seam in m; defaults to the region route or full-field standard",
+    )
+    run.add_argument(
+        "--footprint-radius",
+        type=float,
+        default=0.0,
+        help="robot footprint radius for local fly-ramp region bounds in m",
     )
     run.add_argument("--repeats", type=int, default=1, help="episodes per selected case")
     run.add_argument(
@@ -613,6 +618,7 @@ def main(argv: list[str] | None = None) -> int:
                     profile=args.profile,
                     trajectory_dir=args.trajectory_dir,
                     progress=True,
+                    footprint_radius_m=args.footprint_radius,
                 )
                 if args.telemetry is None:
                     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S.%fZ")

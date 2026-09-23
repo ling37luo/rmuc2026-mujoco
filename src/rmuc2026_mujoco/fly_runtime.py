@@ -19,6 +19,7 @@ from .mjcf import FIELD_ATTACH_PREFIX, compose_with_robot
 from .query import load_heightfield
 from .scenarios import scenario_descriptor
 from .slope_runtime import _root_joint, reset_slope_spawn
+from .training_region import TrainingRegion, compose_training_region_with_robot
 
 
 FLY_SCENARIOS = ("fly_ramp_north", "fly_ramp_south")
@@ -33,37 +34,70 @@ class FlyRampSession:
         *,
         robot=None,
         controller=None,
-        scenario_id="fly_ramp_north",
+        scenario_id=None,
         speed_mps=2.2,
-        approach_distance_m=APPROACH_BEFORE_LOW_EDGE_M,
+        approach_distance_m=None,
         profile="collision_only",
         mode="policy",
         friction_preset=None,
         record_trajectory=False,
+        footprint_radius_m=0.0,
     ):
-        if scenario_id not in FLY_SCENARIOS:
-            raise ValueError(f"fly-ramp scenario must be one of {FLY_SCENARIOS}")
         if not math.isfinite(speed_mps) or speed_mps <= 0:
             raise ValueError("fly-ramp speed must be positive and finite")
+        if not math.isfinite(footprint_radius_m) or footprint_radius_m < 0:
+            raise ValueError("footprint radius must be finite and nonnegative")
         if (robot is None) != (controller is None):
             raise ValueError(
                 "provide both --robot and --controller, or neither for the example rover"
             )
-        self.asset = asset if isinstance(asset, FieldAsset) else FieldAsset.open(asset, verify=True)
-        self.bounds = load_heightfield(self.asset).bounds_xy_m
+        self.asset = (
+            asset
+            if isinstance(asset, (FieldAsset, TrainingRegion))
+            else FieldAsset.open(asset, verify=True)
+        )
+        self.region = self.asset if isinstance(self.asset, TrainingRegion) else None
+        if self.region is not None:
+            if profile not in ("collision_only", "fly_ramp_training_region"):
+                raise ValueError("training regions only support the collision training profile")
+            if friction_preset is not None:
+                raise ValueError("training regions preserve their source friction")
+            scenario_id = scenario_id or self.region.manifest["scenario_id"]
+            approach_distance_m = (
+                approach_distance_m
+                if approach_distance_m is not None
+                else self.region.manifest["route"]["approach_distance_m"]
+            )
+            self.bounds = self.region.manifest["grid"]["bounds_xy_m"]
+            self.source_manifest_sha256 = self.region.manifest["source"]["source_manifest_sha256"]
+            self.samples_sha256 = self.region.manifest["source"]["heightfield_samples_sha256"]
+            profile = "fly_ramp_training_region"
+        else:
+            scenario_id = scenario_id or "fly_ramp_north"
+            approach_distance_m = (
+                APPROACH_BEFORE_LOW_EDGE_M if approach_distance_m is None else approach_distance_m
+            )
+            self.bounds = load_heightfield(self.asset).bounds_xy_m
+            self.source_manifest_sha256 = self.asset.manifest_sha256
+            self.samples_sha256 = self.asset.collision["samples_sha256"]
+        if scenario_id not in FLY_SCENARIOS:
+            raise ValueError(f"fly-ramp scenario must be one of {FLY_SCENARIOS}")
         self.routes = {}
         self._approach_routes = {}
         self.scenario_id = scenario_id
         self.approach_distance_m = float(approach_distance_m)
         self.route = self._route_for(scenario_id, self.approach_distance_m)
         self.profile = profile
-        self.profile_hash = scenario_descriptor(self.asset, scenario_id, profile=profile)[
-            "profile_hash"
-        ]
+        self.profile_hash = (
+            self.region.manifest["profile_hash"]
+            if self.region is not None
+            else scenario_descriptor(self.asset, scenario_id, profile=profile)["profile_hash"]
+        )
         self.speed_mps = speed_mps
         self.mode = mode
         self.friction_preset = friction_preset
         self.record_trajectory = record_trajectory
+        self.footprint_radius_m = float(footprint_radius_m)
         self.robot_kind = "external_robot" if robot is not None else "example_four_wheel_rover"
         if robot is None:
             from .fly_demo import FlyRoverController, fly_rover_xml
@@ -72,17 +106,23 @@ class FlyRampSession:
             with tempfile.TemporaryDirectory(prefix="rmuc-fly-rover-") as directory:
                 path = Path(directory) / "rover.xml"
                 path.write_text(xml, encoding="utf-8")
-                self.model, self.data = compose_with_robot(
-                    self.asset, path, profile=profile, friction_preset=friction_preset
-                )
+                if self.region is not None:
+                    self.model, self.data = compose_training_region_with_robot(self.region, path)
+                else:
+                    self.model, self.data = compose_with_robot(
+                        self.asset, path, profile=profile, friction_preset=friction_preset
+                    )
             self.robot_hash = hashlib.sha256(xml.encode()).hexdigest()
             self.controller = FlyRoverController(self.route, speed_mps)
         else:
             robot_path = Path(robot).expanduser().resolve()
             self.robot_hash = hashlib.sha256(robot_path.read_bytes()).hexdigest()
-            self.model, self.data = compose_with_robot(
-                self.asset, robot_path, profile=profile, friction_preset=friction_preset
-            )
+            if self.region is not None:
+                self.model, self.data = compose_training_region_with_robot(self.region, robot_path)
+            else:
+                self.model, self.data = compose_with_robot(
+                    self.asset, robot_path, profile=profile, friction_preset=friction_preset
+                )
             self.controller = load_controller(controller, self.model, self.data, mode=mode)
         joint = _root_joint(self.model)
         self.qadr = int(self.model.jnt_qposadr[joint])
@@ -98,6 +138,13 @@ class FlyRampSession:
         self.reset()
 
     def _route_for(self, scenario_id, approach_distance_m):
+        if self.region is not None:
+            route = self.region.manifest["route"]
+            if scenario_id != self.region.manifest["scenario_id"] or not math.isclose(
+                approach_distance_m, route["approach_distance_m"], abs_tol=1e-9
+            ):
+                raise ValueError("training region has one fixed scenario and approach distance")
+            return route
         if approach_distance_m == APPROACH_BEFORE_LOW_EDGE_M:
             if scenario_id not in self.routes:
                 self.routes[scenario_id] = fly_route_descriptor(self.asset, scenario_id)
@@ -123,9 +170,13 @@ class FlyRampSession:
             if scenario_id not in FLY_SCENARIOS:
                 raise ValueError(f"fly-ramp scenario must be one of {FLY_SCENARIOS}")
             self.scenario_id = scenario_id
-            self.profile_hash = scenario_descriptor(self.asset, scenario_id, profile=self.profile)[
-                "profile_hash"
-            ]
+            self.profile_hash = (
+                self.region.manifest["profile_hash"]
+                if self.region is not None
+                else scenario_descriptor(self.asset, scenario_id, profile=self.profile)[
+                    "profile_hash"
+                ]
+            )
         if approach_distance_m is not None:
             self.approach_distance_m = float(approach_distance_m)
         self.route = self._route_for(self.scenario_id, self.approach_distance_m)
@@ -233,7 +284,13 @@ class FlyRampSession:
             reason = "numerical_instability"
         elif tilt >= 60.0 and self.progress.phase != "flight":
             reason = "robot_tipped"
-        elif np.any(position[:2] < self.bounds[0]) or np.any(position[:2] > self.bounds[1]):
+        elif self.region is not None and not self.region.contains_footprint(
+            float(position[0]), float(position[1]), self.footprint_radius_m
+        ):
+            reason = "outside_training_region"
+        elif self.region is None and (
+            np.any(position[:2] < self.bounds[0]) or np.any(position[:2] > self.bounds[1])
+        ):
             reason = "outside_field"
         elif abs(lateral) > self.route["surface_width_m"] / 2 + 0.10:
             reason = "outside_ramp_corridor"
@@ -296,10 +353,10 @@ class FlyRampSession:
         return {
             "scenario_id": self.scenario_id,
             "route": self.route,
-            "source_manifest_sha256": self.asset.manifest_sha256,
+            "source_manifest_sha256": self.source_manifest_sha256,
             "profile": self.profile,
             "profile_hash": self.profile_hash,
-            "heightfield_samples_sha256": self.asset.collision["samples_sha256"],
+            "heightfield_samples_sha256": self.samples_sha256,
             "robot_kind": self.robot_kind,
             "robot_mjcf_sha256": self.robot_hash,
             "controller_identity": getattr(self.controller, "identity", None),
@@ -307,6 +364,7 @@ class FlyRampSession:
             "friction_preset": self.friction_preset,
             "commanded_speed_mps": self.speed_mps,
             "approach_distance_m": self.approach_distance_m,
+            "footprint_radius_m": self.footprint_radius_m,
             "seed": self.seed,
             "lateral_offset_m": self.lateral_offset_m,
             "heading_offset_deg": self.heading_offset_deg,

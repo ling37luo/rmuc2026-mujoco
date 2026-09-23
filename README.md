@@ -449,8 +449,22 @@ External MuJoCo code can use `TrainingRegion.open(path)`,
 `compose_training_region_with_robot(region, robot_xml)` and
 `load_isaac_training_region(region)`. The latter only supplies the grid,
 spawn and identity metadata; the consumer chooses the physics backend. The
-region keeps the source pack's `DRAFT_BLOCKED` validation scope. In local
-120 mm sphere contact probes, Isaac Lab's kit-less Newton XPBD backend
+region keeps the source pack's `DRAFT_BLOCKED` validation scope.
+
+The same `run_fly_batch(region, ...)` session and controller contract used for
+the full field can evaluate a local region in parallel. From the CLI, select
+the region's recorded scenario; the approach distance comes from its manifest:
+
+```bash
+rmuc2026-field run ./local-fly-north --scenario fly_ramp_north \
+  --speeds 2.0 --workers 4 \
+  --footprint-radius 0.35
+```
+
+The footprint radius comes from the user's robot; an episode ends if its
+footprint leaves the local heightfield.
+
+In local 120 mm sphere contact probes, Isaac Lab's kit-less Newton XPBD backend
 supported the 1 cm grid on both ramps; MJWarp's heightfield contact path
 overflowed its contact-pair budget and did not support the sphere correctly.
 This is not a robot-flight or PhysX validation, so use XPBD for the currently

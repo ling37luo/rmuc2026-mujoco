@@ -9,6 +9,7 @@ import numpy as np
 import pytest
 
 from rmuc2026_mujoco.errors import AssetIntegrityError, ManifestError
+from rmuc2026_mujoco.fly_batch import run_fly_batch
 from rmuc2026_mujoco.isaac import load_isaac_training_region
 from rmuc2026_mujoco.manifest import sha256_file
 from rmuc2026_mujoco.query import HeightFieldData
@@ -53,7 +54,13 @@ def _fake_source(tmp_path: Path, monkeypatch) -> tuple[SimpleNamespace, HeightFi
     route = {
         "route_id": "test_route",
         "uphill_unit_xy": [1.0, 0.0],
+        "heading_yaw_rad": 0.0,
+        "surface_width_m": 0.8,
+        "approach_distance_m": 0.9,
         "approach_xyz_m": [-0.5, 0.0, 0.08],
+        "low_seam_xyz_m": [-0.3, 0.0, 0.08],
+        "takeoff_xyz_m": [0.0, 0.0, 0.1],
+        "landing_edge_xyz_m": [0.2, 0.0, 0.12],
         "landing_target_xyz_m": [0.5, 0.0, 0.12],
         "spawn": {"xyz_m": [-0.5, 0.0, 0.08], "heading_yaw_rad": 0.0},
     }
@@ -206,3 +213,32 @@ def test_training_region_rejects_npz_axes_shifted_from_mjcf(tmp_path, monkeypatc
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
     with pytest.raises(ManifestError, match="NPZ XY axes disagree"):
         TrainingRegion.open(output)
+
+
+def test_training_region_runs_parallel_fly_episodes_with_fixed_route(tmp_path, monkeypatch):
+    asset, _ = _fake_source(tmp_path, monkeypatch)
+    output = tmp_path / "region"
+    manifest = export_training_region(asset, output, scenario_id="fly_ramp_north")
+    region = TrainingRegion.open(output)
+    result = run_fly_batch(
+        region,
+        speeds=[0.3],
+        repeats=2,
+        workers=2,
+        duration_s=0.02,
+        footprint_radius_m=0.1,
+    )
+    assert result["status"] == "PASS"
+    assert result["profile"] == "fly_ramp_training_region"
+    assert result["source_manifest_sha256"] == asset.manifest_sha256
+    assert result["training_region_manifest_sha256"] == region.manifest_sha256
+    assert result["profile_hashes"] == {"fly_ramp_north": manifest["profile_hash"]}
+    assert result["approach_distances_m"] == [0.9]
+    assert result["footprint_radius_m"] == 0.1
+    assert result["workers"] == 2 and result["summary"]["episodes"] == 2
+    assert all(episode["physics_status"] == "PASS" for episode in result["episodes"])
+    assert all(episode["footprint_radius_m"] == 0.1 for episode in result["episodes"])
+    with pytest.raises(ValueError, match="one fixed scenario"):
+        run_fly_batch(region, scenarios=["fly_ramp_south"], speeds=[0.3])
+    with pytest.raises(ValueError, match="one fixed scenario"):
+        run_fly_batch(region, approach_distances=[0.6], speeds=[0.3])

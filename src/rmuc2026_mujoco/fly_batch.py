@@ -16,9 +16,23 @@ from .fly_runtime import FLY_SCENARIOS, FlyRampSession
 from .manifest import FieldAsset
 from .scenarios import scenario_descriptor
 from .training import _cpu_rss_bytes
+from .training_region import REGION_ARTIFACT_TYPE, TrainingRegion
 
 
 DEFAULT_SPEEDS_MPS = (1.5, 1.8, 2.0, 2.2, 2.5)
+
+
+def _open_fly_asset(asset):
+    if isinstance(asset, (FieldAsset, TrainingRegion)):
+        return asset
+    root = Path(asset).expanduser().resolve()
+    try:
+        manifest = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return FieldAsset.open(root, verify=True)
+    if isinstance(manifest, dict) and manifest.get("artifact_type") == REGION_ARTIFACT_TYPE:
+        return TrainingRegion.open(root, verify=True)
+    return FieldAsset.open(root, verify=True)
 
 
 def fly_cases(
@@ -126,7 +140,11 @@ def _fly_worker(payload):
     import mujoco
 
     started = time.perf_counter()
-    field = FieldAsset.open(payload["asset_root"], verify=True)
+    field = (
+        TrainingRegion.open(payload["asset_root"], verify=True)
+        if payload["asset_kind"] == "training_region"
+        else FieldAsset.open(payload["asset_root"], verify=True)
+    )
     session = FlyRampSession(
         field,
         robot=payload["robot"],
@@ -136,6 +154,7 @@ def _fly_worker(payload):
         approach_distance_m=payload["cases"][0]["approach_distance_m"],
         profile=payload["profile"],
         record_trajectory=payload["trajectory_dir"] is not None,
+        footprint_radius_m=payload["footprint_radius_m"],
     )
     solver = {
         "timestep_s": float(session.model.opt.timestep),
@@ -192,9 +211,9 @@ def run_fly_batch(
     *,
     robot=None,
     controller=None,
-    scenarios=FLY_SCENARIOS,
+    scenarios=None,
     speeds=DEFAULT_SPEEDS_MPS,
-    approach_distances=(APPROACH_BEFORE_LOW_EDGE_M,),
+    approach_distances=None,
     lateral_offsets=(0.0,),
     heading_offsets_deg=(0.0,),
     repeats=1,
@@ -204,13 +223,14 @@ def run_fly_batch(
     profile="collision_only",
     trajectory_dir=None,
     progress=False,
+    footprint_radius_m=0.0,
 ):
-    """Evaluate both ramps with one reusable model per spawned process."""
+    """Evaluate a full field or one local ramp with reusable worker models."""
 
     if workers < 1:
         raise ValueError("workers must be positive")
-    if profile != "collision_only":
-        raise ValueError("automatic fly-ramp batches use profile=collision_only")
+    if not math.isfinite(footprint_radius_m) or footprint_radius_m < 0:
+        raise ValueError("footprint radius must be finite and nonnegative")
     if (robot is None) != (controller is None):
         raise ValueError("provide both --robot and --controller, or neither for the example rover")
     if robot is None:
@@ -221,7 +241,33 @@ def run_fly_batch(
                 f"example fly rover supports up to {MAX_FORWARD_SPEED_M_S} m/s; "
                 "provide --robot and --controller for a different range"
             )
-    field = asset if isinstance(asset, FieldAsset) else FieldAsset.open(asset, verify=True)
+    field = _open_fly_asset(asset)
+    is_region = isinstance(field, TrainingRegion)
+    if is_region:
+        region_scenario = field.manifest["scenario_id"]
+        region_distance = float(field.manifest["route"]["approach_distance_m"])
+        scenarios = (region_scenario,) if scenarios is None else tuple(scenarios)
+        approach_distances = (
+            (region_distance,) if approach_distances is None else tuple(approach_distances)
+        )
+        if (
+            scenarios != (region_scenario,)
+            or len(approach_distances) != 1
+            or not math.isclose(approach_distances[0], region_distance, abs_tol=1e-9)
+        ):
+            raise ValueError("training region has one fixed scenario and approach distance")
+        if profile not in ("collision_only", "fly_ramp_training_region"):
+            raise ValueError("training region only supports its collision training profile")
+        profile = "fly_ramp_training_region"
+    else:
+        scenarios = FLY_SCENARIOS if scenarios is None else tuple(scenarios)
+        approach_distances = (
+            (APPROACH_BEFORE_LOW_EDGE_M,)
+            if approach_distances is None
+            else tuple(approach_distances)
+        )
+        if profile != "collision_only":
+            raise ValueError("automatic fly-ramp batches use profile=collision_only")
     cases = fly_cases(
         scenarios=scenarios,
         speeds=speeds,
@@ -242,11 +288,13 @@ def run_fly_batch(
             raise ValueError("trajectory directory already contains fly episodes; choose a new one")
     common = {
         "asset_root": str(field.root),
+        "asset_kind": "training_region" if is_region else "field",
         "robot": None if robot is None else str(Path(robot).expanduser().resolve()),
         "controller": controller,
         "profile": profile,
         "progress": progress,
         "trajectory_dir": None if trajectory_path is None else str(trajectory_path),
+        "footprint_radius_m": footprint_radius_m,
     }
     payloads = [
         {**common, "worker_index": i, "cases": cases[i::workers_used]} for i in range(workers_used)
@@ -278,15 +326,29 @@ def run_fly_batch(
         "backend": "mujoco",
         "scenario_ids": list(dict.fromkeys(scenarios)),
         "approach_distances_m": list(dict.fromkeys(float(value) for value in approach_distances)),
+        "footprint_radius_m": float(footprint_radius_m),
         "status": "PASS" if physics_healthy else "FAIL",
         "task_status": "PASS" if outcomes["PASS"] == len(episodes) else "INCOMPLETE",
         "profile": profile,
-        "source_manifest_sha256": field.manifest_sha256,
+        "source_manifest_sha256": (
+            field.manifest["source"]["source_manifest_sha256"]
+            if is_region
+            else field.manifest_sha256
+        ),
+        "training_region_manifest_sha256": field.manifest_sha256 if is_region else None,
         "profile_hashes": {
-            scenario: scenario_descriptor(field, scenario, profile=profile)["profile_hash"]
+            scenario: (
+                field.manifest["profile_hash"]
+                if is_region
+                else scenario_descriptor(field, scenario, profile=profile)["profile_hash"]
+            )
             for scenario in dict.fromkeys(scenarios)
         },
-        "heightfield_samples_sha256": field.collision["samples_sha256"],
+        "heightfield_samples_sha256": (
+            field.manifest["source"]["heightfield_samples_sha256"]
+            if is_region
+            else field.collision["samples_sha256"]
+        ),
         "robot_mjcf_sha256": results[0]["robot_mjcf_sha256"],
         "controller": controller or "builtin_example_fly_rover",
         "solver_config": results[0]["solver_config"],
