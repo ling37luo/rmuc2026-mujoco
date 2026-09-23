@@ -13,3 +13,10 @@ MuJoCo run without silently changing the field.
 The consumer may convert those arrays to an Isaac heightfield or simplified
 collision actors. It must keep the descriptor with training output and must
 not add RL-Lab-specific geometry patches at runtime.
+
+For `fly_ramp_north` and `fly_ramp_south`, the descriptor also contains the
+pack-measured approach, takeoff, gap and landing route plus a terrain-surface
+spawn. The consumer places its own robot at a collision-supported root height;
+the supplied spawn height is the field surface, not a robot pose. The optional
+Isaac backend remains a descriptor export, not an Isaac simulation or training
+result.

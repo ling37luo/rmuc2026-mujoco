@@ -393,6 +393,51 @@ utilities; the consumer supplies rewards, optimization and training algorithms.
 For watching an automatic run, use `view --scenario slope_basic --control policy
 --direction roundtrip`. Isaac execution remains the external consumer's task.
 
+#### Fly-ramp benchmark
+
+The two audited fly ramps use the same runtime pack as `full_eval`. The
+`collision_only` profile is the default for automatic runs; `full` displays the
+complete field. No second ramp mesh or collision patch is generated. Each
+episode begins on the measured approach surface and follows the real physics
+through ramp entry, takeoff, flight, first recontact and landing. The example
+four-wheel rover is included only as a public interaction baseline:
+
+```bash
+rmuc2026-field run ./local-rmuc2026-field --scenario fly_ramp \
+  --speeds 1.5 1.8 2.0 2.2 2.5 --workers 2 \
+  --telemetry runs/fly_ramp.json
+rmuc2026-field view ./local-rmuc2026-field \
+  --scenario fly_ramp_north --profile full --control policy --camera spawn
+```
+
+Use `fly_ramp_north` or `fly_ramp_south` to select one route. For your own
+robot, add `--robot ROBOT.xml --controller your_controller:make` to either
+command. The optional `configure_route(route, "uphill", speed)` callback receives
+the approach, takeoff and landing coordinates and the commanded speed; the
+controller owns joints, actions and policy timing. For robustness sweeps, add
+`--lateral-offsets -0.05 0 0.05 --heading-offsets-deg -2 0 2 --repeats 3`.
+Use offsets only where the robot footprint fits the audited slope width.
+
+`status=PASS` means the batch ran without solver warnings, non-finite states or
+controller errors. `task_status` and each episode's `outcome` say whether the
+robot completed the jump. A complete jump requires an airborne interval, first
+recontact on the measured landing top, and 0.5 s of top contact with the body
+centre beyond the landing edge and tilt below 45 degrees. Reports distinguish
+short/lip and side impacts, landing instability, tipping, timeout and physics
+errors. They record actual takeoff speed, flight duration, first recontact,
+hashes, solver settings, throughput and worker memory. Failed robot episodes
+remain useful data and do not alter the field collision. The 2.2 m/s single
+wheel diagnostic gate is not a universal robot speed requirement.
+
+The viewer uses the same `FlyRampSession` as the automatic runner and saves a
+trajectory; press **R** to reset a new attempt. The no-robot example accepts
+**W/S/A/D/E/X** and speed keys **1–4** in human mode when the optional keyboard
+listener is installed. `load_isaac_heightfield(...,
+scenario="fly_ramp_north")` or `fly_ramp_south` supplies the identical route,
+spawn, heightfield and pack/profile hashes to an external Isaac consumer. The
+adapter does not run Isaac training. Whole-field validation remains
+`DRAFT_BLOCKED`.
+
 #### Turning benchmark and parallel runs
 
 `turn_basic` is the first executable benchmark. It screens up to eight starts

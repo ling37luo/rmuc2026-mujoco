@@ -1,5 +1,37 @@
 # Local validation log
 
+## 2026-09-23 — fly-ramp robot benchmark (local, unreleased)
+
+- **User request:** implement the next separate fly-ramp stage after ordinary
+  slopes. Codex and subagents added pack-derived north/south approach and
+  landing routes, a public example rover, a continuous robot flight session,
+  deterministic parallel batch runs, viewer replay and optional Isaac route
+  descriptors. The existing runtime pack, heightfield, friction and contact
+  settings were not changed.
+- **AGENT_PASS:** 331 repository tests, Ruff lint/format and `git diff --check`
+  passed. A reviewer found and Codex corrected mixed lip/top recontact,
+  non-heightfield obstacle contact, early takeoff timing and out-of-range
+  example-rover speed handling.
+- **AGENT_PASS (bounded local pack):** on the v6 `DRAFT_BLOCKED` pack, the
+  public rover's 10-case north/south speed sweep at 1.5/1.8/2.0/2.2/2.5 m/s
+  completed without solver warnings, non-finite states or controller errors.
+  Both 2.5 m/s cases landed and stayed on top; four slower cases hit short/lip
+  and four landed but tipped. At 2.5 m/s with lateral offsets -0.05/0/0.05 m
+  and headings -2/0/2 degrees, 15/18 cases landed stably; two hit short/lip
+  and one tipped. These results are example-rover task outcomes, not a robot-
+  independent field speed requirement.
+- **AGENT_PASS:** the `full` profile's north-ramp example session completed
+  takeoff, flight and stable landing with no warning in headless and native
+  viewer runs. Both Isaac descriptors
+  exported the same verified heightfield identity and measured gap/landing
+  routes; Isaac physics training was not run. Local detailed artifacts are in
+  ignored `runs/fly_ramp_matrix_reviewed_20260923.json`,
+  `runs/fly_ramp_pose_sweep_reviewed_20260923.json` and
+  `runs/fly_ramp_isaac_descriptor_20260923.json`.
+- **UNVERIFIED:** private team's robot-policy flight success, randomized Isaac
+  training, whole-field topology and official competition fidelity. The source
+  pack remains `DRAFT_BLOCKED`. No remote publication was authorized.
+
 ## 2026-09-23 — v1.1.0 release verification
 
 - **User authorization:** the user explicitly requested a repository commit,

@@ -37,7 +37,16 @@ def _root_joint(model):
     return int(free[0])
 
 
-def reset_slope_spawn(model, data, route, *, direction="uphill", controller=None):
+def reset_slope_spawn(
+    model,
+    data,
+    route,
+    *,
+    direction="uphill",
+    controller=None,
+    lateral_offset_m=0.0,
+    heading_offset_rad=0.0,
+):
     """Reset all state, place the robot at a route end, find terrain support.
 
     Only initial pose is adjusted. No forces, contact parameters or ongoing
@@ -51,8 +60,18 @@ def reset_slope_spawn(model, data, route, *, direction="uphill", controller=None
     joint = _root_joint(model)
     qadr = int(model.jnt_qposadr[joint])
     point = route["high_xyz_m" if direction == "downhill" else "low_xyz_m"]
-    heading = route["heading_yaw_rad"] + (math.pi if direction == "downhill" else 0)
-    data.qpos[qadr : qadr + 2] = point[:2]
+    heading = (
+        route["heading_yaw_rad"] + (math.pi if direction == "downhill" else 0) + heading_offset_rad
+    )
+    uphill = np.asarray(
+        route.get(
+            "uphill_unit_xy",
+            (math.cos(route["heading_yaw_rad"]), math.sin(route["heading_yaw_rad"])),
+        ),
+        dtype=float,
+    )
+    lateral = np.array([-uphill[1], uphill[0]])
+    data.qpos[qadr : qadr + 2] = np.asarray(point[:2]) + lateral_offset_m * lateral
     data.qpos[qadr + 3 : qadr + 7] = [math.cos(heading / 2), 0, 0, math.sin(heading / 2)]
     field_geom = model.geom(f"{FIELD_ATTACH_PREFIX}rmuc2026_field_collision").id
 
@@ -340,7 +359,7 @@ def view_slope(args, asset):
         controller=args.controller,
         patch=args.patch,
         direction=args.direction,
-        speed=args.speed,
+        speed=0.3 if args.speed is None else args.speed,
         mode=args.control,
         profile=args.profile,
         friction_preset=args.friction_preset,

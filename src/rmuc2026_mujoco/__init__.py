@@ -30,6 +30,10 @@ from .errors import (
     OutOfBoundsError,
     Rmuc2026Error,
 )
+from .fly_batch import fly_cases, run_fly_batch, run_fly_episode
+from .fly_progress import FlyRampProgress
+from .fly_routes import fly_route_descriptor
+from .fly_runtime import FlyRampSession
 from .manifest import (
     DEFAULT_RUNTIME_PROFILE,
     RUNTIME_ARTIFACT_TYPE,
@@ -141,6 +145,8 @@ __all__ = [
     "SCENARIOS",
     "ScenarioSpec",
     "FLY_RAMP_SCENARIOS",
+    "FlyRampProgress",
+    "FlyRampSession",
     "ORDINARY_SLOPE_BANDS",
     "SlopeBand",
     "SlopePatch",
@@ -161,6 +167,8 @@ __all__ = [
     "compose_with_robot",
     "download_official_step",
     "field_bounds",
+    "fly_cases",
+    "fly_route_descriptor",
     "export_fenced_pack",
     "find_spawn_candidates",
     "height_at",
@@ -176,6 +184,8 @@ __all__ = [
     "measure_runtime_landing_profile",
     "perimeter_fence_contract",
     "run_fixed_fly_ramp_jump_probe",
+    "run_fly_batch",
+    "run_fly_episode",
     "run_turn_batch",
     "run_turn_episode",
     "reset_turn_spawn",

@@ -71,6 +71,20 @@ def load_isaac_heightfield(
                 ("downhill", "high_xyz_m", float(np.pi)),
             )
         )
+    elif scenario in {"fly_ramp_north", "fly_ramp_south"}:
+        from .fly_routes import fly_route_descriptor
+
+        route = fly_route_descriptor(field, scenario)
+        descriptor["fly_ramp_route"] = route
+        spawn_points = (
+            {
+                "route_id": route["route_id"],
+                "position_xyz_m": list(route["spawn"]["xyz_m"]),
+                "heading_yaw_rad": float(route["spawn"]["heading_yaw_rad"]),
+                "position_reference": "terrain_surface",
+                "topology_verified": False,
+            },
+        )
     return IsaacHeightfieldInput(
         height_m=np.asarray(samples.height_m, dtype=np.float32),
         x_m=np.asarray(samples.x_m, dtype=np.float32),

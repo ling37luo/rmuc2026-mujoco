@@ -33,6 +33,7 @@ from .download import (
 from .display import FieldDisplayController
 from .energy_unit import load_field_with_energy_unit
 from .errors import Rmuc2026Error
+from .fly_routes import fly_route_descriptor
 from .manifest import DEFAULT_RUNTIME_PROFILE, RUNTIME_PROFILE_NAMES, FieldAsset, verify_asset
 from .mjcf import UNOFFICIAL_FRICTION_PRESETS, compose_with_robot, load_model
 from .pack import ExportBlocked
@@ -181,12 +182,16 @@ def build_parser() -> argparse.ArgumentParser:
     )
     run = commands.add_parser(
         "run",
-        help="run automatic turning or slope evaluation with optional multiprocessing",
+        help="run automatic turning, ordinary-slope or fly-ramp evaluation",
     )
     run.add_argument("asset", type=Path)
     run.add_argument("--robot", type=Path, help="robot MJCF; slopes default to the example rover")
     run.add_argument("--controller", help="user controller factory, module:object")
-    run.add_argument("--scenario", choices=("turn_basic", "slope_basic"), default="turn_basic")
+    run.add_argument(
+        "--scenario",
+        choices=("turn_basic", "slope_basic", "fly_ramp", "fly_ramp_north", "fly_ramp_south"),
+        default="turn_basic",
+    )
     run.add_argument("--phase", choices=("spin", "arc", "reversal"), default="spin")
     run.add_argument("--backend", choices=("mujoco", "isaac"), default="mujoco")
     run.add_argument("--workers", type=int, default=1)
@@ -207,9 +212,15 @@ def build_parser() -> argparse.ArgumentParser:
         default=["uphill", "downhill", "roundtrip"],
     )
     run.add_argument(
-        "--speeds", nargs="+", type=float, default=[0.3, 0.5], help="slope speeds in m/s"
+        "--speeds", nargs="+", type=float, help="speed grid in m/s; scenario-specific defaults"
     )
-    run.add_argument("--repeats", type=int, default=1, help="episodes per slope/direction/speed")
+    run.add_argument("--repeats", type=int, default=1, help="episodes per selected case")
+    run.add_argument(
+        "--lateral-offsets", nargs="+", type=float, default=[0.0], help="fly-ramp offsets in m"
+    )
+    run.add_argument(
+        "--heading-offsets-deg", nargs="+", type=float, default=[0.0], help="fly-ramp headings"
+    )
     run.add_argument(
         "--trajectory-dir", type=Path, help="optional slope episode trajectories (50 Hz)"
     )
@@ -243,7 +254,7 @@ def build_parser() -> argparse.ArgumentParser:
         default="uphill",
         help="slope task: uphill (default), downhill, or both in one episode",
     )
-    view.add_argument("--speed", type=float, default=0.3, help="slope example rover speed in m/s")
+    view.add_argument("--speed", type=float, help="example rover speed; scenario-specific default")
     view.add_argument("--duration", type=float, default=0.0, help="seconds; 0 waits until close")
     view.add_argument(
         "--profile",
@@ -479,10 +490,19 @@ def main(argv: list[str] | None = None) -> int:
 
                 if args.profile != "collision_only":
                     raise ValueError("Isaac training descriptors require profile=collision_only")
-                descriptor = load_isaac_heightfield(
-                    args.asset, scenario=args.scenario, profile=args.profile
-                )
-                payload = descriptor.to_dict()
+                if args.scenario == "fly_ramp":
+                    payload = {
+                        "scenario_descriptors": {
+                            name: load_isaac_heightfield(
+                                args.asset, scenario=name, profile=args.profile
+                            ).to_dict()
+                            for name in ("fly_ramp_north", "fly_ramp_south")
+                        }
+                    }
+                else:
+                    payload = load_isaac_heightfield(
+                        args.asset, scenario=args.scenario, profile=args.profile
+                    ).to_dict()
                 payload.update(
                     {
                         "backend": "isaac",
@@ -508,7 +528,7 @@ def main(argv: list[str] | None = None) -> int:
                     controller=args.controller,
                     patches=args.patches,
                     directions=args.directions,
-                    speeds=args.speeds,
+                    speeds=[0.3, 0.5] if args.speeds is None else args.speeds,
                     repeats=args.repeats,
                     workers=args.workers,
                     duration_s=args.duration,
@@ -520,6 +540,39 @@ def main(argv: list[str] | None = None) -> int:
                 if args.telemetry is None:
                     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S.%fZ")
                     args.telemetry = Path("runs") / f"slope_batch_{stamp}.json"
+            elif args.scenario in {"fly_ramp", "fly_ramp_north", "fly_ramp_south"}:
+                from datetime import datetime, timezone
+                from .fly_batch import DEFAULT_SPEEDS_MPS, run_fly_batch
+
+                if args.envs_per_worker != 1:
+                    raise ValueError(
+                        "fly-ramp batches reuse one environment per worker; "
+                        "increase --workers for parallelism"
+                    )
+                selected = (
+                    ("fly_ramp_north", "fly_ramp_south")
+                    if args.scenario == "fly_ramp"
+                    else (args.scenario,)
+                )
+                payload = run_fly_batch(
+                    args.asset,
+                    robot=args.robot,
+                    controller=args.controller,
+                    scenarios=selected,
+                    speeds=DEFAULT_SPEEDS_MPS if args.speeds is None else args.speeds,
+                    lateral_offsets=args.lateral_offsets,
+                    heading_offsets_deg=args.heading_offsets_deg,
+                    repeats=args.repeats,
+                    workers=args.workers,
+                    duration_s=5.0 if args.duration is None else args.duration,
+                    seed=args.seed,
+                    profile=args.profile,
+                    trajectory_dir=args.trajectory_dir,
+                    progress=True,
+                )
+                if args.telemetry is None:
+                    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S.%fZ")
+                    args.telemetry = Path("runs") / f"fly_batch_{stamp}.json"
             else:
                 if args.robot is None:
                     raise ValueError("turn_basic requires --robot ROBOT.xml")
@@ -541,9 +594,12 @@ def main(argv: list[str] | None = None) -> int:
                     json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
                 )
                 payload["telemetry"] = str(telemetry_path)
-            # The full slope matrix is in the saved report; keep console output compact.
+            # Full episode rows are in the saved report; keep console output compact.
             display_payload = payload
-            if args.scenario == "slope_basic" and args.backend == "mujoco":
+            if (
+                args.scenario in {"slope_basic", "fly_ramp", "fly_ramp_north", "fly_ramp_south"}
+                and args.backend == "mujoco"
+            ):
                 display_payload = {
                     key: value for key, value in payload.items() if key != "episodes"
                 }
@@ -667,7 +723,20 @@ def main(argv: list[str] | None = None) -> int:
             if args.steps < 0:
                 raise ValueError("--steps must be non-negative")
             return view_slope(args, asset)
+        if args.scenario in {"fly_ramp_north", "fly_ramp_south"} and (
+            args.robot is None or args.controller is not None
+        ):
+            from .fly_view import view_fly
+
+            if args.steps < 0:
+                raise ValueError("--steps must be non-negative")
+            return view_fly(args, asset)
         selected_scenario = get_scenario(args.scenario)
+        fly_route = (
+            fly_route_descriptor(asset, args.scenario)
+            if args.scenario in {"fly_ramp_north", "fly_ramp_south"}
+            else None
+        )
         if args.robot is None and args.control == "policy":
             raise ValueError("--control policy requires --robot and --controller")
         if args.control == "policy" and args.controller is None:
@@ -689,6 +758,18 @@ def main(argv: list[str] | None = None) -> int:
             turn_spawns = screen_turn_spawns(asset, count=1)
             if turn_spawns:
                 reset_turn_spawn(model, data, turn_spawns[0])
+        if args.robot is not None and fly_route is not None:
+            from .slope_runtime import reset_slope_spawn
+
+            reset_slope_spawn(
+                model,
+                data,
+                {
+                    "low_xyz_m": fly_route["approach_xyz_m"],
+                    "heading_yaw_rad": fly_route["heading_yaw_rad"],
+                    "uphill_unit_xy": fly_route["uphill_unit_xy"],
+                },
+            )
         controller = (
             load_controller(args.controller, model, data, mode=args.control)
             if args.controller is not None
@@ -780,7 +861,11 @@ def main(argv: list[str] | None = None) -> int:
             )
             viewer_session.listener = listener
             with viewer.lock():
-                fitted_viewport = _configure_camera(viewer, asset, args.camera)
+                fitted_viewport = (
+                    _configure_fly_camera(viewer, fly_route)
+                    if fly_route is not None and args.camera == "spawn"
+                    else _configure_camera(viewer, asset, args.camera)
+                )
                 display.apply(model, viewer.opt.geomgroup)
             _show_display_status(
                 viewer,
@@ -1008,6 +1093,18 @@ def _configure_camera(viewer, asset: FieldAsset, mode: str) -> tuple[int, int] |
     viewer.cam.azimuth = 135.0
     viewer.cam.elevation = -25.0
     return viewport
+
+
+def _configure_fly_camera(viewer, route: dict[str, object]) -> tuple[int, int] | None:
+    """Frame the selected ramp and landing target for ``--camera spawn``."""
+
+    approach = np.asarray(route["approach_xyz_m"], dtype=float)
+    target = np.asarray(route["landing_target_xyz_m"], dtype=float)
+    viewer.cam.lookat[:] = 0.5 * (approach + target)
+    viewer.cam.distance = max(4.5, float(np.linalg.norm(target - approach)) * 1.7)
+    viewer.cam.azimuth = math.degrees(float(route["heading_yaw_rad"])) + 90.0
+    viewer.cam.elevation = -30.0
+    return viewer_viewport_size(viewer)
 
 
 def _field_height_bounds(asset: FieldAsset) -> tuple[float, float]:

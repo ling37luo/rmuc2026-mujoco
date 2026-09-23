@@ -6,6 +6,16 @@ project intends to follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Added executable north/south fly-ramp robot episodes and a parallel speed and
+  pose-offset matrix on the existing runtime pack. Reports separate physical
+  health from robot jump success and identify takeoff, airborne, recontact and
+  stable-landing phases.
+- Added a public four-wheel fly-ramp example and interactive viewer reset,
+  plus pack-bound approach/landing routes for MuJoCo and the optional Isaac
+  descriptor. No field geometry or collision parameters were changed.
+
 ## [1.1.0] - 2026-09-23
 
 ### Added
