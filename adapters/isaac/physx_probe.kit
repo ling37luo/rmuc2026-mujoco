@@ -1,0 +1,17 @@
+[package]
+title = "RMUC PhysX Probe"
+version = "0.1.0"
+
+[dependencies]
+"isaacsim.simulation_app" = {}
+"isaacsim.sensors.experimental.physics" = {}
+"omni.kit.loop-isaac" = {}
+
+[settings.app]
+name = "RMUC PhysX Probe"
+version = "0.1.0"
+settings.persistent = false
+vulkan = true
+runLoops.main.rateLimitEnabled = false
+runLoops.main.manualModeEnabled = true
+player.useFixedTimeStepping = false

@@ -1,7 +1,7 @@
-"""Isaac Sim 6.1 PhysX terrain scale/contact probe (UNVERIFIED_RUNTIME).
+"""Isaac Sim 6.1 PhysX terrain scale/contact probe.
 
-Run this with the supported host's Isaac Sim ``python.sh``. This repository's
-CI can exercise ``--check-only`` but does not have Isaac Sim/PhysX installed.
+Run this with a supported host's Isaac Sim ``python.sh`` or pip environment.
+Repository CI can exercise ``--check-only`` without Isaac Sim/PhysX.
 The probe uses source-grid triangles, cropped static fence boxes and 120 mm
 diameter dynamic spheres; it does not validate an articulated robot or training.
 """
@@ -12,10 +12,12 @@ import argparse
 import hashlib
 import json
 import math
+import os
 from numbers import Integral
 from pathlib import Path
 import resource
 import time
+import traceback
 from typing import Callable
 
 import numpy as np
@@ -360,11 +362,21 @@ def _run_physx(
     envs: int,
     steps: int,
     device: str,
+    on_report: Callable[[dict], None],
 ) -> dict:
     # Isaac imports must follow SimulationApp construction in standalone mode.
     from isaacsim import SimulationApp
 
-    app = SimulationApp({"headless": True})
+    # Keep Python exceptions visible during teardown; Kit's fast shutdown
+    # otherwise calls os._exit() before the caller can report the failure.
+    isaac_path = Path(os.environ["ISAAC_PATH"])
+    app = SimulationApp(
+        {
+            "headless": True,
+            "extra_args": ["--ext-folder", str(isaac_path / "extscache")],
+        },
+        experience=str(Path(__file__).with_name("physx_probe.kit")),
+    )
     try:
         import carb
         import omni.usd
@@ -540,18 +552,23 @@ def _run_physx(
                 )
                 actual_z = float(hit.position.z) if hit_found else None
                 expected_z = triangle_height_at(x, y, height, px, py)
+                collider = (
+                    _raw_contact_body_path(hit.collision, PhysicsSchemaTools.intToSdfPath)
+                    if hit_found
+                    else None
+                )
                 ray_records.append(
                     {
                         "env": env_index,
                         "xy_m": [world_x, world_y],
                         "hit": bool(hit_found),
-                        "collider": str(hit.collision) if hit_found else None,
+                        "collider": collider,
                         "expected_z_m": expected_z,
                         "observed_z_m": actual_z,
                         "abs_error_m": abs(actual_z - expected_z) if hit_found else None,
                         "valid": bool(
                             hit_found
-                            and str(hit.collision) == mesh_path
+                            and collider == mesh_path
                             and math.isfinite(actual_z)
                             and abs(actual_z - expected_z) <= _RAY_TOLERANCE_M
                         ),
@@ -569,17 +586,22 @@ def _run_physx(
                 )
                 expected_path = f"/World/env_{env_index}/{wall['box_name']}"
                 observed_distance = float(hit.distance) if hit_found else None
+                collider = (
+                    _raw_contact_body_path(hit.collision, PhysicsSchemaTools.intToSdfPath)
+                    if hit_found
+                    else None
+                )
                 wall_ray_records.append(
                     {
                         "env": env_index,
                         "box": wall["box_name"],
                         "hit": bool(hit_found),
-                        "collider": str(hit.collision) if hit_found else None,
+                        "collider": collider,
                         "expected_distance_m": _WALL_RAY_START_M,
                         "observed_distance_m": observed_distance,
                         "valid": bool(
                             hit_found
-                            and str(hit.collision) == expected_path
+                            and collider == expected_path
                             and math.isfinite(observed_distance)
                             and abs(observed_distance - _WALL_RAY_START_M) <= _RAY_TOLERANCE_M
                         ),
@@ -648,9 +670,23 @@ def _run_physx(
             "solver_warning_scan": "inspect_isaac_console_log_separately",
             "scope": "static_mesh_and_cropped_fence_120mm_spheres_no_articulated_robot",
         }
-        return report
-    finally:
-        app.close()
+        on_report(report)
+    except BaseException:
+        traceback.print_exc()
+        app.close(exit_code=1)
+        raise
+    app.close(exit_code=0 if report["runtime_status"] == "PHYSX_CONTACT_PROBE_PASS" else 2)
+    return report
+
+
+def _emit_report(report: dict, output: Path | None) -> None:
+    payload = json.dumps(report, indent=2, sort_keys=True) + "\n"
+    if output is None:
+        print(payload, end="")
+    else:
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(payload, encoding="utf-8")
+        print(output)
 
 
 def main() -> int:
@@ -689,16 +725,18 @@ def main() -> int:
         if record["export_schema_version"] < 3:
             parser.error("schema 1/2 lacks terrain contact metadata; export schema 3 for PhysX")
         report = _run_physx(
-            x, y, height, record, envs=args.envs, steps=args.steps, device=args.device
+            x,
+            y,
+            height,
+            record,
+            envs=args.envs,
+            steps=args.steps,
+            device=args.device,
+            on_report=lambda result: _emit_report(result, args.output),
         )
-    payload = json.dumps(report, indent=2, sort_keys=True) + "\n"
-    if args.output is None:
-        print(payload, end="")
-    else:
-        args.output.parent.mkdir(parents=True, exist_ok=True)
-        args.output.write_text(payload, encoding="utf-8")
-        print(args.output)
-    return 0 if report["runtime_status"] != "PHYSX_CONTACT_PROBE_FAIL" else 2
+        return 0 if report["runtime_status"] == "PHYSX_CONTACT_PROBE_PASS" else 2
+    _emit_report(report, args.output)
+    return 0
 
 
 if __name__ == "__main__":
