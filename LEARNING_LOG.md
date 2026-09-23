@@ -1,5 +1,50 @@
 # Local validation log
 
+## 2026-09-23 — separate uphill, downhill and roundtrip results
+
+- **User request:** score uphill and downhill separately; a roundtrip requires
+  both records. Codex implemented this in the standalone repository.
+- Default slope sessions now request uphill only. Downhill starts at the high
+  endpoint; roundtrip records uphill followed by downhill without a reset.
+  Each leg has its own timestamps, duration, contact steps, tilt, penetration
+  and failure. A failed return leg retains the completed uphill record.
+- Reaching or passing the endpoint footprint with contact now counts without
+  the old 0.25 s dwell. The 12 cm endpoint tolerance is unchanged. The scenario
+  descriptor and run report identify completion rule version 2. Field geometry,
+  materials, contact settings and the source pack are unchanged.
+- **AGENT_PASS (saved user-run audit):** reclassified the nine episodes in
+  `runs/slope_interaction_20260923T021607.342374Z.json` using its 50 Hz trajectory.
+  All nine have uphill success; none returned to the low endpoint. The new
+  results correctly show downhill and roundtrip incomplete, including the
+  five fast passes whose uphill arrival the old dwell rule missed. This is
+  an event reclassification, not a new physics run or per-leg penetration audit.
+- **AGENT_PASS (new external SCUT simulation, one route):** on
+  `slope_6_10_01`, three independent policy runs completed: uphill in 6.652 s,
+  downhill in 4.065 s, and roundtrip in 12.272 s (uphill 6.652 s plus return
+  5.620 s including the controller's pause at the top). Simulations continued
+  for 10/10/16 s, respectively, with finite states and zero numerical warnings.
+  Reset reproduced the initial pose, cleared both scores and preserved the
+  saved result. The local-only SCUT adapter and robot remain in ignored storage.
+- Evidence: `runs/slope_scoring_acceptance_20260923T023326/`, including the
+  original-log hash, reclassified events, new telemetry and `summary.json`.
+- **AGENT_PASS (software):** 279 tests passed; Ruff and diff checks passed.
+  Coverage includes fast passes, independent directions, return-leg failure,
+  contact on arrival, immutable recorded results and separation across episodes.
+- **UNVERIFIED:** user confirmation of the updated interactive feedback, other
+  SCUT slope routes/speeds and Isaac execution. `DRAFT_BLOCKED` is unchanged.
+
+Minimal public reproduction with the example rover (repeat for each direction):
+
+```bash
+rmuc2026-field view ./local-rmuc2026-field --scenario slope_basic \
+  --profile collision_only --control policy --headless --steps 8000 \
+  --direction uphill
+```
+
+Use `--direction downhill` for descent only or `--direction roundtrip` for both.
+Next user check: drive one uphill pass and inspect `leg_results.uphill`; in a
+roundtrip session return down before resetting to earn both records.
+
 ## 2026-09-23 — executable ordinary-slope interaction
 
 - **USER_PASS (catalog export only):** the user supplied a successful

@@ -16,6 +16,7 @@ from typing import Any, Mapping
 from .manifest import FieldAsset
 from .ramp_audit import FIXED_FLY_RAMPS
 from .slope_routes import ROUTE_SCREEN
+from .slope_progress import SLOPE_TRAVERSAL_RULE
 
 
 @dataclass(frozen=True)
@@ -135,7 +136,10 @@ SCENARIOS: Mapping[str, ScenarioSpec] = {
         {
             "strategy": "catalog_patch_spawn",
             "controller_owns_gear_and_action_mapping": True,
-            "goal": "traverse_up_and_down_without_takeoff_or_flight_evaluation",
+            "goal": "independent_uphill_downhill_or_roundtrip_without_flight_evaluation",
+            "default_direction": "uphill",
+            "directions": ["uphill", "downhill", "roundtrip"],
+            "traversal_rule": dict(SLOPE_TRAVERSAL_RULE),
             "topology_verified": False,
         },
         (), ("human_view", "mujoco", "isaac"),

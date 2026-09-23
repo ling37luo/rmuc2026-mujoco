@@ -285,8 +285,18 @@ use `--control policy` or the Python session with your own input handling.
 
 The default is the first continuous screened route. Select another with
 `--patch PATCH_ID`, and choose `--direction uphill|downhill|roundtrip`.
-`roundtrip` means climbing to the upper footprint and reversing down the same
-slope. To run the example's wheel-speed controller automatically, use
+The default direction is **uphill only**. The three tasks are independent:
+
+| Direction | Start | Completion |
+| --- | --- | --- |
+| `uphill` | Low endpoint | Reach the high endpoint; records uphill only |
+| `downhill` | High endpoint, facing downhill | Reach the low endpoint; records downhill only |
+| `roundtrip` | Low endpoint | Complete uphill, then downhill in the same episode |
+
+For example, add `--direction downhill` to open a downhill-only session.
+An uphill-only result and a separate downhill-only result are not a roundtrip.
+The example's roundtrip controller reverses down the same slope after climbing.
+To run its wheel-speed controller automatically, use
 `--control policy`; this is an illustrative controller, not a trained RM policy:
 
 ```bash
@@ -299,9 +309,23 @@ Both paths use the same `SlopeSession` for reset, control, stepping, route
 progress, contact diagnostics, and telemetry. A timestamped report is saved
 under `runs/` by default; `--telemetry PATH` selects another path. Reports
 separate `physics_status` from `traversal_status`: a stationary or too-short run
-can have healthy physics while traversal is `INCOMPLETE`. The benchmark
-requires reaching the requested end, staying within the route, and maintaining
-contact for 0.25 s. A reset preserves the previous episode in the report.
+can have healthy physics while traversal is `INCOMPLETE`.
+`leg_results.uphill` and `leg_results.downhill` separately record status,
+start/completion times, duration, contact steps, maximum tilt/penetration and
+the first failure. An unrequested leg has status `NOT_REQUESTED`; a requested
+but unstarted leg is `INCOMPLETE` with a null start time. `roundtrip_status`
+is `COMPLETE` only when both legs finish in one roundtrip episode. An uphill
+success stays recorded if the return leg fails or never finishes.
+
+Arrival means reaching the endpoint footprint (12 cm longitudinal tolerance)
+or passing beyond it, within the route width, upright and in field contact.
+There is **no dwell requirement**: fast passes count. The completion timestamp
+and leg statistics are frozen at arrival; later driving does not erase an
+achieved result, while session-wide physics diagnostics continue. Downhill
+duration in a roundtrip includes time spent waiting at the top. The report's
+`traversal_rule` identifies these rules. The viewer prints `SLOPE_PROGRESS`
+whenever a result changes. **R** starts fresh scores and preserves the previous
+episode separately; it never joins two episodes into a roundtrip.
 
 External robots use the same command with `--robot ROBOT.xml --controller
 your_controller:make`. The existing callable controller API is unchanged.

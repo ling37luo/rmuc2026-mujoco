@@ -196,7 +196,12 @@ def build_parser() -> argparse.ArgumentParser:
     view.add_argument("--steps", type=int, default=1000, help="headless physics steps")
     view.add_argument("--telemetry", type=Path, help="write headless step telemetry as JSON")
     view.add_argument("--patch", help="slope_basic patch ID; default: first screened route")
-    view.add_argument("--direction", choices=("uphill", "downhill", "roundtrip"), default="roundtrip")
+    view.add_argument(
+        "--direction",
+        choices=("uphill", "downhill", "roundtrip"),
+        default="uphill",
+        help="slope task: uphill (default), downhill, or both in one episode",
+    )
     view.add_argument("--speed", type=float, default=0.3, help="slope example rover speed in m/s")
     view.add_argument("--duration", type=float, default=0.0, help="seconds; 0 waits until close")
     view.add_argument(

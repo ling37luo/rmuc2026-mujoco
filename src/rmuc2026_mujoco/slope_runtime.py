@@ -22,6 +22,7 @@ from .query import load_heightfield
 from .scenarios import scenario_descriptor
 from .slope_catalog import slope_catalog
 from .slope_demo import RoverController, rover_xml
+from .slope_progress import SlopeProgress
 from .slope_routes import select_slope_route
 from .viewer import SafePassiveViewerSession
 
@@ -96,7 +97,7 @@ class SlopeSession:
         robot=None,
         controller=None,
         patch=None,
-        direction="roundtrip",
+        direction="uphill",
         speed=0.3,
         mode="human",
         profile="collision_only",
@@ -157,15 +158,21 @@ class SlopeSession:
         )
         self.steps = 0
         self.rows = []
-        self.phase = "downhill" if self.direction == "downhill" else "uphill"
-        self.reached_at = None
-        self.completed = False
+        self.progress = SlopeProgress(self.route, self.direction)
         self.failure = None
         self.warnings = {}
         self.max_penetration = self.max_tilt = 0.0
         self.field_contact_steps = 0
         self.finite = True
         self.start_time = time.perf_counter()
+
+    @property
+    def phase(self):
+        return self.progress.phase
+
+    @property
+    def completed(self):
+        return self.progress.status == "COMPLETE"
 
     def step(self):
         import mujoco
@@ -201,9 +208,8 @@ class SlopeSession:
             if int(c.geom1) in self.field_geoms or int(c.geom2) in self.field_geoms
         ]
         self.field_contact_steps += bool(contacts)
-        self.max_penetration = max(
-            self.max_penetration, max((max(0.0, -float(c.dist)) for c in contacts), default=0.0)
-        )
+        penetration = max((max(0.0, -float(c.dist)) for c in contacts), default=0.0)
+        self.max_penetration = max(self.max_penetration, penetration)
         reason = None
         if not self.finite or self.warnings:
             reason = "numerical_instability"
@@ -215,18 +221,14 @@ class SlopeSession:
             reason = "outside_route"
         if reason and self.failure is None:
             self.failure = {"reason": reason, "time_s": float(d.time)}
-        target = self.route["length_m"] if self.phase == "uphill" else 0.0
-        at_target = abs(along - target) < 0.12 and abs(across) < self.route["width_m"] / 2
-        if not self.completed and at_target and contacts and tilt < 60:
-            if self.reached_at is None:
-                self.reached_at = float(d.time)
-            if d.time - self.reached_at >= 0.25:
-                if self.direction == "roundtrip" and self.phase == "uphill":
-                    self.phase, self.reached_at = "downhill", None
-                else:
-                    self.completed = True
-        else:
-            self.reached_at = None
+        self.progress.update(
+            time_s=float(d.time),
+            along_m=along,
+            contacts=len(contacts),
+            tilt_deg=tilt,
+            penetration_m=penetration,
+            failure=self.failure,
+        )
         if self.steps % max(1, round(0.02 / self.model.opt.timestep)) == 0:
             self.rows.append(
                 {
@@ -237,6 +239,8 @@ class SlopeSession:
                     "tilt_deg": tilt,
                     "field_contacts": len(contacts),
                     "phase": self.phase,
+                    "uphill_status": self.progress.legs["uphill"]["status"],
+                    "downhill_status": self.progress.legs["downhill"]["status"],
                     "qpos": d.qpos.tolist(),
                     "qvel": d.qvel.tolist(),
                     "finite": self.finite,
@@ -246,7 +250,6 @@ class SlopeSession:
         return self.finite and not self.warnings
 
     def report(self):
-        traversal = "FAIL" if self.failure else "COMPLETE" if self.completed else "INCOMPLETE"
         return {
             "scenario_id": "slope_basic",
             "route": self.route,
@@ -267,7 +270,7 @@ class SlopeSession:
             "initial_pose": self.initial_pose.tolist(),
             "steps_per_second": self.steps / max(1e-9, time.perf_counter() - self.start_time),
             "physics_status": "PASS" if self.finite and not self.warnings else "FAIL",
-            "traversal_status": traversal,
+            **self.progress.report(),
             "first_failure": self.failure,
             "field_contact_steps": self.field_contact_steps,
             "max_penetration_m": self.max_penetration,
@@ -327,6 +330,7 @@ def view_slope(args, asset):
         print(
             f"SLOPE_VIEW patch={session.route['route_id']} robot={session.robot_kind}", flush=True
         )
+        print(session.progress.status_line(session.data.time), flush=True)
         print(
             "W/S forward/reverse; A/D steer; E straighten; X stop; 1-4 speed; "
             "R reset; L/G lighting/livery; Esc close. Commands persist until changed.",
@@ -355,6 +359,7 @@ def view_slope(args, asset):
                 draw_slope_route(viewer.user_scn, session.route)
                 display.apply(session.model, viewer.opt.geomgroup)
             started = time.monotonic()
+            last_status = tuple(leg["status"] for leg in session.progress.legs.values())
             while viewer.is_running() and not close.is_set():
                 frame_start = time.monotonic()
                 if args.duration and frame_start - started >= args.duration:
@@ -367,6 +372,7 @@ def view_slope(args, asset):
                                 {"summary": session.report(), "rows": session.rows}
                             )
                             session.reset()
+                            last_status = None
                         elif callable(getattr(session.controller, "press_name", None)):
                             session.controller.press_name(key)
                     # Advance a render frame of physics, not just one 2 ms step.
@@ -375,6 +381,10 @@ def view_slope(args, asset):
                             close.set()
                             break
                     display.apply(session.model, viewer.opt.geomgroup)
+                current_status = tuple(leg["status"] for leg in session.progress.legs.values())
+                if current_status != last_status:
+                    print(session.progress.status_line(session.data.time), flush=True)
+                    last_status = current_status
                 viewer.sync()
                 time.sleep(max(0, 1 / 60 - (time.monotonic() - frame_start)))
     report = session.report()
