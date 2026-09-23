@@ -12,6 +12,7 @@ import json
 from pathlib import Path
 import shutil
 from typing import Any
+import xml.etree.ElementTree as ET
 
 import numpy as np
 
@@ -26,7 +27,8 @@ from .training_region import TrainingRegion
 
 
 _OFFLINE_REGION_TYPE = "rmuc2026_isaac_heightfield_input"
-_OFFLINE_REGION_SCHEMA = 1
+_OFFLINE_REGION_SCHEMA = 2
+_SUPPORTED_OFFLINE_REGION_SCHEMAS = (1, 2)
 _OFFLINE_GRID_FILE = "heightfield.npz"
 
 
@@ -38,6 +40,7 @@ class IsaacHeightfieldInput:
     bounds_xy_m: tuple[tuple[float, float], tuple[float, float]]
     scenario: dict[str, Any]
     spawn_points: tuple[dict[str, Any], ...] = ()
+    static_boxes: tuple[dict[str, Any], ...] = ()
     source: str = "verified_runtime_pack_heightfield"
 
     def to_dict(self) -> dict[str, Any]:
@@ -46,8 +49,114 @@ class IsaacHeightfieldInput:
             "bounds_xy_m": [list(row) for row in self.bounds_xy_m],
             "scenario": self.scenario,
             "spawn_points": [dict(point) for point in self.spawn_points],
+            "static_boxes": [dict(box) for box in self.static_boxes],
             "source": self.source,
         }
+
+
+def _cropped_static_boxes(region: TrainingRegion) -> tuple[dict[str, Any], ...]:
+    """Preserve the source fence within the local grid, without cross-env overlap."""
+
+    try:
+        root = ET.parse(region.root / "field.xml").getroot()
+    except (OSError, ET.ParseError) as exc:
+        raise ManifestError(f"training-region field XML is invalid: {exc}") from exc
+    (xmin, ymin), (xmax, ymax) = region.manifest["grid"]["bounds_xy_m"]
+    boxes: list[dict[str, Any]] = []
+    for geom in root.findall("./worldbody/geom"):
+        name = geom.get("name", "")
+        if not name.startswith("rmuc2026_perimeter_"):
+            continue
+        if geom.get("type") != "box" or any(
+            key in geom.attrib for key in ("quat", "euler", "axisangle", "xyaxes", "zaxis")
+        ):
+            raise ManifestError(f"perimeter geom {name} is not an axis-aligned box")
+        try:
+
+            def vector(key: str, length: int) -> list[float]:
+                values = [float(value) for value in geom.attrib[key].split()]
+                if len(values) != length or not np.isfinite(values).all():
+                    raise ValueError(f"invalid {key}")
+                return values
+
+            pos = vector("pos", 3)
+            size = vector("size", 3)
+            friction = vector("friction", 3)
+            solref = vector("solref", 2)
+            contype = int(geom.attrib["contype"])
+            conaffinity = int(geom.attrib["conaffinity"])
+            if min(size) <= 0 or min(friction) < 0 or contype < 0 or conaffinity < 0:
+                raise ValueError("invalid box size or contact parameters")
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ManifestError(
+                f"perimeter geom {name} has invalid contact geometry: {exc}"
+            ) from exc
+        x0 = max(float(xmin), pos[0] - size[0])
+        x1 = min(float(xmax), pos[0] + size[0])
+        y0 = max(float(ymin), pos[1] - size[1])
+        y1 = min(float(ymax), pos[1] + size[1])
+        if x0 >= x1 or y0 >= y1:
+            continue
+        boxes.append(
+            {
+                "name": name,
+                "pos_m": [(x0 + x1) / 2, (y0 + y1) / 2, pos[2]],
+                "size_m": [(x1 - x0) / 2, (y1 - y0) / 2, size[2]],
+                "contype": contype,
+                "conaffinity": conaffinity,
+                "friction": friction,
+                "solref": solref,
+            }
+        )
+    return tuple(boxes)
+
+
+def _validate_static_boxes(boxes: Any, bounds: np.ndarray) -> tuple[dict[str, Any], ...]:
+    if not isinstance(boxes, list):
+        raise ManifestError("Isaac region static box list is invalid")
+    names: set[str] = set()
+    for box in boxes:
+        if not isinstance(box, dict) or set(box) != {
+            "name",
+            "pos_m",
+            "size_m",
+            "contype",
+            "conaffinity",
+            "friction",
+            "solref",
+        }:
+            raise ManifestError("Isaac region static box is invalid")
+        try:
+            pos = np.asarray(box["pos_m"], dtype=np.float64)
+            size = np.asarray(box["size_m"], dtype=np.float64)
+            friction = np.asarray(box["friction"], dtype=np.float64)
+            solref = np.asarray(box["solref"], dtype=np.float64)
+            if (
+                not isinstance(box["name"], str)
+                or not box["name"].startswith("rmuc2026_perimeter_")
+                or box["name"] in names
+                or pos.shape != (3,)
+                or size.shape != (3,)
+                or friction.shape != (3,)
+                or solref.shape != (2,)
+                or not np.isfinite(pos).all()
+                or not np.isfinite(size).all()
+                or not np.isfinite(friction).all()
+                or not np.isfinite(solref).all()
+                or np.any(size <= 0)
+                or np.any(friction < 0)
+                or not isinstance(box["contype"], int)
+                or not isinstance(box["conaffinity"], int)
+                or box["contype"] < 0
+                or box["conaffinity"] < 0
+                or np.any(pos[:2] - size[:2] < bounds[0] - 1e-9)
+                or np.any(pos[:2] + size[:2] > bounds[1] + 1e-9)
+            ):
+                raise ValueError("invalid geometry or contact")
+        except (TypeError, ValueError) as exc:
+            raise ManifestError(f"Isaac region static box is invalid: {exc}") from exc
+        names.add(box["name"])
+    return tuple(boxes)
 
 
 def load_isaac_heightfield(
@@ -107,14 +216,14 @@ def load_isaac_heightfield(
 
 
 def load_isaac_training_region(region: TrainingRegion | str | Path) -> IsaacHeightfieldInput:
-    """Provide the exact local grid and identity for an external Isaac adapter.
+    """Provide the local grid, intersecting fence boxes and identity.
 
     IsaacLab's Newton XPBD backend is currently the contact-tested consumer of
     this 1 cm grid. This function only transfers data; it does not choose a
     physics backend or claim PhysX/MJWarp contact equivalence.
     """
 
-    selected = region if isinstance(region, TrainingRegion) else TrainingRegion.open(region)
+    selected = TrainingRegion.open(region.root if isinstance(region, TrainingRegion) else region)
     samples = selected.heightfield()
     manifest = selected.manifest
     route = dict(manifest["route"])
@@ -145,12 +254,13 @@ def load_isaac_training_region(region: TrainingRegion | str | Path) -> IsaacHeig
         bounds_xy_m=samples.bounds_xy_m,
         scenario=descriptor,
         spawn_points=(spawn,),
+        static_boxes=_cropped_static_boxes(selected),
         source="verified_cropped_training_region",
     )
 
 
 def export_isaac_training_region(region: TrainingRegion | str | Path, output: str | Path) -> dict:
-    """Export exact region samples and world coordinates for an offline consumer.
+    """Export exact region samples and cropped perimeter boxes for an offline consumer.
 
     Unlike the in-memory Isaac adapter's float32 arrays, this copies the
     source region's exact float64 NPZ. The files are backend-neutral and do
@@ -167,7 +277,7 @@ def export_isaac_training_region(region: TrainingRegion | str | Path, output: st
     descriptor = {
         "artifact_type": _OFFLINE_REGION_TYPE,
         "schema_version": _OFFLINE_REGION_SCHEMA,
-        "scope": "offline_heightfield_data_only_no_physx_contact_validation",
+        "scope": "offline_heightfield_and_fence_boxes_no_physx_contact_validation",
         "scenario_id": selected.manifest["scenario_id"],
         "validation_status": selected.manifest["validation_status"],
         "grid_file": _OFFLINE_GRID_FILE,
@@ -186,7 +296,9 @@ def export_isaac_training_region(region: TrainingRegion | str | Path, output: st
             "source_profile_hash": source["source_profile_hash"],
             "source_collision_samples_sha256": source["source_collision_samples_sha256"],
             "source_grid_slice_yx": source["source_grid_slice_yx"],
+            "source_field_xml_sha256": selected.manifest["files"]["field.xml"]["sha256"],
         },
+        "collision": {"static_boxes": list(_cropped_static_boxes(selected))},
         "route": selected.manifest["route"],
     }
     (target / "descriptor.json").write_text(
@@ -212,10 +324,11 @@ def load_isaac_training_region_export(
         raise ManifestError(f"Isaac region descriptor is invalid: {exc}") from exc
     if (
         descriptor.get("artifact_type") != _OFFLINE_REGION_TYPE
-        or descriptor.get("schema_version") != _OFFLINE_REGION_SCHEMA
+        or descriptor.get("schema_version") not in _SUPPORTED_OFFLINE_REGION_SCHEMAS
         or descriptor.get("grid_file") != _OFFLINE_GRID_FILE
     ):
         raise ManifestError("unsupported Isaac region descriptor")
+    schema = descriptor["schema_version"]
     grid_path = root / _OFFLINE_GRID_FILE
     if grid_path.is_symlink() or not grid_path.is_file():
         raise AssetIntegrityError("Isaac region grid file is missing")
@@ -258,6 +371,12 @@ def load_isaac_training_region_export(
         or record.get("interpolation") != "mujoco_hfield_triangle"
     ):
         raise ManifestError("Isaac region grid geometry disagrees with descriptor")
+    boxes: tuple[dict[str, Any], ...] = ()
+    if schema == 2:
+        collision = descriptor.get("collision")
+        if not isinstance(collision, dict) or set(collision) != {"static_boxes"}:
+            raise ManifestError("Isaac region collision descriptor is invalid")
+        boxes = _validate_static_boxes(collision["static_boxes"], bounds)
     if source_region is not None:
         selected = TrainingRegion.open(
             source_region.root if isinstance(source_region, TrainingRegion) else source_region
@@ -271,12 +390,17 @@ def load_isaac_training_region_export(
             "source_collision_samples_sha256": source["source_collision_samples_sha256"],
             "source_grid_slice_yx": source["source_grid_slice_yx"],
         }
+        if schema == 2:
+            expected_identity["source_field_xml_sha256"] = selected.manifest["files"]["field.xml"][
+                "sha256"
+            ]
         original = selected.heightfield()
         if (
             descriptor.get("identity") != expected_identity
             or not np.array_equal(x, original.x_m)
             or not np.array_equal(y, original.y_m)
             or not np.array_equal(height, original.height_m)
+            or (schema == 2 and boxes != _cropped_static_boxes(selected))
         ):
             raise ManifestError("Isaac region export differs from its verified source region")
     return IsaacHeightfieldInput(
@@ -293,6 +417,7 @@ def load_isaac_training_region_export(
             "route": descriptor["route"],
             "validation_status": descriptor["validation_status"],
         },
+        static_boxes=boxes,
         source="verified_offline_training_region",
     )
 

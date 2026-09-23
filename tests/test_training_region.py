@@ -36,8 +36,9 @@ def _fake_source(tmp_path: Path, monkeypatch) -> tuple[SimpleNamespace, HeightFi
         '<worldbody><geom name="rmuc2026_field_collision" type="hfield" '
         'hfield="rmuc2026_collision" pos="0 0 0" contype="2" conaffinity="1" '
         'friction="1 0.005 0.0001" solref="0.02 1"/>'
-        '<geom name="rmuc2026_perimeter_top" type="box" pos="0 1.2 0.5" '
-        'size="1 0.02 0.5" contype="2" conaffinity="1"/></worldbody></mujoco>',
+        '<geom name="rmuc2026_perimeter_top" type="box" pos="0 0.7 0.5" '
+        'size="4 0.02 0.5" contype="2" conaffinity="1" '
+        'friction="1 0.005 0.0001" solref="0.04 1"/></worldbody></mujoco>',
         encoding="utf-8",
     )
     axis = np.arange(-4.0, 4.001, 0.01)
@@ -131,6 +132,7 @@ def test_training_region_exports_exact_source_grid_and_composes(tmp_path, monkey
     assert isaac.scenario["profile_hash"] == manifest["profile_hash"]
     assert isaac.scenario["source_manifest_sha256"] == asset.manifest_sha256
     np.testing.assert_allclose(isaac.height_m, local.height_m, atol=1e-7, rtol=0)
+    assert len(isaac.static_boxes) == 1
 
     with pytest.raises(ValueError, match="already exists"):
         export_training_region(asset, output, scenario_id="fly_ramp_north")
@@ -148,6 +150,10 @@ def test_isaac_offline_export_preserves_exact_grid_scale_and_identity(tmp_path, 
 
     assert descriptor["identity"]["region_profile_hash"] == region.manifest["profile_hash"]
     assert descriptor["identity"]["source_manifest_sha256"] == asset.manifest_sha256
+    assert descriptor["identity"]["source_field_xml_sha256"] == sha256_file(
+        region_path / "field.xml"
+    )
+    assert descriptor["schema_version"] == 2
     assert descriptor["grid_file_sha256"] == sha256_file(region_path / "collision/heightfield.npz")
     assert descriptor["grid"]["height_values"] == "absolute_world_z_m_no_extra_scale_or_offset"
     np.testing.assert_array_equal(imported.x_m, original.x_m)
@@ -155,6 +161,14 @@ def test_isaac_offline_export_preserves_exact_grid_scale_and_identity(tmp_path, 
     np.testing.assert_array_equal(imported.height_m, original.height_m)
     assert imported.bounds_xy_m == original.bounds_xy_m
     assert imported.scenario["profile_hash"] == region.manifest["profile_hash"]
+    assert imported.static_boxes == load_isaac_training_region(region).static_boxes
+    box = imported.static_boxes[0]
+    assert box["name"] == "rmuc2026_perimeter_top"
+    assert box["pos_m"] == pytest.approx([(original.x_m[0] + original.x_m[-1]) / 2, 0.7, 0.5])
+    assert box["size_m"] == pytest.approx([(original.x_m[-1] - original.x_m[0]) / 2, 0.02, 0.5])
+    assert box["contype"] == 2 and box["conaffinity"] == 1
+    assert box["friction"] == [1.0, 0.005, 0.0001]
+    assert box["solref"] == [0.04, 1.0]
     with pytest.raises(ValueError, match="already exists"):
         export_isaac_training_region(region, export_path)
 
@@ -183,6 +197,40 @@ def test_isaac_offline_export_rejects_grid_or_source_identity_change(tmp_path, m
     descriptor_path.write_text(json.dumps(descriptor), encoding="utf-8")
     with pytest.raises(ManifestError, match="verified source region"):
         load_isaac_training_region_export(export_path, source_region=region_path)
+
+
+def test_isaac_static_boxes_are_source_bound_and_schema_one_remains_heightfield_only(
+    tmp_path, monkeypatch
+):
+    asset, _ = _fake_source(tmp_path, monkeypatch)
+    region_path = tmp_path / "region"
+    export_training_region(asset, region_path, scenario_id="fly_ramp_north")
+    export_path = tmp_path / "offline"
+    descriptor = export_isaac_training_region(region_path, export_path)
+    descriptor_path = export_path / "descriptor.json"
+    assert len(descriptor["collision"]["static_boxes"]) == 1
+
+    changed = json.loads(descriptor_path.read_text(encoding="utf-8"))
+    changed["collision"]["static_boxes"][0]["pos_m"][1] -= 0.001
+    descriptor_path.write_text(json.dumps(changed), encoding="utf-8")
+    with pytest.raises(ManifestError, match="verified source region"):
+        load_isaac_training_region_export(export_path, source_region=region_path)
+
+    changed = json.loads(descriptor_path.read_text(encoding="utf-8"))
+    changed["identity"]["source_field_xml_sha256"] = "0" * 64
+    descriptor_path.write_text(json.dumps(changed), encoding="utf-8")
+    with pytest.raises(ManifestError, match="verified source region"):
+        load_isaac_training_region_export(export_path, source_region=region_path)
+
+    legacy = dict(descriptor)
+    legacy["schema_version"] = 1
+    legacy["scope"] = "offline_heightfield_data_only_no_physx_contact_validation"
+    legacy.pop("collision")
+    legacy["identity"] = dict(legacy["identity"])
+    legacy["identity"].pop("source_field_xml_sha256")
+    descriptor_path.write_text(json.dumps(legacy), encoding="utf-8")
+    imported = load_isaac_training_region_export(export_path, source_region=region_path)
+    assert imported.static_boxes == ()
 
 
 def test_training_region_rejects_tampered_collision_file(tmp_path, monkeypatch):

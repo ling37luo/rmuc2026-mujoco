@@ -2,7 +2,7 @@
 
 Run this with the supported host's Isaac Sim ``python.sh``. This repository's
 CI can exercise ``--check-only`` but does not have Isaac Sim/PhysX installed.
-The probe uses source-grid triangles, static USD mesh colliders and 120 mm
+The probe uses source-grid triangles, cropped static fence boxes and 120 mm
 diameter dynamic spheres; it does not validate an articulated robot or training.
 """
 
@@ -25,13 +25,16 @@ _PROBE_KEYS = ("approach_xyz_m", "low_seam_xyz_m", "takeoff_xyz_m", "landing_tar
 _RADIUS_M = 0.06
 _DT_S = 0.001
 _RAY_TOLERANCE_M = 0.001
+_WALL_RAY_START_M = 0.2
+_WALL_SPHERE_START_M = 0.15
+_WALL_SPHERE_SPEED_M_S = 1.5
 
 
 def _load_export(root: Path) -> tuple[dict, np.ndarray, np.ndarray, np.ndarray]:
     descriptor = json.loads((root / "descriptor.json").read_text(encoding="utf-8"))
     if (
         descriptor.get("artifact_type") != "rmuc2026_isaac_heightfield_input"
-        or descriptor.get("schema_version") != 1
+        or descriptor.get("schema_version") not in (1, 2)
         or descriptor.get("grid_file") != "heightfield.npz"
     ):
         raise ValueError("unsupported offline Isaac export descriptor")
@@ -69,6 +72,89 @@ def _load_export(root: Path) -> tuple[dict, np.ndarray, np.ndarray, np.ndarray]:
     return descriptor, x, y, height
 
 
+def _static_boxes(descriptor: dict, x: np.ndarray, y: np.ndarray) -> list[dict]:
+    """Return source-bound, crop-contained static boxes in world meters."""
+    if descriptor["schema_version"] == 1:
+        return []
+    collision = descriptor.get("collision")
+    if not isinstance(collision, dict) or not isinstance(collision.get("static_boxes"), list):
+        raise ValueError("schema 2 export lacks collision.static_boxes")
+    boxes = collision["static_boxes"]
+    if descriptor["scenario_id"] in ("fly_ramp_north", "fly_ramp_south") and not boxes:
+        raise ValueError("fly-ramp export has no cropped static perimeter box")
+    names = set()
+    for box in boxes:
+        if not isinstance(box, dict):
+            raise ValueError("invalid static box record")
+        name = box.get("name")
+        if (
+            not isinstance(name, str)
+            or not name.isidentifier()
+            or name in names
+            or not isinstance(box.get("contype"), int)
+            or not isinstance(box.get("conaffinity"), int)
+        ):
+            raise ValueError("invalid static box identity or collision bits")
+        names.add(name)
+        try:
+            center = np.asarray(box["pos_m"], dtype=np.float64)
+            half = np.asarray(box["size_m"], dtype=np.float64)
+            friction = np.asarray(box["friction"], dtype=np.float64)
+            solref = np.asarray(box["solref"], dtype=np.float64)
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError(f"invalid static box parameters: {name}") from exc
+        if (
+            center.shape != (3,)
+            or half.shape != (3,)
+            or friction.shape != (3,)
+            or solref.shape != (2,)
+            or not all(np.isfinite(arr).all() for arr in (center, half, friction, solref))
+            or np.any(half <= 0)
+            or np.any(friction < 0)
+            or np.any(center[:2] - half[:2] < [x[0] - 1e-8, y[0] - 1e-8])
+            or np.any(center[:2] + half[:2] > [x[-1] + 1e-8, y[-1] + 1e-8])
+        ):
+            raise ValueError(f"static box outside crop or invalid dimensions: {name}")
+    return boxes
+
+
+def _wall_probe(box: dict, approach_xy: list[float]) -> dict:
+    """Place a ray and a moving sphere on the approach side of one fence."""
+    center = np.asarray(box["pos_m"], dtype=np.float64)
+    half = np.asarray(box["size_m"], dtype=np.float64)
+    axis = int(np.argmin(half[:2]))
+    tangential_axis = 1 - axis
+    side = -1.0 if approach_xy[axis] < center[axis] else 1.0
+    face = center[axis] + side * half[axis]
+    ray = center.copy()
+    ray[tangential_axis] += min(0.4, half[tangential_axis] * 0.5)
+    ray[axis] = face + side * _WALL_RAY_START_M
+    sphere = center.copy()
+    sphere[axis] = face + side * _WALL_SPHERE_START_M
+    direction = np.zeros(3)
+    direction[axis] = -side
+    return {
+        "box_name": box["name"],
+        "ray_origin_xyz_m": ray.tolist(),
+        "sphere_initial_xyz_m": sphere.tolist(),
+        "direction_xyz": direction.tolist(),
+    }
+
+
+def _check_environment_box_separation(boxes: list[dict], offsets: np.ndarray) -> None:
+    """A cropped fence from one environment must not reach another."""
+    for env_a, offset_a in enumerate(offsets):
+        for offset_b in offsets[env_a + 1 :]:
+            for box_a in boxes:
+                center_a = np.asarray(box_a["pos_m"][:2]) + offset_a
+                half_a = np.asarray(box_a["size_m"][:2])
+                for box_b in boxes:
+                    center_b = np.asarray(box_b["pos_m"][:2]) + offset_b
+                    half_b = np.asarray(box_b["size_m"][:2])
+                    if np.all(np.abs(center_a - center_b) < half_a + half_b):
+                        raise ValueError("static boxes overlap across environments")
+
+
 def _route_probes(descriptor: dict, x: np.ndarray, y: np.ndarray, height: np.ndarray) -> dict:
     route = descriptor["route"]
     probes = {}
@@ -82,7 +168,13 @@ def _route_probes(descriptor: dict, x: np.ndarray, y: np.ndarray, height: np.nda
 
 
 def _non_node_ray_points(
-    x: np.ndarray, y: np.ndarray, height: np.ndarray, probes: dict, count: int = 8
+    x: np.ndarray,
+    y: np.ndarray,
+    height: np.ndarray,
+    probes: dict,
+    static_boxes: list[dict],
+    wall_probes: list[dict],
+    count: int = 8,
 ) -> list[tuple[float, float]]:
     saddle = np.abs(height[:-1, :-1] + height[1:, 1:] - height[:-1, 1:] - height[1:, :-1])
     points = []
@@ -92,6 +184,18 @@ def _non_node_ray_points(
         px = float(x[col] + 0.25 * (x[col + 1] - x[col]))
         py = float(y[row] + 0.75 * (y[row + 1] - y[row]))
         if np.min(np.linalg.norm(probe_xy - [px, py], axis=1)) < 0.25:
+            continue
+        if any(
+            abs(px - box["pos_m"][0]) <= box["size_m"][0]
+            and abs(py - box["pos_m"][1]) <= box["size_m"][1]
+            for box in static_boxes
+        ):
+            continue
+        if any(
+            np.linalg.norm(np.asarray(wall["sphere_initial_xyz_m"][:2]) - [px, py])
+            < _RADIUS_M + 0.02
+            for wall in wall_probes
+        ):
             continue
         points.append((px, py))
         if len(points) == count:
@@ -106,14 +210,19 @@ def _preflight(root: Path, envs: int) -> tuple[np.ndarray, np.ndarray, np.ndarra
     vertices, faces = grid_to_triangle_mesh(x, y, height)
     probes = _route_probes(descriptor, x, y, height)
     offsets = environment_offsets(envs, x, y)
+    boxes = _static_boxes(descriptor, x, y)
+    _check_environment_box_separation(boxes, offsets)
+    wall_probes = [_wall_probe(box, descriptor["route"]["approach_xyz_m"][:2]) for box in boxes]
     source = descriptor["identity"]
     record = {
         "authoring_status": "UNVERIFIED_RUNTIME",
+        "export_schema_version": descriptor["schema_version"],
         "scenario_id": descriptor["scenario_id"],
         "validation_status": descriptor["validation_status"],
         "grid_file_sha256": descriptor["grid_file_sha256"],
         "source_manifest_sha256": source["source_manifest_sha256"],
         "source_profile_hash": source["source_profile_hash"],
+        "source_field_xml_sha256": source.get("source_field_xml_sha256"),
         "region_manifest_sha256": source["region_manifest_sha256"],
         "region_profile_hash": source["region_profile_hash"],
         "source_provenance": "descriptor_claim_check_against_source_region_before_transfer",
@@ -128,6 +237,9 @@ def _preflight(root: Path, envs: int) -> tuple[np.ndarray, np.ndarray, np.ndarra
         ),
         "environment_offsets_xy_m": offsets.tolist(),
         "probe_sites": probes,
+        "static_boxes": boxes,
+        "static_box_count_per_env": len(boxes),
+        "wall_probe_sites": wall_probes,
     }
     return x, y, height, record
 
@@ -176,7 +288,10 @@ def _run_physx(
         usd_face_indices = faces.ravel().tolist()
         offsets = environment_offsets(envs, x, y)
         probes = record["probe_sites"]
+        static_boxes = record["static_boxes"]
+        wall_probes = record["wall_probe_sites"]
         sensors = {}
+        expected_colliders = {}
         for env_index, (offset_x, offset_y) in enumerate(offsets):
             env_path = f"/World/env_{env_index}"
             env = UsdGeom.Xform.Define(stage, env_path)
@@ -193,6 +308,18 @@ def _run_physx(
             UsdPhysics.MeshCollisionAPI.Apply(mesh.GetPrim()).CreateApproximationAttr(
                 UsdPhysics.Tokens.none
             )
+            for box in static_boxes:
+                cube = UsdGeom.Cube.Define(stage, f"{env_path}/{box['name']}")
+                cube.CreateSizeAttr(2.0)
+                cube.AddTranslateOp(precision=UsdGeom.XformOp.PrecisionDouble).Set(
+                    Gf.Vec3d(
+                        float(box["pos_m"][0] - x[0]),
+                        float(box["pos_m"][1] - y[0]),
+                        float(box["pos_m"][2]),
+                    )
+                )
+                cube.AddScaleOp().Set(Gf.Vec3f(*map(float, box["size_m"])))
+                UsdPhysics.CollisionAPI.Apply(cube.GetPrim())
             for label, probe in probes.items():
                 px, py = probe["xy_m"]
                 sphere_path = f"{env_path}/probe_{label}"
@@ -216,12 +343,40 @@ def _run_physx(
                         translations=np.array([[0.0, 0.0, 0.0]]),
                     )
                 )
+                expected_colliders[(env_index, label)] = mesh.GetPath().pathString
+            for wall in wall_probes:
+                label = f"wall:{wall['box_name']}"
+                sphere_path = f"{env_path}/probe_wall_{wall['box_name']}"
+                sphere = UsdGeom.Sphere.Define(stage, sphere_path)
+                sphere.CreateRadiusAttr(_RADIUS_M)
+                initial = wall["sphere_initial_xyz_m"]
+                sphere.AddTranslateOp(precision=UsdGeom.XformOp.PrecisionDouble).Set(
+                    Gf.Vec3d(
+                        float(initial[0] - x[0]),
+                        float(initial[1] - y[0]),
+                        float(initial[2]),
+                    )
+                )
+                UsdPhysics.CollisionAPI.Apply(sphere.GetPrim())
+                body = UsdPhysics.RigidBodyAPI.Apply(sphere.GetPrim())
+                velocity = np.asarray(wall["direction_xyz"]) * _WALL_SPHERE_SPEED_M_S
+                body.CreateVelocityAttr(Gf.Vec3f(*map(float, velocity)))
+                UsdPhysics.MassAPI.Apply(sphere.GetPrim()).CreateMassAttr(0.4)
+                sensors[(env_index, label)] = ContactSensor(
+                    Contact.create(
+                        f"{sphere_path}/contact",
+                        min_threshold=0.0,
+                        max_threshold=1e9,
+                        translations=np.array([[0.0, 0.0, 0.0]]),
+                    )
+                )
+                expected_colliders[(env_index, label)] = f"{env_path}/{wall['box_name']}"
 
         SimulationManager.setup_simulation(dt=_DT_S, device=device)
         SimulationManager.step(steps=1)  # Start physics before scene queries or sensor reads.
         authoring_seconds = time.perf_counter() - started
         query = get_physics_scene_query_interface()
-        ray_sites = _non_node_ray_points(x, y, height, probes)
+        ray_sites = _non_node_ray_points(x, y, height, probes, static_boxes, wall_probes)
         ray_records = []
         for env_index, (offset_x, offset_y) in enumerate(offsets):
             mesh_path = f"/World/env_{env_index}/terrain"
@@ -253,6 +408,34 @@ def _run_physx(
                         ),
                     }
                 )
+        wall_ray_records = []
+        for env_index, (offset_x, offset_y) in enumerate(offsets):
+            for wall in wall_probes:
+                origin = np.asarray(wall["ray_origin_xyz_m"]) + [offset_x, offset_y, 0.0]
+                hit_found, hit = query.raycast_closest(
+                    carb.Float3(*map(float, origin)),
+                    carb.Float3(*map(float, wall["direction_xyz"])),
+                    0.5,
+                    both_sides=False,
+                )
+                expected_path = f"/World/env_{env_index}/{wall['box_name']}"
+                observed_distance = float(hit.distance) if hit_found else None
+                wall_ray_records.append(
+                    {
+                        "env": env_index,
+                        "box": wall["box_name"],
+                        "hit": bool(hit_found),
+                        "collider": str(hit.collision) if hit_found else None,
+                        "expected_distance_m": _WALL_RAY_START_M,
+                        "observed_distance_m": observed_distance,
+                        "valid": bool(
+                            hit_found
+                            and str(hit.collision) == expected_path
+                            and math.isfinite(observed_distance)
+                            and abs(observed_distance - _WALL_RAY_START_M) <= _RAY_TOLERANCE_M
+                        ),
+                    }
+                )
 
         first_contacts = {}
         begin_steps = time.perf_counter()
@@ -271,6 +454,7 @@ def _run_physx(
                         "time_s": step * _DT_S,
                         "force_n": force,
                         "number_of_contacts": int(frame["number_of_contacts"]),
+                        "expected_collider": expected_colliders[identity],
                         "valid": math.isfinite(force) and force > 0.0,
                     }
         step_seconds = time.perf_counter() - begin_steps
@@ -280,6 +464,7 @@ def _run_physx(
             if len(first_contacts) == len(sensors)
             and all(row["valid"] for row in first_contacts.values())
             and all(row["valid"] for row in ray_records)
+            and all(row["valid"] for row in wall_ray_records)
             else "PHYSX_CONTACT_PROBE_FAIL",
             "backend": "isaac_sim_6_1_physx",
             "device": device,
@@ -293,6 +478,7 @@ def _run_physx(
                 default=None,
             ),
             "ray_samples": ray_records,
+            "wall_ray_samples": wall_ray_records,
             "first_contacts": [first_contacts[key] for key in sorted(first_contacts)],
             "contacted_probe_count": len(first_contacts),
             "expected_probe_count": len(sensors),
@@ -302,7 +488,7 @@ def _run_physx(
             "environment_steps_per_second": envs * steps / step_seconds,
             "process_max_rss_bytes": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * 1024,
             "solver_warning_scan": "inspect_isaac_console_log_separately",
-            "scope": "static_mesh_120mm_spheres_no_articulated_robot",
+            "scope": "static_mesh_and_cropped_fence_120mm_spheres_no_articulated_robot",
         }
         return report
     finally:
@@ -330,8 +516,16 @@ def main() -> int:
         parser.error(f"output already exists: {args.output}")
     x, y, height, record = _preflight(args.export, args.envs)
     if args.check_only:
-        report = {**record, "runtime_status": "UNVERIFIED_RUNTIME"}
+        report = {
+            **record,
+            "runtime_status": "UNVERIFIED_RUNTIME",
+            "scope": "terrain_only_legacy_export"
+            if record["export_schema_version"] == 1
+            else "terrain_and_cropped_fence_export",
+        }
     else:
+        if record["export_schema_version"] == 1:
+            parser.error("schema 1 is terrain-only; export schema 2 for a fly-pack PhysX check")
         report = _run_physx(
             x, y, height, record, envs=args.envs, steps=args.steps, device=args.device
         )

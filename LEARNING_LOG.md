@@ -207,3 +207,24 @@ the marked route and reverse down, then inspect the saved traversal report.
   Newton runs; sphere-ground contact passed. The full source pack remains
   `DRAFT_BLOCKED`, and crop edges are external-trainer reset boundaries.
   Details and source identities are in `FLY_TRAINING_PACK_STATUS_20260923.md`.
+
+## 2026-09-23 — fly-ramp Isaac fence handoff correction
+
+- **Finding:** the north/south cropped MuJoCo regions keep the source perimeter
+  fence, but the previous Isaac handoff exported only height samples. A neutral
+  120 mm sphere at the lateral edge contacted the same fence in the full and
+  cropped MuJoCo scenes on both ramps, at `13.4345 mm` penetration. Omitting
+  that fence would change lateral contact behavior in a parallel trainer.
+- **Fix:** schema-2 offline and in-memory exports now include the exact source
+  fence section inside each crop, bound to the verified region XML hash. The
+  optional PhysX probe authors one static box per environment and checks its
+  face with a ray and a sideways contact sphere. Legacy schema-1 exports stay
+  readable as heightfield-only data and are rejected for the full fly-pack
+  PhysX runtime probe.
+- **AGENT_PASS (bounded):** real north/south v4 exports each contain the expected
+  single top/bottom fence. Both 16-environment offline preflights passed box
+  separation checks and report `UNVERIFIED_RUNTIME`. Repository tests: 352
+  passed; Ruff check/format and diff check passed. The source pack and region
+  hashes did not change.
+- **UNVERIFIED:** actual Isaac Sim/PhysX contact, friction and runtime scaling.
+  No robot policy was trained and no ordinary-slope training asset changed.

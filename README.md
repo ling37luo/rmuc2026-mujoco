@@ -457,13 +457,17 @@ region keeps the source pack's `DRAFT_BLOCKED` validation scope.
 
 For an offline Isaac Sim/PhysX consumer, the same optional adapter can copy
 the region's exact float64 `x_m`, `y_m` and `height_m[y, x]` arrays into a
-standalone directory with a JSON descriptor for world coordinates, 1 cm grid
-spacing, bounds and source/profile hashes. Validate it against the original
-region before importing it; without `source_region`, the file hash and geometry
+standalone directory. Its schema-2 descriptor includes the source perimeter
+box that intersects each fly-ramp crop, clipped to the crop's XY bounds so
+parallel copies cannot overlap. It records world coordinates, 1 cm grid
+spacing, bounds, the source field XML hash and source/profile hashes. Validate
+it against the original region before importing it; without `source_region`,
+the file hash and geometry
 are checked but source provenance is only the descriptor's claim. The existing
 in-memory `load_isaac_training_region()` returns float32 arrays instead.
 The consumer must choose its conversion once, record the effective sample
-order and scale, then construct and check its own PhysX heightfield collider:
+order and scale, then construct and check both its terrain and static box
+colliders. The old schema-1 export remains readable as heightfield-only data:
 
 ```python
 from rmuc2026_mujoco import (
@@ -477,6 +481,7 @@ terrain = load_isaac_training_region_export(
 )
 # terrain.height_m[row, column] is the absolute world Z at
 # (terrain.x_m[column], terrain.y_m[row]); do not rescale it.
+# terrain.static_boxes lists the source-bound cropped perimeter boxes.
 ```
 
 This is a data handoff and hash/scale check, not an Isaac Sim/PhysX contact

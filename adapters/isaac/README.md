@@ -28,8 +28,13 @@ locally exported north or south fly-ramp region. Its Isaac runtime path has not
 been run in this repository's development environment. It is a small contact
 and scale test, not a SCUT/Fudan robot or policy adapter.
 
-The input is the two-file output of `export_isaac_training_region()`. First
-verify the copied export against its source region on the producing machine:
+The input is the two-file schema-2 output of `export_isaac_training_region()`.
+It carries the exact heightfield samples plus the portion of the source
+perimeter fence that intersects the fly-ramp crop. The box is clipped only at
+the crop's artificial XY boundary, so copies in separate environments do not
+overlap. MuJoCo's friction and `solref` values are recorded for provenance;
+this probe does not establish PhysX friction or solver-parameter equivalence.
+First verify the copied export against its source region on the producing machine:
 
 ```python
 from rmuc2026_mujoco import load_isaac_training_region_export
@@ -58,13 +63,16 @@ uv run --locked --project . python adapters/isaac/physx_fly_contact_smoke.py \
 ```
 
 Repeat for the south export. The script authors **one independent static
-triangle-mesh collider per environment**; it does not share one contact surface
-and call that 16 environments. Mesh vertices are the original height samples,
+triangle-mesh collider and source-bound perimeter box per environment**; it
+does not share one contact surface and call that 16 environments. Mesh
+vertices are the original height samples,
 with the same diagonal used by MuJoCo's heightfield; only the required USD
-float32 point conversion is applied. Each collider has four independent 120 mm
-diameter sphere probes at approach, low seam, takeoff and landing. Eight
-non-node vertical PhysX scene rays per environment compare the cooked collider
-height with the source triangle. Each case runs 500 steps at 1 ms by default.
+float32 point conversion is applied. Each environment has four independent
+120 mm sphere probes at approach, low seam, takeoff and landing, plus one
+sideways sphere probe for the fence. Eight non-node vertical PhysX scene rays
+per environment compare cooked terrain height with the source triangles; a
+horizontal ray checks the fence face. Each case runs 500 steps at 1 ms by
+default.
 
 On the real 213×614 north and south v4 source grids, 200 non-node samples per
 side were compared against MuJoCo `mj_ray` on the heightfield geom. Direct
@@ -77,8 +85,9 @@ the host run succeeds.
 
 The resulting JSON records source/profile hashes, sample order, point
 quantization, ray error, first contact on every probe, wall-clock throughput
-and process memory. `PHYSX_CONTACT_PROBE_PASS` means all sphere probes touched
-and all collider rays matched within 1 mm in that run. Inspect the Isaac
+and process memory. `PHYSX_CONTACT_PROBE_PASS` means all sphere probes reported
+contact, the terrain rays matched within 1 mm, and the fence rays identified
+the expected static boxes. Inspect the Isaac
 console log for warnings and record GPU memory with `nvidia-smi` separately;
 the script does not parse solver logs or query peak VRAM.
 It does not establish robot landing quality, MuJoCo/PhysX friction parity or

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 from pathlib import Path
+import sys
 
 import numpy as np
 import pytest
@@ -14,6 +15,12 @@ _SPEC = importlib.util.spec_from_file_location("heightfield_mesh", _MODULE_PATH)
 assert _SPEC is not None and _SPEC.loader is not None
 _MESH = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(_MESH)
+sys.path.insert(0, str(_MODULE_PATH.parent))
+_PROBE_PATH = _MODULE_PATH.parent / "physx_fly_contact_smoke.py"
+_PROBE_SPEC = importlib.util.spec_from_file_location("physx_fly_contact_smoke", _PROBE_PATH)
+assert _PROBE_SPEC is not None and _PROBE_SPEC.loader is not None
+_PROBE = importlib.util.module_from_spec(_PROBE_SPEC)
+_PROBE_SPEC.loader.exec_module(_PROBE)
 
 
 def _face_height(points: np.ndarray, face: np.ndarray, x: float, y: float) -> float:
@@ -81,3 +88,58 @@ def test_mesh_rejects_nonfinite_and_outside_queries() -> None:
         _MESH.triangle_height_at(x, y, z, 0.02, 0.0)
     with pytest.raises(ValueError, match="count"):
         _MESH.environment_offsets(0, x, y)
+
+
+def test_fly_static_fence_probe_and_environment_separation() -> None:
+    x = np.linspace(-14.35, -8.22, 614)
+    y = np.linspace(0.03, 2.15, 213)
+    box = {
+        "name": "rmuc2026_perimeter_top",
+        "pos_m": [-11.285, 1.7215, 1.0404],
+        "size_m": [3.065, 0.025, 1.35],
+        "contype": 2,
+        "conaffinity": 1,
+        "friction": [1.0, 0.005, 0.0001],
+        "solref": [0.04, 1.0],
+    }
+    descriptor = {
+        "schema_version": 2,
+        "scenario_id": "fly_ramp_north",
+        "collision": {"static_boxes": [box]},
+    }
+    assert _PROBE._static_boxes(descriptor, x, y) == [box]
+    wall = _PROBE._wall_probe(box, [-8.9, 1.3])
+    assert wall["direction_xyz"] == [0.0, 1.0, 0.0]
+    assert wall["ray_origin_xyz_m"][1] == pytest.approx(box["pos_m"][1] - box["size_m"][1] - 0.2)
+    assert wall["sphere_initial_xyz_m"][1] == pytest.approx(
+        box["pos_m"][1] - box["size_m"][1] - 0.15
+    )
+    for count in (1, 4, 16):
+        _PROBE._check_environment_box_separation([box], _MESH.environment_offsets(count, x, y))
+    with pytest.raises(ValueError, match="overlap across environments"):
+        _PROBE._check_environment_box_separation([box], np.array([[0.0, 0.0], [0.1, 0.0]]))
+
+
+def test_fly_static_fence_contract_rejects_uncropped_or_missing_box() -> None:
+    x = np.linspace(-14.35, -8.22, 614)
+    y = np.linspace(0.03, 2.15, 213)
+    descriptor = {"schema_version": 2, "scenario_id": "fly_ramp_north"}
+    with pytest.raises(ValueError, match="collision.static_boxes"):
+        _PROBE._static_boxes(descriptor, x, y)
+    descriptor["collision"] = {"static_boxes": []}
+    with pytest.raises(ValueError, match="no cropped static perimeter"):
+        _PROBE._static_boxes(descriptor, x, y)
+    descriptor["collision"]["static_boxes"] = [
+        {
+            "name": "rmuc2026_perimeter_top",
+            "pos_m": [-11.285, 1.7215, 1.0404],
+            "size_m": [14.025, 0.025, 1.35],
+            "contype": 2,
+            "conaffinity": 1,
+            "friction": [1.0, 0.005, 0.0001],
+            "solref": [0.04, 1.0],
+        }
+    ]
+    with pytest.raises(ValueError, match="outside crop"):
+        _PROBE._static_boxes(descriptor, x, y)
+    assert _PROBE._static_boxes({"schema_version": 1}, x, y) == []

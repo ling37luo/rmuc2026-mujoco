@@ -15,8 +15,15 @@ their manifest, file hashes, grid axes, route and source slice were verified.
 | --- | --- |
 | MuJoCo source/crop contact | A neutral sphere at each approach spawn ran 500 steps at 2 ms in the full and cropped field. Both pairs had 399 contact steps, no numerical warning, and final position differences at most `1.2e-11 m`. |
 | MuJoCo parallel interface | The same 16 public example-rover cases on each ramp were run with 1, 4 and 16 independent workers. All 16 cases per ramp gave the same physics outcomes across worker counts, with zero nonfinite states or solver warnings. At 16 workers the north/south rates were about 8.7k/8.3k physics steps/s and worker RSS was about 75 MiB. The rover did not pass the jump task; its outcome is not a field or policy acceptance result. |
-| Isaac data handoff | Float64 X/Y/height exports round-tripped exactly against both verified regions. The offline PhysX mesh preflight accepted 16 spatial offsets and retained source/profile identities, but created no PhysX collider. |
+| Isaac data handoff | Float64 X/Y/height exports round-tripped exactly against both verified regions. Schema-2 exports transfer the source-bound perimeter box intersecting each crop, clipped to its XY bounds to keep parallel environments separate. North/south 16-environment offline preflights passed source re-read and box-separation checks; both report `UNVERIFIED_RUNTIME` because no PhysX collider was created. |
 | Isaac Lab kit-less Newton XPBD | Neutral 120 mm spheres at approach, ramp middle and landing were supported in 1, 4 and 16 independent worlds on both ramps. The largest support-height error was `0.157 mm`; 16-world rates were about 15.9k/17.0k world-steps/s. At 4/16 worlds Newton warned that static heightfield-to-heightfield collision pairs are skipped. Sphere-ground contacts passed. |
+
+At the lateral perimeter, a neutral 120 mm sphere at `z=1.0 m` contacted the
+same fence in the full and cropped MuJoCo scenes: north `perimeter_top`, south
+`perimeter_bottom`, each with `13.4345 mm` penetration at the probe pose.
+This exposed the earlier Isaac handoff's omission of the fence; schema 2 now
+records that collision geometry. The original region manifests and hashes
+have not changed.
 
 **Decision:** the fly-ramp regions are usable as verified data inputs and as
 bounded MuJoCo/Newton generic-contact training substrates. Their source
@@ -31,3 +38,5 @@ boundaries respectively; these results do not certify a robot's flying policy.
 The detailed local JSON reports are intentionally outside this code-only
 repository under `runs/rmuc2026-training-regions/20260923T_fly_local_candidate_v4/`
 and `runs/scut-fly-field-benchmark/20260923T_scut_rough_dash_v1/training_audit/`.
+The new schema-2 Isaac exports and `isaac_schema2_{north,south}_16env_offline_preflight.json`
+are under the fly-region run directory.
