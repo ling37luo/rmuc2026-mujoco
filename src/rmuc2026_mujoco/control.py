@@ -86,7 +86,7 @@ def _adapt_callback(callback: Any) -> ControlCallback:
         else:
             callback(model, data)
 
-    for name in ("reset", "press_name", "configure_route"):
+    for name in ("reset", "press_name", "configure_route", "set_seed"):
         method = getattr(callback, name, None)
         if callable(method):
             setattr(call, name, method)

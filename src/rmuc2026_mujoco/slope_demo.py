@@ -42,8 +42,11 @@ class RoverController:
     """Wheel-speed example, with route following or simple latched keyboard input."""
 
     def __init__(self, route, direction, speed):
-        self.route, self.direction, self.speed = route, direction, speed
+        self.configure_route(route, direction, speed)
         self.reset(None, None)
+
+    def configure_route(self, route, direction, speed):
+        self.route, self.direction, self.speed = route, direction, speed
 
     def reset(self, model, data):
         self.vx = self.yaw = 0.0

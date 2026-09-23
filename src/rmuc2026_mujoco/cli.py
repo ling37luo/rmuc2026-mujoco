@@ -170,20 +170,31 @@ def build_parser() -> argparse.ArgumentParser:
     )
     run = commands.add_parser(
         "run",
-        help="run a robot-agnostic turning benchmark with optional multiprocessing",
+        help="run automatic turning or slope evaluation with optional multiprocessing",
     )
     run.add_argument("asset", type=Path)
-    run.add_argument("--robot", type=Path, required=True)
+    run.add_argument("--robot", type=Path, help="robot MJCF; slopes default to the example rover")
     run.add_argument("--controller", help="user controller factory, module:object")
     run.add_argument("--scenario", choices=("turn_basic", "slope_basic"), default="turn_basic")
     run.add_argument("--phase", choices=("spin", "arc", "reversal"), default="spin")
     run.add_argument("--backend", choices=("mujoco", "isaac"), default="mujoco")
     run.add_argument("--workers", type=int, default=1)
     run.add_argument("--envs-per-worker", type=int, default=1)
-    run.add_argument("--duration", type=float, default=8.0)
+    run.add_argument(
+        "--duration", type=float,
+        help="episode limit; default: turn 8 s, slopes distance/speed based",
+    )
     run.add_argument("--seed", type=int, default=20260922)
     run.add_argument("--profile", choices=RUNTIME_PROFILE_NAMES, default="collision_only")
     run.add_argument("--telemetry", type=Path, help="write the aggregate run manifest as JSON")
+    run.add_argument("--patches", nargs="+", help="slope patch IDs; default: all screened routes")
+    run.add_argument(
+        "--directions", nargs="+", choices=("uphill", "downhill", "roundtrip"),
+        default=["uphill", "downhill", "roundtrip"],
+    )
+    run.add_argument("--speeds", nargs="+", type=float, default=[0.3, 0.5], help="slope speeds in m/s")
+    run.add_argument("--repeats", type=int, default=1, help="episodes per slope/direction/speed")
+    run.add_argument("--trajectory-dir", type=Path, help="optional slope episode trajectories (50 Hz)")
     view = commands.add_parser("view")
     view.add_argument("asset", type=Path)
     view.add_argument("--robot", type=Path, help="user-owned robot MJCF to attach to the field")
@@ -446,16 +457,31 @@ def main(argv: list[str] | None = None) -> int:
                     {
                         "backend": "isaac",
                         "status": "DESCRIPTOR_READY",
-                        "robot_mjcf": str(args.robot.expanduser().resolve()),
+                        "robot_mjcf": str(args.robot.expanduser().resolve()) if args.robot else None,
                         "note": "Isaac consumer builds its own parallel backend from this descriptor",
                     }
                 )
-            else:
-                if args.scenario != "turn_basic":
+            elif args.scenario == "slope_basic":
+                from datetime import datetime, timezone
+                from .slope_batch import run_slope_batch
+
+                if args.envs_per_worker != 1:
                     raise ValueError(
-                        "the MuJoCo runner currently executes scenario=turn_basic; "
-                        "use view or the slope catalog for slope_basic"
+                        "slope batches reuse one environment per worker; "
+                        "increase --workers for parallelism"
                     )
+                payload = run_slope_batch(
+                    args.asset, robot=args.robot, controller=args.controller, patches=args.patches,
+                    directions=args.directions, speeds=args.speeds, repeats=args.repeats,
+                    workers=args.workers, duration_s=args.duration, seed=args.seed,
+                    profile=args.profile, trajectory_dir=args.trajectory_dir, progress=True,
+                )
+                if args.telemetry is None:
+                    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S.%fZ")
+                    args.telemetry = Path("runs") / f"slope_batch_{stamp}.json"
+            else:
+                if args.robot is None:
+                    raise ValueError("turn_basic requires --robot ROBOT.xml")
                 payload = run_turn_batch(
                     args.asset,
                     robot_mjcf=args.robot,
@@ -463,7 +489,7 @@ def main(argv: list[str] | None = None) -> int:
                     phase=args.phase,
                     workers=args.workers,
                     envs_per_worker=args.envs_per_worker,
-                    duration_s=args.duration,
+                    duration_s=8.0 if args.duration is None else args.duration,
                     seed=args.seed,
                     profile=args.profile,
                 )
@@ -474,7 +500,11 @@ def main(argv: list[str] | None = None) -> int:
                     json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
                 )
                 payload["telemetry"] = str(telemetry_path)
-            print(json.dumps(payload, indent=2, sort_keys=True))
+            # The full slope matrix is in the saved report; keep console output compact.
+            display_payload = payload
+            if args.scenario == "slope_basic" and args.backend == "mujoco":
+                display_payload = {key: value for key, value in payload.items() if key != "episodes"}
+            print(json.dumps(display_payload, indent=2, sort_keys=True))
             return 0 if payload.get("status") in {"PASS", "DESCRIPTOR_READY"} else 2
         asset = FieldAsset.open(args.asset, verify=True)
         if args.command == "info":

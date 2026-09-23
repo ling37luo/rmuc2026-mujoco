@@ -8,6 +8,7 @@ import json
 import math
 from pathlib import Path
 from queue import SimpleQueue
+import random
 import tempfile
 import threading
 import time
@@ -102,6 +103,7 @@ class SlopeSession:
         mode="human",
         profile="collision_only",
         friction_preset=None,
+        record_trajectory=True,
     ):
         if direction not in {"uphill", "downhill", "roundtrip"}:
             raise ValueError("direction must be uphill, downhill or roundtrip")
@@ -137,9 +139,9 @@ class SlopeSession:
                 self.asset, robot, profile=profile, friction_preset=friction_preset
             )
             self.controller = load_controller(controller, self.model, self.data, mode=mode)
-            if callable(getattr(self.controller, "configure_route", None)):
-                self.controller.configure_route(self.route, direction, speed)
         self.friction_preset = friction_preset
+        self.record_trajectory = record_trajectory
+        self.seed = None
         joint = _root_joint(self.model)
         self.qadr = int(self.model.jnt_qposadr[joint])
         self.body = int(self.model.jnt_bodyid[joint])
@@ -152,7 +154,31 @@ class SlopeSession:
         self.episodes = []
         self.reset()
 
-    def reset(self):
+    def reset(self, *, patch=None, direction=None, speed=None, seed=None):
+        """Start a new episode, reusing the composed model and controller.
+
+        Route, direction and speed change only at reset. The controller owns
+        its policy state and may implement set_seed(seed) for private RNGs.
+        """
+        if direction is not None and direction not in {"uphill", "downhill", "roundtrip"}:
+            raise ValueError("direction must be uphill, downhill or roundtrip")
+        if speed is not None and (not math.isfinite(speed) or speed <= 0):
+            raise ValueError("speed must be positive and finite")
+        if patch is not None:
+            self.route = select_slope_route(self.catalog, patch)
+        if direction is not None:
+            self.direction = direction
+        if speed is not None:
+            self.speed = speed
+        if seed is not None:
+            self.seed = int(seed)
+        if self.seed is not None:
+            random.seed(self.seed)
+            np.random.seed(self.seed % (2**32))
+            if callable(getattr(self.controller, "set_seed", None)):
+                self.controller.set_seed(self.seed)
+        if callable(getattr(self.controller, "configure_route", None)):
+            self.controller.configure_route(self.route, self.direction, self.speed)
         self.initial_pose = reset_slope_spawn(
             self.model, self.data, self.route, direction=self.direction, controller=self.controller
         )
@@ -229,7 +255,10 @@ class SlopeSession:
             penetration_m=penetration,
             failure=self.failure,
         )
-        if self.steps % max(1, round(0.02 / self.model.opt.timestep)) == 0:
+        if (
+            self.record_trajectory
+            and self.steps % max(1, round(0.02 / self.model.opt.timestep)) == 0
+        ):
             self.rows.append(
                 {
                     "time_s": float(d.time),
@@ -263,6 +292,7 @@ class SlopeSession:
             "direction": self.direction,
             "control": self.mode,
             "speed_mps": self.speed,
+            "seed": self.seed,
             "friction_preset": self.friction_preset,
             "timestep_s": float(self.model.opt.timestep),
             "steps": self.steps,

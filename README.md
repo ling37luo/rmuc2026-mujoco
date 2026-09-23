@@ -348,6 +348,51 @@ The viewer timing and controller stepping follow MuJoCo's
 and [simulation loop](https://mujoco.readthedocs.io/en/stable/programming/simulation.html)
 interfaces.
 
+#### Automatic slope evaluation
+
+Run a complete slope matrix without opening a window or driving manually:
+
+```bash
+rmuc2026-field run ./local-rmuc2026-field --scenario slope_basic \
+  --directions uphill downhill roundtrip --speeds 0.3 0.5 \
+  --repeats 2 --workers 2 --telemetry runs/slope_auto.json
+```
+
+With three screened routes this schedules 36 independent episodes. The default
+robot is the original example rover. To evaluate your own robot/policy, supply
+both `--robot ROBOT.xml` and `--controller your_controller:make`, using the same
+callback as `view`. `configure_route(route, direction, speed)` receives the
+next task before `reset(model, data)` clears the controller state. Controllers
+with private random generators can implement `set_seed(seed)`; standard Python
+and NumPy RNGs are seeded on each reset. A deterministic policy need not react
+differently to different seeds: repeats check reset consistency, not randomized
+robustness unless the consumer explicitly provides randomization.
+
+Each episode ends at success, a recorded failure, a controller error, or a time
+limit. Its result is retained and the next episode resets automatically. A
+roundtrip still needs both legs in that same episode. `--patches ID...` selects
+specific routes; omitted means all screened routes. `--duration SECONDS` sets
+the episode limit; otherwise it is `max(8, 5 + 2 * path_length / speed)`, with
+double path length for roundtrips. A timeout stays incomplete (`truncated=true`)
+and is not reported as successful physics traversal.
+
+`--workers` starts independent processes using `spawn`. Each worker reuses one
+model/data/controller across its assigned episodes. Only one episode is active
+per worker (`--envs-per-worker=1`); increase workers for parallelism. Case IDs
+and seeds are independent of worker count. The default stores summaries only,
+without building trajectory lists. Add `--trajectory-dir NEW_DIRECTORY` to save
+50 Hz trajectories, including failed attempts. Results include per-direction
+success rates, individual leg records, failure reasons, hashes, solver settings,
+throughput and per-worker peak CPU memory. The CLI writes a timestamped report
+under `runs/` if `--telemetry` is omitted; it exits with code 2 if any case does
+not pass, after finishing the matrix.
+
+Python consumers can use `run_slope_batch(...)` or reuse a `SlopeSession` with
+`run_slope_episode(session, case)`. These are policy evaluation/reset/stepping
+utilities; the consumer supplies rewards, optimization and training algorithms.
+For watching an automatic run, use `view --scenario slope_basic --control policy
+--direction roundtrip`. Isaac execution remains the external consumer's task.
+
 #### Turning benchmark and parallel runs
 
 `turn_basic` is the first executable benchmark. It screens up to eight starts

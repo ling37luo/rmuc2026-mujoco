@@ -80,6 +80,7 @@ from .slope_catalog import (
 )
 from .slope_routes import screen_slope_route, select_slope_route
 from .slope_runtime import SlopeSession, reset_slope_spawn
+from .slope_batch import run_slope_batch, run_slope_episode
 from .training import MuJoCoScenario, StepResult, TelemetryRecorder
 from .turning import (
     NoOpTurnController,
@@ -144,6 +145,8 @@ __all__ = [
     "SlopeBand",
     "SlopePatch",
     "SlopeSession",
+    "run_slope_batch",
+    "run_slope_episode",
     "SpawnCandidate",
     "StepResult",
     "SurfaceSample",
