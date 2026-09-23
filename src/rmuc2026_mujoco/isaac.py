@@ -18,6 +18,7 @@ from .query import field_bounds, load_heightfield
 from .scenarios import scenario_descriptor
 from .slope_catalog import slope_catalog
 from .turning import screen_turn_spawns, turn_phase_registry
+from .training_region import TrainingRegion
 
 
 @dataclass(frozen=True)
@@ -28,6 +29,7 @@ class IsaacHeightfieldInput:
     bounds_xy_m: tuple[tuple[float, float], tuple[float, float]]
     scenario: dict[str, Any]
     spawn_points: tuple[dict[str, Any], ...] = ()
+    source: str = "verified_runtime_pack_heightfield"
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -35,7 +37,7 @@ class IsaacHeightfieldInput:
             "bounds_xy_m": [list(row) for row in self.bounds_xy_m],
             "scenario": self.scenario,
             "spawn_points": [dict(point) for point in self.spawn_points],
-            "source": "verified_runtime_pack_heightfield",
+            "source": self.source,
         }
 
 
@@ -95,4 +97,47 @@ def load_isaac_heightfield(
     )
 
 
-__all__ = ["IsaacHeightfieldInput", "load_isaac_heightfield"]
+def load_isaac_training_region(region: TrainingRegion | str | Path) -> IsaacHeightfieldInput:
+    """Provide the exact local grid and identity for an external Isaac adapter.
+
+    IsaacLab's Newton XPBD backend is currently the contact-tested consumer of
+    this 1 cm grid. This function only transfers data; it does not choose a
+    physics backend or claim PhysX/MJWarp contact equivalence.
+    """
+
+    selected = region if isinstance(region, TrainingRegion) else TrainingRegion.open(region)
+    samples = selected.heightfield()
+    manifest = selected.manifest
+    route = dict(manifest["route"])
+    spawn = {
+        "route_id": route["route_id"],
+        "position_xyz_m": list(route["spawn"]["xyz_m"]),
+        "heading_yaw_rad": float(route["spawn"]["heading_yaw_rad"]),
+        "position_reference": "terrain_surface",
+        "topology_verified": False,
+    }
+    descriptor = {
+        "scenario_id": manifest["scenario_id"],
+        "profile": manifest["profile"],
+        "profile_hash": manifest["profile_hash"],
+        "region_manifest_sha256": selected.manifest_sha256,
+        "source_manifest_sha256": manifest["source"]["source_manifest_sha256"],
+        "source_profile_hash": manifest["source"]["source_profile_hash"],
+        "source_collision_samples_sha256": manifest["source"]["source_collision_samples_sha256"],
+        "local_samples_sha256": manifest["files"]["collision/heightfield.npz"]["sha256"],
+        "source_grid_slice_yx": manifest["source"]["source_grid_slice_yx"],
+        "route": route,
+        "validation_status": manifest["validation_status"],
+    }
+    return IsaacHeightfieldInput(
+        height_m=samples.height_m.astype(np.float32),
+        x_m=samples.x_m.astype(np.float32),
+        y_m=samples.y_m.astype(np.float32),
+        bounds_xy_m=samples.bounds_xy_m,
+        scenario=descriptor,
+        spawn_points=(spawn,),
+        source="verified_cropped_training_region",
+    )
+
+
+__all__ = ["IsaacHeightfieldInput", "load_isaac_heightfield", "load_isaac_training_region"]

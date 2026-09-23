@@ -13,7 +13,7 @@ import numpy as np
 
 from .control import load_controller
 from .fly_progress import FlyRampProgress
-from .fly_routes import fly_route_descriptor
+from .fly_routes import APPROACH_BEFORE_LOW_EDGE_M, fly_route_descriptor
 from .manifest import FieldAsset
 from .mjcf import FIELD_ATTACH_PREFIX, compose_with_robot
 from .query import load_heightfield
@@ -35,6 +35,7 @@ class FlyRampSession:
         controller=None,
         scenario_id="fly_ramp_north",
         speed_mps=2.2,
+        approach_distance_m=APPROACH_BEFORE_LOW_EDGE_M,
         profile="collision_only",
         mode="policy",
         friction_preset=None,
@@ -50,9 +51,11 @@ class FlyRampSession:
             )
         self.asset = asset if isinstance(asset, FieldAsset) else FieldAsset.open(asset, verify=True)
         self.bounds = load_heightfield(self.asset).bounds_xy_m
-        self.routes = {scenario_id: fly_route_descriptor(self.asset, scenario_id)}
+        self.routes = {}
+        self._approach_routes = {}
         self.scenario_id = scenario_id
-        self.route = self.routes[scenario_id]
+        self.approach_distance_m = float(approach_distance_m)
+        self.route = self._route_for(scenario_id, self.approach_distance_m)
         self.profile = profile
         self.profile_hash = scenario_descriptor(self.asset, scenario_id, profile=profile)[
             "profile_hash"
@@ -94,11 +97,24 @@ class FlyRampSession:
         }
         self.reset()
 
+    def _route_for(self, scenario_id, approach_distance_m):
+        if approach_distance_m == APPROACH_BEFORE_LOW_EDGE_M:
+            if scenario_id not in self.routes:
+                self.routes[scenario_id] = fly_route_descriptor(self.asset, scenario_id)
+            return self.routes[scenario_id]
+        key = (scenario_id, approach_distance_m)
+        if key not in self._approach_routes:
+            self._approach_routes[key] = fly_route_descriptor(
+                self.asset, scenario_id, approach_distance_m
+            )
+        return self._approach_routes[key]
+
     def reset(
         self,
         *,
         scenario_id=None,
         speed_mps=None,
+        approach_distance_m=None,
         lateral_offset_m=0.0,
         heading_offset_deg=0.0,
         seed=None,
@@ -106,13 +122,13 @@ class FlyRampSession:
         if scenario_id is not None:
             if scenario_id not in FLY_SCENARIOS:
                 raise ValueError(f"fly-ramp scenario must be one of {FLY_SCENARIOS}")
-            if scenario_id not in self.routes:
-                self.routes[scenario_id] = fly_route_descriptor(self.asset, scenario_id)
             self.scenario_id = scenario_id
-            self.route = self.routes[scenario_id]
             self.profile_hash = scenario_descriptor(self.asset, scenario_id, profile=self.profile)[
                 "profile_hash"
             ]
+        if approach_distance_m is not None:
+            self.approach_distance_m = float(approach_distance_m)
+        self.route = self._route_for(self.scenario_id, self.approach_distance_m)
         if speed_mps is not None:
             if not math.isfinite(speed_mps) or speed_mps <= 0:
                 raise ValueError("fly-ramp speed must be positive and finite")
@@ -146,6 +162,7 @@ class FlyRampSession:
         self.progress = FlyRampProgress(self.route)
         self.steps = 0
         self.rows = []
+        self.phase_states = {}
         self.failure = None
         self.warnings = {}
         self.finite = True
@@ -215,6 +232,7 @@ class FlyRampSession:
             reason = "outside_ramp_corridor"
         if reason is not None and self.failure is None:
             self.failure = {"reason": reason, "time_s": float(d.time)}
+        previous_events = set(self.progress.events)
         self.progress.update(
             time_s=float(d.time),
             position_xyz_m=position,
@@ -224,6 +242,22 @@ class FlyRampSession:
             obstacle_contacts=obstacle_contacts,
             failure=reason,
         )
+        for event_name, event_time_s in self.progress.events.items():
+            if event_name not in previous_events:
+                self.phase_states[event_name] = {
+                    "event_time_s": float(event_time_s),
+                    "sample_time_s": float(d.time),
+                    "position_xyz_m": position.tolist(),
+                    "velocity_xyz_mps": d.qvel[self.dofadr : self.dofadr + 3].tolist(),
+                    "forward_speed_mps": float(velocity @ u),
+                    "lateral_speed_mps": float(velocity @ np.array([-u[1], u[0]])),
+                    "vertical_speed_mps": float(d.qvel[self.dofadr + 2]),
+                    "lateral_offset_m": lateral,
+                    "body_up_xyz": d.xmat[self.body].reshape(3, 3)[:, 2].tolist(),
+                    "tilt_deg": tilt,
+                    "field_contacts": len(contact_points),
+                    "obstacle_contacts": obstacle_contacts,
+                }
         if self.progress.failure_reason and self.failure is None:
             self.failure = {
                 "reason": self.progress.failure_reason,
@@ -265,6 +299,7 @@ class FlyRampSession:
             "control": self.mode,
             "friction_preset": self.friction_preset,
             "commanded_speed_mps": self.speed_mps,
+            "approach_distance_m": self.approach_distance_m,
             "seed": self.seed,
             "lateral_offset_m": self.lateral_offset_m,
             "heading_offset_deg": self.heading_offset_deg,
@@ -275,6 +310,7 @@ class FlyRampSession:
             "steps_per_second": self.steps / max(1e-9, time.perf_counter() - self.started),
             "physics_status": "PASS" if self.finite and not self.warnings else "FAIL",
             **self.progress.report(),
+            "phase_states": dict(self.phase_states),
             "first_failure": self.failure,
             "field_contact_steps": self.field_contact_steps,
             "obstacle_contact_steps": self.obstacle_contact_steps,

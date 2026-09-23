@@ -27,6 +27,18 @@ def test_case_grid_and_seed_order_do_not_depend_on_workers():
     )
     assert [case["seed"] for case in cases] == list(range(100, 148))
     assert {case["scenario_id"] for case in cases} == {"fly_ramp_north", "fly_ramp_south"}
+    assert {case["approach_distance_m"] for case in cases} == {0.6}
+
+
+def test_case_grid_can_compare_approach_distances_on_the_same_field():
+    cases = fly_cases(
+        scenarios=["fly_ramp_north"],
+        speeds=[2.5],
+        approach_distances=[0.6, 0.9],
+        seed=100,
+    )
+    assert [case["approach_distance_m"] for case in cases] == [0.6, 0.9]
+    assert [case["seed"] for case in cases] == [100, 101]
 
 
 @pytest.mark.parametrize(
@@ -35,6 +47,8 @@ def test_case_grid_and_seed_order_do_not_depend_on_workers():
         {"scenarios": []},
         {"speeds": [0.0]},
         {"speeds": [float("nan")]},
+        {"approach_distances": [0.0]},
+        {"approach_distances": [float("nan")]},
         {"lateral_offsets": [float("inf")]},
         {"heading_offsets_deg": []},
         {"repeats": 0},
@@ -106,6 +120,7 @@ def test_cli_dispatches_fly_matrix_and_saves_full_report(monkeypatch, tmp_path, 
     assert json.loads(open(shown["telemetry"]).read())["episodes"] == [{"outcome": "FAIL"}]
     assert calls[0]["scenarios"] == ("fly_ramp_north", "fly_ramp_south")
     assert calls[0]["speeds"] == (1.5, 1.8, 2.0, 2.2, 2.5)
+    assert calls[0]["approach_distances"] == [0.6]
     args = build_parser().parse_args(["run", "pack", "--scenario", "fly_ramp_north"])
     assert args.lateral_offsets == [0.0]
 
@@ -138,6 +153,7 @@ def test_real_mujoco_session_reuses_model_and_independent_resets(field_asset_dir
     assert result["summary"]["timed_out"] == 2
     assert result["warnings"] == {} and result["nonfinite_episodes"] == 0
     assert result["environment_count"] == 1
+    assert result["by_approach_distance_m"] == {"0.6": {"episodes": 2, "landed_stably": 0}}
     assert result["episodes"][0]["initial_pose"] == result["episodes"][1]["initial_pose"]
 
 

@@ -417,6 +417,50 @@ the approach, takeoff and landing coordinates and the commanded speed; the
 controller owns joints, actions and policy timing. For robustness sweeps, add
 `--lateral-offsets -0.05 0 0.05 --heading-offsets-deg -2 0 2 --repeats 3`.
 Use offsets only where the robot footprint fits the audited slope width.
+Use `--approach-distances 0.6 0.9` to compare two screened starting distances
+without changing the field; `view` accepts one `--approach-distance`. The pack's
+heightfield screens each approach footprint, so a farther start near another
+structure may be rejected. Episode reports include the selected distance and
+phase states with route-forward and vertical speed, lateral motion, body tilt,
+and contact counts at ramp entry, takeoff detection and first recontact.
+These route choices still load the same whole-field collision heightfield; they
+are not cropped Isaac training assets.
+
+For many parallel fly-ramp environments, export a **local** region from the
+same verified pack. The exporter copies original 1 cm height samples at exact
+grid indices and preserves the source MuJoCo height scale; it does not resample
+the ramp, alter the full pack, or include
+official CAD/rulebook visuals. The source manifest, collision and scenario
+profile hashes, source grid slice, route, local file hashes, and unchanged
+perimeter fence are recorded in the new manifest. Export each ramp separately:
+
+```bash
+rmuc2026-field training-region ./local-rmuc2026-field ./local-fly-north \
+  --scenario fly_ramp_north --approach-distance 0.9
+rmuc2026-field training-region ./local-rmuc2026-field ./local-fly-south \
+  --scenario fly_ramp_south --approach-distance 0.9
+```
+
+External MuJoCo code can use `TrainingRegion.open(path)`,
+`compose_training_region_with_robot(region, robot_xml)` and
+`load_isaac_training_region(region)`. The latter only supplies the grid,
+spawn and identity metadata; the consumer chooses the physics backend. The
+region keeps the source pack's `DRAFT_BLOCKED` validation scope. In local
+120 mm sphere contact probes, Isaac Lab's kit-less Newton XPBD backend
+supported the 1 cm grid on both ramps; MJWarp's heightfield contact path
+overflowed its contact-pair budget and did not support the sphere correctly.
+This is not a robot-flight or PhysX validation, so use XPBD for the currently
+tested Isaac path and check another backend before training with it.
+The local rectangle is for training throughput; evaluate learned robot
+policies on the complete `collision_only` or `full` field because long robot
+trajectories can diverge after many contacts even when grid vertices and local
+probe contacts match. The rectangle edge is an artificial end of the exported
+heightfield, not a field wall. Training code should reset when the robot's
+footprint approaches `manifest.grid.bounds_xy_m`; use the complete field for
+long routes or uncontrolled excursions.
+With optional Newton/Warp installed, `python examples/isaac_newton_fly_probe.py
+./local-fly-north --source-pack ./local-rmuc2026-field` repeats the contact
+smoke against the exported region and verifies its exact source grid slice.
 
 `status=PASS` means the batch ran without solver warnings, non-finite states or
 controller errors. `task_status` and each episode's `outcome` say whether the

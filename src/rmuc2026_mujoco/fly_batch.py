@@ -11,6 +11,7 @@ from pathlib import Path
 import sys
 import time
 
+from .fly_routes import APPROACH_BEFORE_LOW_EDGE_M
 from .fly_runtime import FLY_SCENARIOS, FlyRampSession
 from .manifest import FieldAsset
 from .scenarios import scenario_descriptor
@@ -24,6 +25,7 @@ def fly_cases(
     *,
     scenarios=FLY_SCENARIOS,
     speeds=DEFAULT_SPEEDS_MPS,
+    approach_distances=(APPROACH_BEFORE_LOW_EDGE_M,),
     lateral_offsets=(0.0,),
     heading_offsets_deg=(0.0,),
     repeats=1,
@@ -36,6 +38,10 @@ def fly_cases(
         raise ValueError(f"scenarios must contain only {FLY_SCENARIOS}")
     if not speeds or any(not math.isfinite(value) or value <= 0 for value in speeds):
         raise ValueError("fly-ramp speeds must be positive and finite")
+    if not approach_distances or any(
+        not math.isfinite(value) or value <= 0 for value in approach_distances
+    ):
+        raise ValueError("fly-ramp approach distances must be positive and finite")
     if not lateral_offsets or any(not math.isfinite(value) for value in lateral_offsets):
         raise ValueError("lateral offsets must be finite")
     if not heading_offsets_deg or any(not math.isfinite(value) for value in heading_offsets_deg):
@@ -43,8 +49,9 @@ def fly_cases(
     if repeats < 1 or not math.isfinite(duration_s) or duration_s <= 0:
         raise ValueError("repeats and duration must be positive")
     cases = []
-    for scenario, speed, lateral, heading, repeat in product(
+    for scenario, approach_distance, speed, lateral, heading, repeat in product(
         dict.fromkeys(scenarios),
+        dict.fromkeys(approach_distances),
         dict.fromkeys(speeds),
         dict.fromkeys(lateral_offsets),
         dict.fromkeys(heading_offsets_deg),
@@ -56,6 +63,7 @@ def fly_cases(
                 "case_index": index,
                 "case_id": f"fly_{index:05d}",
                 "scenario_id": scenario,
+                "approach_distance_m": float(approach_distance),
                 "commanded_speed_mps": float(speed),
                 "lateral_offset_m": float(lateral),
                 "heading_offset_deg": float(heading),
@@ -75,6 +83,7 @@ def run_fly_episode(session, case):
     session.reset(
         scenario_id=case["scenario_id"],
         speed_mps=case["commanded_speed_mps"],
+        approach_distance_m=case.get("approach_distance_m", APPROACH_BEFORE_LOW_EDGE_M),
         lateral_offset_m=case["lateral_offset_m"],
         heading_offset_deg=case["heading_offset_deg"],
         seed=case["seed"],
@@ -124,6 +133,7 @@ def _fly_worker(payload):
         controller=payload["controller"],
         scenario_id=payload["cases"][0]["scenario_id"],
         speed_mps=payload["cases"][0]["commanded_speed_mps"],
+        approach_distance_m=payload["cases"][0]["approach_distance_m"],
         profile=payload["profile"],
         record_trajectory=payload["trajectory_dir"] is not None,
     )
@@ -184,6 +194,7 @@ def run_fly_batch(
     controller=None,
     scenarios=FLY_SCENARIOS,
     speeds=DEFAULT_SPEEDS_MPS,
+    approach_distances=(APPROACH_BEFORE_LOW_EDGE_M,),
     lateral_offsets=(0.0,),
     heading_offsets_deg=(0.0,),
     repeats=1,
@@ -214,6 +225,7 @@ def run_fly_batch(
     cases = fly_cases(
         scenarios=scenarios,
         speeds=speeds,
+        approach_distances=approach_distances,
         lateral_offsets=lateral_offsets,
         heading_offsets_deg=heading_offsets_deg,
         repeats=repeats,
@@ -265,6 +277,7 @@ def run_fly_batch(
         "schema_version": 1,
         "backend": "mujoco",
         "scenario_ids": list(dict.fromkeys(scenarios)),
+        "approach_distances_m": list(dict.fromkeys(float(value) for value in approach_distances)),
         "status": "PASS" if physics_healthy else "FAIL",
         "task_status": "PASS" if outcomes["PASS"] == len(episodes) else "INCOMPLETE",
         "profile": profile,
@@ -296,6 +309,15 @@ def run_fly_batch(
                 "landed_stably": sum(e["outcome"] == "PASS" for e in rows),
             }
             for speed in dict.fromkeys(speeds)
+        },
+        "by_approach_distance_m": {
+            str(distance): {
+                "episodes": len(
+                    rows := [e for e in episodes if e["approach_distance_m"] == distance]
+                ),
+                "landed_stably": sum(e["outcome"] == "PASS" for e in rows),
+            }
+            for distance in dict.fromkeys(approach_distances)
         },
         "failure_reasons": dict(
             Counter(e["failure_reason"] for e in episodes if e["failure_reason"])

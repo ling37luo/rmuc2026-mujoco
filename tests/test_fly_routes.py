@@ -57,11 +57,30 @@ def test_fly_route_uses_pack_translation_and_measured_landing(monkeypatch, scena
     assert route["gap_m"] == pytest.approx(0.65)
     assert route["source_manifest_sha256"] == "pack-hash"
     assert route["topology_verified"] is False
+    assert route["approach_distance_m"] == pytest.approx(0.60)
+    assert route["approach_surface"]["maximum_window_slope_deg"] == pytest.approx(2.0)
+
+    farther = fly_route_descriptor(
+        asset, f"fly_ramp_{'north' if scenario_index == 0 else 'south'}", 0.90
+    )
+    assert farther["approach_distance_m"] == pytest.approx(0.90)
+    assert farther["approach_xyz_m"][:2] == pytest.approx(
+        [
+            route["approach_xyz_m"][0] - 0.30 * ramp.uphill_unit_xy[0],
+            route["approach_xyz_m"][1] - 0.30 * ramp.uphill_unit_xy[1],
+        ]
+    )
 
 
 def test_fly_route_rejects_wrong_scenario():
     with pytest.raises(ValueError, match="not a fly ramp"):
         fly_route_descriptor(SimpleNamespace(), "slope_basic")
+
+
+@pytest.mark.parametrize("distance", [0.0, -0.1, float("nan")])
+def test_fly_route_rejects_invalid_approach_distance(distance):
+    with pytest.raises(ValueError, match="approach distance"):
+        fly_route_descriptor(SimpleNamespace(), "fly_ramp_north", distance)
 
 
 def test_view_places_robot_at_selected_fly_approach(

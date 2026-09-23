@@ -58,7 +58,7 @@ from .mjcf import (
     inject_exact_heightfield,
     load_model,
 )
-from .isaac import IsaacHeightfieldInput, load_isaac_heightfield
+from .isaac import IsaacHeightfieldInput, load_isaac_heightfield, load_isaac_training_region
 from .perimeter_fence import export_fenced_pack, perimeter_fence_contract
 from .query import (
     HEIGHTFIELD_CLAIM_BOUNDARY,
@@ -86,6 +86,12 @@ from .slope_routes import screen_slope_route, select_slope_route
 from .slope_runtime import SlopeSession, reset_slope_spawn
 from .slope_batch import run_slope_batch, run_slope_episode
 from .training import MuJoCoScenario, StepResult, TelemetryRecorder
+from .training_region import (
+    TrainingRegion,
+    compose_training_region_with_robot,
+    export_training_region,
+    load_training_region_model,
+)
 from .turning import (
     NoOpTurnController,
     TurnCommand,
@@ -159,26 +165,31 @@ __all__ = [
     "ValidationReport",
     "UNOFFICIAL_FRICTION_PRESETS",
     "TelemetryRecorder",
+    "TrainingRegion",
     "apply_friction_preset",
     "audit_fly_ramp_source_overlap",
     "add_energy_unit",
     "build_from_official_step",
     "build_runtime_asset_pack",
     "compose_with_robot",
+    "compose_training_region_with_robot",
     "download_official_step",
     "field_bounds",
     "fly_cases",
     "fly_route_descriptor",
     "export_fenced_pack",
+    "export_training_region",
     "find_spawn_candidates",
     "height_at",
     "inject_exact_heightfield",
     "load_heightfield",
     "load_field_with_energy_unit",
     "load_model",
+    "load_training_region_model",
     "load_controller",
     "load_turn_controller",
     "load_isaac_heightfield",
+    "load_isaac_training_region",
     "get_scenario",
     "list_scenarios",
     "measure_runtime_landing_profile",

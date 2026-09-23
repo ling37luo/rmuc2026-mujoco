@@ -26,7 +26,11 @@ _RAMP_BY_SCENARIO = {
 }
 
 
-def fly_route_descriptor(asset: FieldAsset, scenario_id: str) -> dict[str, Any]:
+def fly_route_descriptor(
+    asset: FieldAsset,
+    scenario_id: str,
+    approach_distance_m: float = APPROACH_BEFORE_LOW_EDGE_M,
+) -> dict[str, Any]:
     """Bind one audited centreline to the selected pack's collision surface.
 
     ``spawn.xyz_m`` is the terrain point, not a robot root pose.  A robot reset
@@ -38,11 +42,15 @@ def fly_route_descriptor(asset: FieldAsset, scenario_id: str) -> dict[str, Any]:
     except KeyError as exc:
         raise ValueError(f"scenario {scenario_id!r} is not a fly ramp") from exc
 
+    approach_distance_m = float(approach_distance_m)
+    if not math.isfinite(approach_distance_m) or approach_distance_m <= 0.0:
+        raise ValueError("fly-ramp approach distance must be positive and finite")
+
     landing = measure_runtime_landing_profile(asset, ramp)
     if abs(landing.measured_gap_m - JumpProbeConfig().official_gap_m) > 0.015:
         raise ValueError(f"{ramp.route_id}: runtime landing gap disagrees with the audited ramp")
 
-    approach_along = ramp.cad_low_seam_along_m - APPROACH_BEFORE_LOW_EDGE_M
+    approach_along = ramp.cad_low_seam_along_m - approach_distance_m
     approach_xy = _world_xy(asset, ramp, approach_along)
     approach_surface = surface_at(
         asset,
@@ -53,7 +61,10 @@ def fly_route_descriptor(asset: FieldAsset, scenario_id: str) -> dict[str, Any]:
         approach_surface.maximum_window_slope_deg > 6.0
         or approach_surface.local_relief_upper_bound_m > 0.03
     ):
-        raise ValueError(f"{ramp.route_id}: approach footprint is not a clear low-slope surface")
+        raise ValueError(
+            f"{ramp.route_id}: {approach_distance_m:g} m approach footprint "
+            "is not a clear low-slope surface"
+        )
 
     low_seam = _surface_point(asset, ramp, ramp.cad_low_seam_along_m)
     takeoff = _surface_point(asset, ramp, ramp.cad_high_seam_along_m)
@@ -74,7 +85,12 @@ def fly_route_descriptor(asset: FieldAsset, scenario_id: str) -> dict[str, Any]:
         "heading_yaw_rad": heading,
         "surface_width_m": ramp.surface_width_m,
         "slope_angle_deg": ramp.slope_angle_degrees,
+        "approach_distance_m": approach_distance_m,
         "approach_along_m": approach_along,
+        "approach_surface": {
+            "maximum_window_slope_deg": approach_surface.maximum_window_slope_deg,
+            "local_relief_upper_bound_m": approach_surface.local_relief_upper_bound_m,
+        },
         "low_seam_along_m": ramp.cad_low_seam_along_m,
         "takeoff_along_m": ramp.cad_high_seam_along_m,
         "landing_edge_along_m": landing.landing_edge_along_m,

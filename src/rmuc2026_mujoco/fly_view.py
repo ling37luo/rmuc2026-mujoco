@@ -23,6 +23,7 @@ def view_fly(args, asset):
         controller=args.controller,
         scenario_id=args.scenario,
         speed_mps=2.5 if args.speed is None else args.speed,
+        approach_distance_m=args.approach_distance,
         profile=args.profile,
         mode=args.control,
         friction_preset=args.friction_preset,

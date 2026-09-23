@@ -33,7 +33,7 @@ from .download import (
 from .display import FieldDisplayController
 from .energy_unit import load_field_with_energy_unit
 from .errors import Rmuc2026Error
-from .fly_routes import fly_route_descriptor
+from .fly_routes import APPROACH_BEFORE_LOW_EDGE_M, fly_route_descriptor
 from .manifest import DEFAULT_RUNTIME_PROFILE, RUNTIME_PROFILE_NAMES, FieldAsset, verify_asset
 from .mjcf import UNOFFICIAL_FRICTION_PRESETS, compose_with_robot, load_model
 from .pack import ExportBlocked
@@ -48,6 +48,7 @@ from .ramp_source_audit import audit_fly_ramp_source_overlap
 from .scenarios import get_scenario, list_scenarios, scenario_descriptor
 from .slope_catalog import slope_catalog
 from .turning import reset_turn_spawn, run_turn_batch, screen_turn_spawns
+from .training_region import export_training_region
 from .viewer import (
     FocusScopedKeyboardListener,
     SafePassiveViewerSession,
@@ -122,6 +123,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     fence.add_argument("source", type=Path)
     fence.add_argument("output", type=Path)
+    region = commands.add_parser(
+        "training-region",
+        help="export one local fly-ramp collision region from a verified field pack",
+    )
+    region.add_argument("asset", type=Path)
+    region.add_argument("output", type=Path)
+    region.add_argument("--scenario", choices=("fly_ramp_north", "fly_ramp_south"), required=True)
+    region.add_argument("--approach-distance", type=float, default=0.9)
     ramp_source = commands.add_parser(
         "ramp-source-audit", help="verify fly-ramp overlaps against the pinned local CAD"
     )
@@ -214,6 +223,13 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument(
         "--speeds", nargs="+", type=float, help="speed grid in m/s; scenario-specific defaults"
     )
+    run.add_argument(
+        "--approach-distances",
+        nargs="+",
+        type=float,
+        default=[APPROACH_BEFORE_LOW_EDGE_M],
+        help="fly-ramp distance before the low seam in m; spawn footprint must be clear",
+    )
     run.add_argument("--repeats", type=int, default=1, help="episodes per selected case")
     run.add_argument(
         "--lateral-offsets", nargs="+", type=float, default=[0.0], help="fly-ramp offsets in m"
@@ -255,6 +271,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="slope task: uphill (default), downhill, or both in one episode",
     )
     view.add_argument("--speed", type=float, help="example rover speed; scenario-specific default")
+    view.add_argument(
+        "--approach-distance",
+        type=float,
+        default=APPROACH_BEFORE_LOW_EDGE_M,
+        help="fly-ramp distance before the low seam in m",
+    )
     view.add_argument("--duration", type=float, default=0.0, help="seconds; 0 waits until close")
     view.add_argument(
         "--profile",
@@ -435,6 +457,27 @@ def main(argv: list[str] | None = None) -> int:
                 )
             )
             return 0
+        if args.command == "training-region":
+            manifest = export_training_region(
+                FieldAsset.open(args.asset, verify=True),
+                args.output,
+                scenario_id=args.scenario,
+                approach_distance_m=args.approach_distance,
+            )
+            print(
+                json.dumps(
+                    {
+                        "output": str(args.output.expanduser().resolve()),
+                        "scenario_id": manifest["scenario_id"],
+                        "profile_hash": manifest["profile_hash"],
+                        "grid": manifest["grid"],
+                        "validation_status": manifest["validation_status"],
+                    },
+                    indent=2,
+                    sort_keys=True,
+                )
+            )
+            return 0
         if args.command == "ramp-source-audit":
             report = audit_fly_ramp_source_overlap(
                 FieldAsset.open(args.asset, verify=True), args.source_manifest
@@ -560,6 +603,7 @@ def main(argv: list[str] | None = None) -> int:
                     controller=args.controller,
                     scenarios=selected,
                     speeds=DEFAULT_SPEEDS_MPS if args.speeds is None else args.speeds,
+                    approach_distances=args.approach_distances,
                     lateral_offsets=args.lateral_offsets,
                     heading_offsets_deg=args.heading_offsets_deg,
                     repeats=args.repeats,
