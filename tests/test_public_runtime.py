@@ -20,6 +20,7 @@ def test_scenario_registry_has_shared_baseline_and_training_stages() -> None:
         "full_eval",
         "turn_basic",
         "stairs_basic",
+        "slope_basic",
         "fly_ramp_north",
         "fly_ramp_south",
         "boundary_contact",

@@ -224,6 +224,106 @@ optional `load_isaac_heightfield()` adapter returns the verified heightfield,
 field bounds, scenario descriptor, and hashes for an Isaac consumer; Isaac is
 not a core dependency and the adapter does not alter source geometry.
 
+#### Ordinary slopes and dedicated fly-ramp training
+
+`slope_basic` derives a small catalog of traversable, plane-like slope patches
+from the verified `collision_only` heightfield. It covers three ordinary slope
+bands (3--6, 6--10, and 10--15 degrees), records a short route and usable
+width for each patch, and leaves gear selection and actuator mapping to the
+robot controller. The catalog is a descriptor bound to the source manifest and
+heightfield hashes; it does not make a second map or add collision geometry.
+
+The two audited fly ramps remain separate as `fly_ramp_north` and
+`fly_ramp_south`. Their takeoff, flight, and landing checks are not mixed into
+ordinary-slope traversal, so a high-parallel trainer can run the ordinary
+catalog while a dedicated fly-ramp package evaluates the full RM field route.
+
+```bash
+rmuc2026-field slope-catalog ./local-rmuc2026-field \
+  --max-per-band 4 --sampling 0.10 \
+  --output runs/slope_basic.json
+rmuc2026-field scenarios --asset ./local-rmuc2026-field --scenario slope_basic
+```
+
+The export can be repeated: identical JSON is reused without rewriting the
+file; changed catalog data updates the output. `output_action` reports
+`WRITTEN`, `REUSED`, or `UPDATED`, independently of the screening `status`.
+This command exports metadata and does not open a simulation window.
+
+Every patch carries the source manifest and collision hashes and keeps the
+heightfield claim boundary: topology, overhangs, vertical clearance, and
+robot-specific success still require the consumer's physics run. A catalog
+reports `READY_HEIGHTFIELD_SCREENED` when every band has a candidate; that is
+not a dynamic pass.
+
+Catalog schema 2 also screens the entire approach, crest, and endpoint
+footprints at 1 cm spacing across the route width. `patches[].route` contains
+the low/high spawn points and waypoints; rejected candidates have a
+`route_rejection`. `runnable_route_count` is distinct from the number of local
+plane candidates. Fly-ramp approach and landing corridors are excluded by
+location as well as slope band. No collision surface is changed by screening.
+
+Open a real slope interaction window with the repository's original example
+four-wheel rover (no external robot or policy required):
+
+```bash
+rmuc2026-field view ./local-rmuc2026-field \
+  --scenario slope_basic --profile full --control human
+```
+
+The camera starts at the selected route. Green marks the low end; orange dots
+follow the route to the high end. Press **W/S** to set forward/reverse motion,
+**A/D** to steer, **E** to straighten, **X** to stop, **1--4** for speed, and
+**R** to restore the initial robot and controller state. Commands persist until
+changed; these are not held-key controls. **L/G** retain the existing display
+shortcuts when the optional viewer dependencies are installed. Route markers
+are viewer decorations and never participate in contact.
+
+Human driving currently uses the optional `viewer` extra on X11 to reserve
+these keys from MuJoCo's native rendering shortcuts. On other viewer backends,
+use `--control policy` or the Python session with your own input handling.
+
+The default is the first continuous screened route. Select another with
+`--patch PATCH_ID`, and choose `--direction uphill|downhill|roundtrip`.
+`roundtrip` means climbing to the upper footprint and reversing down the same
+slope. To run the example's wheel-speed controller automatically, use
+`--control policy`; this is an illustrative controller, not a trained RM policy:
+
+```bash
+rmuc2026-field view ./local-rmuc2026-field \
+  --scenario slope_basic --profile collision_only --control policy \
+  --direction roundtrip --speed 0.3 --headless --steps 8000
+```
+
+Both paths use the same `SlopeSession` for reset, control, stepping, route
+progress, contact diagnostics, and telemetry. A timestamped report is saved
+under `runs/` by default; `--telemetry PATH` selects another path. Reports
+separate `physics_status` from `traversal_status`: a stationary or too-short run
+can have healthy physics while traversal is `INCOMPLETE`. The benchmark
+requires reaching the requested end, staying within the route, and maintaining
+contact for 0.25 s. A reset preserves the previous episode in the report.
+
+External robots use the same command with `--robot ROBOT.xml --controller
+your_controller:make`. The existing callable controller API is unchanged.
+Optional `configure_route(route, direction, speed)`, `reset(model, data)`, and
+`press_name(name)` methods let a controller receive route context, clear policy
+memory, and handle the viewer keys. Robot-specific timing, commands and joints
+stay in that controller. Its robot collision masks must see the field; the
+loader does not rewrite field contact bits to accommodate a robot. The initial
+pose is placed 2 mm above detected terrain support, preserving the neutral
+joint configuration, and subsequent motion uses ordinary physics.
+
+For external training, `MuJoCoScenario(..., scenario="slope_basic", patch=...)`
+now resets to that same route. `load_isaac_heightfield(...,
+scenario="slope_basic")` supplies both endpoint spawns and the screened routes
+without importing Isaac. Actual Isaac training and team-specific policy success
+are separate acceptance tasks. The full field remains `DRAFT_BLOCKED`.
+
+The viewer timing and controller stepping follow MuJoCo's
+[passive viewer](https://mujoco.readthedocs.io/en/stable/python.html#passive-viewer)
+and [simulation loop](https://mujoco.readthedocs.io/en/stable/programming/simulation.html)
+interfaces.
+
 #### Turning benchmark and parallel runs
 
 `turn_basic` is the first executable benchmark. It screens up to eight starts

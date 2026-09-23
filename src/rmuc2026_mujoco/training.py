@@ -69,6 +69,8 @@ class MuJoCoScenario:
         profile: str | None = None,
         seed: int | None = None,
         env_count: int = 1,
+        patch: str | None = None,
+        direction: str = "uphill",
     ) -> None:
         self.asset = asset if isinstance(asset, FieldAsset) else FieldAsset.open(asset, verify=True)
         self.scenario = get_scenario(scenario)
@@ -82,6 +84,15 @@ class MuJoCoScenario:
             )
         self.seed = seed
         self.env_count = int(env_count)
+        self.route = None
+        if scenario == "slope_basic":
+            from .slope_catalog import slope_catalog
+            from .slope_routes import select_slope_route
+            from .slope_runtime import reset_slope_spawn
+
+            self.route = select_slope_route(slope_catalog(self.asset), patch)
+            if self.robot_xml is not None:
+                reset_slope_spawn(self.model, self.data, self.route, direction=direction)
         self.rng = np.random.default_rng(seed)
         self.step_count = 0
         self.recorder = TelemetryRecorder()
@@ -101,6 +112,7 @@ class MuJoCoScenario:
     ) -> np.ndarray:
         import mujoco
 
+        mujoco.mj_resetData(self.model, self.data)
         self.data.qpos[:] = self._qpos0 if qpos is None else np.asarray(qpos, dtype=float)
         self.data.qvel[:] = self._qvel0 if qvel is None else np.asarray(qvel, dtype=float)
         self.data.time = 0.0
@@ -179,6 +191,7 @@ class MuJoCoScenario:
         return {
             "scenario_id": self.scenario.scenario_id,
             "source_manifest_sha256": self.asset.manifest_sha256,
+            "slope_route": self.route,
             "profile": self.profile,
             "profile_hash": descriptor["profile_hash"],
             "heightfield_samples_sha256": self.asset.collision["samples_sha256"],

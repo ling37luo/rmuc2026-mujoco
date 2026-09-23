@@ -45,6 +45,7 @@ from .query import (
 )
 from .ramp_source_audit import audit_fly_ramp_source_overlap
 from .scenarios import get_scenario, list_scenarios, scenario_descriptor
+from .slope_catalog import slope_catalog
 from .turning import reset_turn_spawn, run_turn_batch, screen_turn_spawns
 from .viewer import (
     FocusScopedKeyboardListener,
@@ -154,9 +155,19 @@ def build_parser() -> argparse.ArgumentParser:
     scenarios = commands.add_parser("scenarios", help="list the public field scenario registry")
     scenarios.add_argument("--asset", type=Path, help="bind the registry to a verified runtime pack")
     scenarios.add_argument("--scenario", choices=(
-        "full_eval", "turn_basic", "stairs_basic", "fly_ramp_north", "fly_ramp_south", "boundary_contact"
+        "full_eval", "turn_basic", "stairs_basic", "slope_basic", "fly_ramp_north", "fly_ramp_south", "boundary_contact"
     ))
     scenarios.add_argument("--profile", choices=RUNTIME_PROFILE_NAMES)
+    slope = commands.add_parser(
+        "slope-catalog",
+        help="derive ordinary traversable-slope patches from a verified collision heightfield",
+    )
+    slope.add_argument("asset", type=Path)
+    slope.add_argument("--max-per-band", type=int, default=4)
+    slope.add_argument("--sampling", type=float, default=0.10, help="candidate spacing in metres")
+    slope.add_argument(
+        "--output", type=Path, help="write or update the catalog JSON; reuse identical content"
+    )
     run = commands.add_parser(
         "run",
         help="run a robot-agnostic turning benchmark with optional multiprocessing",
@@ -164,7 +175,7 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("asset", type=Path)
     run.add_argument("--robot", type=Path, required=True)
     run.add_argument("--controller", help="user controller factory, module:object")
-    run.add_argument("--scenario", choices=("turn_basic",), default="turn_basic")
+    run.add_argument("--scenario", choices=("turn_basic", "slope_basic"), default="turn_basic")
     run.add_argument("--phase", choices=("spin", "arc", "reversal"), default="spin")
     run.add_argument("--backend", choices=("mujoco", "isaac"), default="mujoco")
     run.add_argument("--workers", type=int, default=1)
@@ -179,11 +190,14 @@ def build_parser() -> argparse.ArgumentParser:
     view.add_argument("--control", choices=("human", "policy"), default="human")
     view.add_argument("--controller", help="optional user controller factory, module:object")
     view.add_argument("--scenario", choices=(
-        "full_eval", "turn_basic", "stairs_basic", "fly_ramp_north", "fly_ramp_south", "boundary_contact"
+        "full_eval", "turn_basic", "stairs_basic", "slope_basic", "fly_ramp_north", "fly_ramp_south", "boundary_contact"
     ), default="full_eval")
     view.add_argument("--headless", action="store_true", help="run physics without opening a viewer")
     view.add_argument("--steps", type=int, default=1000, help="headless physics steps")
     view.add_argument("--telemetry", type=Path, help="write headless step telemetry as JSON")
+    view.add_argument("--patch", help="slope_basic patch ID; default: first screened route")
+    view.add_argument("--direction", choices=("uphill", "downhill", "roundtrip"), default="roundtrip")
+    view.add_argument("--speed", type=float, default=0.3, help="slope example rover speed in m/s")
     view.add_argument("--duration", type=float, default=0.0, help="seconds; 0 waits until close")
     view.add_argument(
         "--profile",
@@ -394,14 +408,31 @@ def main(argv: list[str] | None = None) -> int:
                 payload = scenario_descriptor(bound_asset, args.scenario, profile=args.profile)
             print(json.dumps(payload, indent=2, sort_keys=True))
             return 0
+        if args.command == "slope-catalog":
+            payload = slope_catalog(
+                args.asset,
+                max_per_band=args.max_per_band,
+                sampling_m=args.sampling,
+            )
+            if args.output is not None:
+                output = args.output.expanduser().resolve()
+                content = (json.dumps(payload, indent=2, sort_keys=True) + "\n").encode("utf-8")
+                previous = output.read_bytes() if output.exists() else None
+                if previous == content:
+                    output_action = "REUSED"
+                else:
+                    output.parent.mkdir(parents=True, exist_ok=True)
+                    output.write_bytes(content)
+                    output_action = "UPDATED" if previous is not None else "WRITTEN"
+                payload = {**payload, "output": str(output), "output_action": output_action}
+            print(json.dumps(payload, indent=2, sort_keys=True))
+            return 0
         if args.command == "run":
-            if args.scenario != "turn_basic":
-                raise ValueError("the first runner only supports scenario=turn_basic")
             if args.backend == "isaac":
                 from .isaac import load_isaac_heightfield
 
                 if args.profile != "collision_only":
-                    raise ValueError("Isaac turn_basic descriptor requires profile=collision_only")
+                    raise ValueError("Isaac training descriptors require profile=collision_only")
                 descriptor = load_isaac_heightfield(
                     args.asset, scenario=args.scenario, profile=args.profile
                 )
@@ -415,6 +446,11 @@ def main(argv: list[str] | None = None) -> int:
                     }
                 )
             else:
+                if args.scenario != "turn_basic":
+                    raise ValueError(
+                        "the MuJoCo runner currently executes scenario=turn_basic; "
+                        "use view or the slope catalog for slope_basic"
+                    )
                 payload = run_turn_batch(
                     args.asset,
                     robot_mjcf=args.robot,
@@ -547,6 +583,12 @@ def main(argv: list[str] | None = None) -> int:
             return 0 if status == "PASS" else 2
         if args.duration < 0.0:
             raise ValueError("--duration must be non-negative")
+        if args.scenario == "slope_basic":
+            from .slope_runtime import view_slope
+
+            if args.steps < 0:
+                raise ValueError("--steps must be non-negative")
+            return view_slope(args, asset)
         selected_scenario = get_scenario(args.scenario)
         if args.robot is None and args.control == "policy":
             raise ValueError("--control policy requires --robot and --controller")
@@ -718,6 +760,8 @@ def _start_display_key_listener(
     focus_check=None,
     keyboard_module=None,
     key_interceptor=None,
+    on_key=None,
+    reserved_keys=None,
 ):
     """Start focus-scoped, edge-triggered L/G controls when pynput is usable.
 
@@ -734,7 +778,11 @@ def _start_display_key_listener(
     if focus_check is None or key_interceptor is None:
         if focus_check is not None or key_interceptor is not None:
             raise ValueError("focus_check and key_interceptor must be supplied together")
-        input_scope = create_viewer_key_interceptor()
+        input_scope = (
+            create_viewer_key_interceptor()
+            if reserved_keys is None
+            else create_viewer_key_interceptor(keys=reserved_keys)
+        )
         if input_scope is None:
             return None
         key_interceptor, focus_check = input_scope
@@ -789,8 +837,11 @@ def _start_display_key_listener(
         if name == "ESC":
             close_requested.set()
             return False
-        if display.press_name(name) and on_change is not None:
-            on_change()
+        if display.press_name(name):
+            if on_change is not None:
+                on_change()
+        elif on_key is not None:
+            on_key(name)
         return None
 
     def on_release(key) -> None:

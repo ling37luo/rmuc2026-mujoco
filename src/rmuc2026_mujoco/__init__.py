@@ -70,6 +70,16 @@ from .query import (
 )
 from .ramp_source_audit import audit_fly_ramp_source_overlap
 from .scenarios import SCENARIOS, ScenarioSpec, get_scenario, list_scenarios, scenario_descriptor
+from .slope_catalog import (
+    FLY_RAMP_SCENARIOS,
+    ORDINARY_SLOPE_BANDS,
+    SlopeBand,
+    SlopePatch,
+    catalog_slope_patches,
+    slope_catalog,
+)
+from .slope_routes import screen_slope_route, select_slope_route
+from .slope_runtime import SlopeSession, reset_slope_spawn
 from .training import MuJoCoScenario, StepResult, TelemetryRecorder
 from .turning import (
     NoOpTurnController,
@@ -129,6 +139,11 @@ __all__ = [
     "MuJoCoScenario",
     "SCENARIOS",
     "ScenarioSpec",
+    "FLY_RAMP_SCENARIOS",
+    "ORDINARY_SLOPE_BANDS",
+    "SlopeBand",
+    "SlopePatch",
+    "SlopeSession",
     "SpawnCandidate",
     "StepResult",
     "SurfaceSample",
@@ -164,6 +179,11 @@ __all__ = [
     "screen_turn_spawns",
     "surface_at",
     "scenario_descriptor",
+    "catalog_slope_patches",
+    "slope_catalog",
+    "screen_slope_route",
+    "select_slope_route",
+    "reset_slope_spawn",
     "NoOpTurnController",
     "TurnCommand",
     "TurnController",

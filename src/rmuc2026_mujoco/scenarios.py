@@ -15,6 +15,7 @@ from typing import Any, Mapping
 
 from .manifest import FieldAsset
 from .ramp_audit import FIXED_FLY_RAMPS
+from .slope_routes import ROUTE_SCREEN
 
 
 @dataclass(frozen=True)
@@ -117,6 +118,26 @@ SCENARIOS: Mapping[str, ScenarioSpec] = {
         "stairs_basic", "collision_only", "stairs and their approach/exit connection",
         {"selector": "stairs_and_connection", "visual": "omitted"},
         {"strategy": "external_route_spawn", "approach_directions": ["forward", "reverse", "diagonal"]},
+        (), ("human_view", "mujoco", "isaac"),
+    ),
+    "slope_basic": ScenarioSpec(
+        "slope_basic", "collision_only", "ordinary traversable slopes below the dedicated fly ramps",
+        {
+            "selector": "ordinary_slope_catalog",
+            "visual": "omitted",
+            "catalog_id": "slope_basic",
+            "slope_bands_deg": [[3.0, 6.0], [6.0, 10.0], [10.0, 15.0]],
+            "route_length_m": 0.80,
+            "usable_width_m": 0.60,
+            "fly_ramps_excluded": ["fly_ramp_north", "fly_ramp_south"],
+            "route_screen": dict(ROUTE_SCREEN),
+        },
+        {
+            "strategy": "catalog_patch_spawn",
+            "controller_owns_gear_and_action_mapping": True,
+            "goal": "traverse_up_and_down_without_takeoff_or_flight_evaluation",
+            "topology_verified": False,
+        },
         (), ("human_view", "mujoco", "isaac"),
     ),
     "fly_ramp_north": ScenarioSpec(

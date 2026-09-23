@@ -86,6 +86,12 @@ def _adapt_callback(callback: Any) -> ControlCallback:
         else:
             callback(model, data)
 
+    for name in ("reset", "press_name", "configure_route"):
+        method = getattr(callback, name, None)
+        if callable(method):
+            setattr(call, name, method)
+    if hasattr(callback, "identity"):
+        call.identity = callback.identity
     return call
 
 

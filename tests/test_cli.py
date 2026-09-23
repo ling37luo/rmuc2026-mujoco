@@ -99,6 +99,14 @@ def test_view_cli_accepts_generic_robot_control_options() -> None:
     assert args.steps == 12
 
 
+def test_run_cli_accepts_slope_descriptor_for_isaac() -> None:
+    args = build_parser().parse_args(
+        ["run", "field", "--robot", "robot.xml", "--scenario", "slope_basic", "--backend", "isaac"]
+    )
+    assert args.scenario == "slope_basic"
+    assert args.backend == "isaac"
+
+
 def test_scenarios_cli_lists_public_registry(capsys) -> None:
     assert main(["scenarios"]) == 0
     output = json.loads(capsys.readouterr().out)
@@ -106,6 +114,7 @@ def test_scenarios_cli_lists_public_registry(capsys) -> None:
         "full_eval",
         "turn_basic",
         "stairs_basic",
+        "slope_basic",
         "fly_ramp_north",
         "fly_ramp_south",
         "boundary_contact",
@@ -195,12 +204,14 @@ def test_display_keys_are_focus_scoped_and_toggle_once_per_press(monkeypatch) ->
     now = [10.0]
     monkeypatch.setattr("rmuc2026_mujoco.cli.time.monotonic", lambda: now[0])
     changed: list[str] = []
+    driving: list[str] = []
     close_requested = threading.Event()
     interceptor = Interceptor()
     listener = _start_display_key_listener(
         Display(),
         close_requested,
         on_change=lambda: changed.append("changed"),
+        on_key=driving.append,
         focus_check=lambda: focused[0],
         keyboard_module=Keyboard,
         key_interceptor=interceptor,
@@ -239,6 +250,17 @@ def test_display_keys_are_focus_scoped_and_toggle_once_per_press(monkeypatch) ->
     release(l_key)
     release(Key.alt)
     assert Display.presses == ["L", "L", "G"]
+
+    w_key = Character("w")
+    focused[0] = False
+    press(w_key)
+    release(w_key)
+    assert driving == []
+    focused[0] = True
+    press(w_key)
+    press(w_key)
+    assert driving == ["W"]
+    release(w_key)
 
     focused[0] = False
     assert press(Key.esc) is None

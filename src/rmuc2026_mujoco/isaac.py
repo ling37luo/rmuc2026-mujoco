@@ -16,6 +16,7 @@ import numpy as np
 from .manifest import FieldAsset
 from .query import field_bounds, load_heightfield
 from .scenarios import scenario_descriptor
+from .slope_catalog import slope_catalog
 from .turning import screen_turn_spawns, turn_phase_registry
 
 
@@ -54,6 +55,17 @@ def load_isaac_heightfield(
         spawn_points = tuple(spawn.to_dict() for spawn in screen_turn_spawns(field))
         descriptor["turn_phase_registry"] = turn_phase_registry()
         descriptor["turn_spawn_points"] = [dict(point) for point in spawn_points]
+    elif scenario == "slope_basic":
+        descriptor["slope_catalog"] = slope_catalog(field)
+        spawn_points = tuple(
+            {"route_id": patch["patch_id"], "direction": direction,
+             "position_xyz_m": patch["route"][point],
+             "heading_yaw_rad": patch["route"]["heading_yaw_rad"] + offset}
+            for patch in descriptor["slope_catalog"]["patches"] if patch["route"] is not None
+            for direction, point, offset in (
+                ("uphill", "low_xyz_m", 0.0), ("downhill", "high_xyz_m", float(np.pi))
+            )
+        )
     return IsaacHeightfieldInput(
         height_m=np.asarray(samples.height_m, dtype=np.float32),
         x_m=np.asarray(samples.x_m, dtype=np.float32),
