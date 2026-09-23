@@ -169,6 +169,7 @@ class FlyRampSession:
         self.field_contact_steps = 0
         self.obstacle_contact_steps = 0
         self.max_penetration_m = 0.0
+        self.field_normal_force_peak_by_robot_geom_n = {}
         self.max_tilt_deg = 0.0
         self.max_abs_effort = 0.0
         self.started = time.perf_counter()
@@ -213,6 +214,12 @@ class FlyRampSession:
             force = np.zeros(6)
             mujoco.mj_contactForce(self.model, d, index, force)
             if force[0] > 0.1:
+                robot_geom = geom2 if field_geom == geom1 else geom1
+                robot_name = self.model.geom(robot_geom).name or f"geom_{robot_geom}"
+                self.field_normal_force_peak_by_robot_geom_n[robot_name] = max(
+                    self.field_normal_force_peak_by_robot_geom_n.get(robot_name, 0.0),
+                    float(force[0]),
+                )
                 if field_geom == self.field_geom:
                     contact_points.append(np.asarray(contact.pos, dtype=float).tolist())
                 else:
@@ -315,6 +322,9 @@ class FlyRampSession:
             "field_contact_steps": self.field_contact_steps,
             "obstacle_contact_steps": self.obstacle_contact_steps,
             "max_penetration_m": self.max_penetration_m,
+            "field_normal_force_peak_by_robot_geom_n": dict(
+                self.field_normal_force_peak_by_robot_geom_n
+            ),
             "max_tilt_deg": self.max_tilt_deg,
             "max_abs_actuator_force": self.max_abs_effort,
             "finite": self.finite,

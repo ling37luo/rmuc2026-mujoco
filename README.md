@@ -441,6 +441,10 @@ rmuc2026-field training-region ./local-rmuc2026-field ./local-fly-south \
   --scenario fly_ramp_south --approach-distance 0.9
 ```
 
+The region keeps 2.5 m of source heightfield beyond the landing target so a
+robot can remain supported through the 0.5 s landing-hold check. This distance
+defines the exported training area, not an additional obstacle.
+
 External MuJoCo code can use `TrainingRegion.open(path)`,
 `compose_training_region_with_robot(region, robot_xml)` and
 `load_isaac_training_region(region)`. The latter only supplies the grid,
@@ -458,6 +462,9 @@ probe contacts match. The rectangle edge is an artificial end of the exported
 heightfield, not a field wall. Training code should reset when the robot's
 footprint approaches `manifest.grid.bounds_xy_m`; use the complete field for
 long routes or uncontrolled excursions.
+`region.contains_footprint(x_m, y_m, radius_m)` provides that rectangle check
+for a robot's chosen footprint radius; a `False` result is a reset condition
+for the external trainer, not a collision with a new wall.
 With optional Newton/Warp installed, `python examples/isaac_newton_fly_probe.py
 ./local-fly-north --source-pack ./local-rmuc2026-field` repeats the contact
 smoke against the exported region and verifies its exact source grid slice.
@@ -472,6 +479,10 @@ errors. They record actual takeoff speed, flight duration, first recontact,
 hashes, solver settings, throughput and worker memory. Failed robot episodes
 remain useful data and do not alter the field collision. The 2.2 m/s single
 wheel diagnostic gate is not a universal robot speed requirement.
+`COMPLETE` describes the route and hold only. Each episode also reports
+`field_normal_force_peak_by_robot_geom_n`, so a robot owner can check impacts
+on its own chassis or other forbidden collision geoms before accepting a
+landing as low-impact.
 
 The viewer uses the same `FlyRampSession` as the automatic runner and saves a
 trajectory; press **R** to reset a new attempt. The no-robot example accepts

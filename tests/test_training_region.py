@@ -27,7 +27,7 @@ def _fake_source(tmp_path: Path, monkeypatch) -> tuple[SimpleNamespace, HeightFi
     source_xml.write_text(
         '<mujoco model="source"><option timestep="0.002" solver="Newton"/>'
         '<asset><hfield name="rmuc2026_collision" file="unused.png" '
-        'nrow="301" ncol="301" size="1.5 1.5 1 0.05"/></asset>'
+        'nrow="801" ncol="801" size="4 4 1 0.05"/></asset>'
         '<worldbody><geom name="rmuc2026_field_collision" type="hfield" '
         'hfield="rmuc2026_collision" pos="0 0 0" contype="2" conaffinity="1" '
         'friction="1 0.005 0.0001" solref="0.02 1"/>'
@@ -35,9 +35,9 @@ def _fake_source(tmp_path: Path, monkeypatch) -> tuple[SimpleNamespace, HeightFi
         'size="1 0.02 0.5" contype="2" conaffinity="1"/></worldbody></mujoco>',
         encoding="utf-8",
     )
-    axis = np.arange(-1.5, 1.501, 0.01)
+    axis = np.arange(-4.0, 4.001, 0.01)
     yy, xx = np.meshgrid(axis, axis, indexing="ij")
-    world = HeightFieldData(axis, axis, 0.10 + 0.04 * xx + 0.02 * yy)
+    world = HeightFieldData(axis, axis, 0.10 + 0.01 * xx + 0.005 * yy)
     asset = SimpleNamespace(
         hashes_verified=True,
         manifest_sha256="a" * 64,
@@ -80,6 +80,15 @@ def test_training_region_exports_exact_source_grid_and_composes(tmp_path, monkey
     )
     assert local.height_m.size < source.height_m.size / 2
     assert manifest["validation_status"] == "DRAFT_BLOCKED"
+    assert local.x_m[-1] >= 3.0  # landing target plus 2.5 m runout
+    (lower_x, lower_y), (upper_x, upper_y) = local.bounds_xy_m
+    assert region.contains_footprint(0.0, 0.0, radius_m=0.2)
+    assert region.contains_footprint(lower_x + 0.2, lower_y + 0.2, radius_m=0.2)
+    assert not region.contains_footprint(lower_x + 0.19, 0.0, radius_m=0.2)
+    assert not region.contains_footprint(upper_x + 0.01, upper_y, radius_m=0.0)
+    assert not region.contains_footprint(float("nan"), 0.0, radius_m=0.2)
+    with pytest.raises(ValueError, match="footprint radius"):
+        region.contains_footprint(0.0, 0.0, radius_m=-0.1)
 
     model, _ = load_training_region_model(region)
     assert model.opt.timestep == pytest.approx(0.002)

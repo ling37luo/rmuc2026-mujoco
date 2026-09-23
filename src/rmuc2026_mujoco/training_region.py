@@ -43,7 +43,8 @@ REGION_ARTIFACT_TYPE = "rmuc2026_mujoco_training_region"
 REGION_SCHEMA_VERSION = 1
 REGION_SCENARIOS = ("fly_ramp_north", "fly_ramp_south")
 _SIDE_MARGIN_M = 0.80
-_END_MARGIN_M = 0.60
+_APPROACH_MARGIN_M = 0.60
+_LANDING_RUNOUT_MARGIN_M = 2.50
 
 
 def _normalized_source_height(height: np.ndarray, record: Mapping[str, Any]) -> np.ndarray:
@@ -112,9 +113,12 @@ def _grid_slice(axis: np.ndarray, lower: float, upper: float) -> tuple[int, int]
 def _crop_indices(world: HeightFieldData, route: Mapping[str, Any]) -> tuple[int, int, int, int]:
     direction = np.asarray(route["uphill_unit_xy"], dtype=np.float64)
     lateral = np.asarray((-direction[1], direction[0]), dtype=np.float64)
-    start = np.asarray(route["approach_xyz_m"][:2], dtype=np.float64) - direction * _END_MARGIN_M
+    start = (
+        np.asarray(route["approach_xyz_m"][:2], dtype=np.float64) - direction * _APPROACH_MARGIN_M
+    )
     end = (
-        np.asarray(route["landing_target_xyz_m"][:2], dtype=np.float64) + direction * _END_MARGIN_M
+        np.asarray(route["landing_target_xyz_m"][:2], dtype=np.float64)
+        + direction * _LANDING_RUNOUT_MARGIN_M
     )
     corners = np.asarray(
         [point + sign * _SIDE_MARGIN_M * lateral for point in (start, end) for sign in (-1, 1)]
@@ -351,6 +355,19 @@ class TrainingRegion:
     root: Path
     manifest: Mapping[str, Any]
     manifest_sha256: str
+
+    def contains_footprint(self, x_m: float, y_m: float, radius_m: float) -> bool:
+        """Whether a circular robot footprint remains on the cropped heightfield."""
+
+        if not math.isfinite(radius_m) or radius_m < 0:
+            raise ValueError("footprint radius must be finite and nonnegative")
+        if not math.isfinite(x_m) or not math.isfinite(y_m):
+            return False
+        (lower_x, lower_y), (upper_x, upper_y) = self.manifest["grid"]["bounds_xy_m"]
+        return (
+            lower_x + radius_m <= x_m <= upper_x - radius_m
+            and lower_y + radius_m <= y_m <= upper_y - radius_m
+        )
 
     @classmethod
     def open(cls, root: str | Path, *, verify: bool = True) -> TrainingRegion:
