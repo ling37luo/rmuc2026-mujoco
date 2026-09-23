@@ -309,8 +309,11 @@ def run_fly_batch(
     episodes = sorted((e for w in results for e in w["episodes"]), key=lambda e: e["case_index"])
     outcomes = Counter(e["outcome"] for e in episodes)
     warnings = Counter()
+    contact_peaks = {}
     for episode in episodes:
         warnings.update(episode.get("warnings", {}))
+        for geom, force in episode.get("field_normal_force_peak_by_robot_geom_n", {}).items():
+            contact_peaks[geom] = max(contact_peaks.get(geom, 0.0), float(force))
     steps = sum(e["steps"] for e in episodes)
     physics_healthy = all(e.get("physics_status") == "PASS" for e in episodes)
     summary = {
@@ -358,6 +361,7 @@ def run_fly_batch(
         "environment_count": workers_used,
         "episodes_per_worker": [len(w["episodes"]) for w in results],
         "summary": summary,
+        "field_normal_force_peak_by_robot_geom_n": dict(sorted(contact_peaks.items())),
         "by_scenario": {
             scenario: {
                 "episodes": len(rows := [e for e in episodes if e["scenario_id"] == scenario]),

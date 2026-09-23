@@ -467,8 +467,10 @@ footprint leaves the local heightfield.
 In local 120 mm sphere contact probes, Isaac Lab's kit-less Newton XPBD backend
 supported the 1 cm grid on both ramps; MJWarp's heightfield contact path
 overflowed its contact-pair budget and did not support the sphere correctly.
-This is not a robot-flight or PhysX validation, so use XPBD for the currently
-tested Isaac path and check another backend before training with it.
+This validates terrain probes only, not robot flight or PhysX. Articulated
+robot training requires a separate
+source-faithful flat hold and ramp-contact check; Isaac Sim/PhysX collision
+and scale have not yet been measured for this region.
 The local rectangle is for training throughput; evaluate learned robot
 policies on the complete `collision_only` or `full` field because long robot
 trajectories can diverge after many contacts even when grid vertices and local
@@ -496,7 +498,10 @@ wheel diagnostic gate is not a universal robot speed requirement.
 `COMPLETE` describes the route and hold only. Each episode also reports
 `field_normal_force_peak_by_robot_geom_n`, so a robot owner can check impacts
 on its own chassis or other forbidden collision geoms before accepting a
-landing as low-impact.
+landing as low-impact. The batch summary includes the maximum for each robot
+geom across all episodes, including episodes whose route outcome is `PASS`.
+These are peaks of individual MuJoCo contacts, not sums across simultaneous
+contact points.
 
 The viewer uses the same `FlyRampSession` as the automatic runner and saves a
 trajectory; press **R** to reset a new attempt. The no-robot example accepts
