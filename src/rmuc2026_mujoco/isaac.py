@@ -58,12 +58,17 @@ def load_isaac_heightfield(
     elif scenario == "slope_basic":
         descriptor["slope_catalog"] = slope_catalog(field)
         spawn_points = tuple(
-            {"route_id": patch["patch_id"], "direction": direction,
-             "position_xyz_m": patch["route"][point],
-             "heading_yaw_rad": patch["route"]["heading_yaw_rad"] + offset}
-            for patch in descriptor["slope_catalog"]["patches"] if patch["route"] is not None
+            {
+                "route_id": patch["patch_id"],
+                "direction": direction,
+                "position_xyz_m": patch["route"][point],
+                "heading_yaw_rad": patch["route"]["heading_yaw_rad"] + offset,
+            }
+            for patch in descriptor["slope_catalog"]["patches"]
+            if patch["route"] is not None
             for direction, point, offset in (
-                ("uphill", "low_xyz_m", 0.0), ("downhill", "high_xyz_m", float(np.pi))
+                ("uphill", "low_xyz_m", 0.0),
+                ("downhill", "high_xyz_m", float(np.pi)),
             )
         )
     return IsaacHeightfieldInput(

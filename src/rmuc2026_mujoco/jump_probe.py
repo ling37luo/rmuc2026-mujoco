@@ -124,18 +124,16 @@ def detect_landing_profile(
         raise ValueError("jump-probe profile coordinates must be strictly increasing")
 
     takeoff = float(takeoff_seam_along_m)
-    floor_mask = (
-        (along >= takeoff + config.gap_floor_sample_start_m)
-        & (along <= takeoff + config.gap_floor_sample_end_m)
+    floor_mask = (along >= takeoff + config.gap_floor_sample_start_m) & (
+        along <= takeoff + config.gap_floor_sample_end_m
     )
     if not np.any(floor_mask):
         raise MujocoModelError("jump-probe profile does not cover the gap floor interval")
     floor_height = float(np.median(height[floor_mask]))
 
     expected_edge = takeoff + config.official_gap_m
-    search_mask = (
-        (along >= expected_edge - config.landing_search_half_width_m)
-        & (along <= expected_edge + config.landing_search_half_width_m)
+    search_mask = (along >= expected_edge - config.landing_search_half_width_m) & (
+        along <= expected_edge + config.landing_search_half_width_m
     )
     candidates = np.flatnonzero(
         search_mask & (height >= floor_height + config.landing_face_minimum_rise_m)
@@ -144,9 +142,8 @@ def detect_landing_profile(
         raise MujocoModelError("jump-probe could not find the landing face near the official gap")
     landing_edge = float(along[int(candidates[0])])
 
-    top_mask = (
-        (along >= landing_edge + config.landing_top_inset_start_m)
-        & (along <= landing_edge + config.landing_top_inset_end_m)
+    top_mask = (along >= landing_edge + config.landing_top_inset_start_m) & (
+        along <= landing_edge + config.landing_top_inset_end_m
     )
     if not np.any(top_mask):
         raise MujocoModelError("jump-probe profile does not cover the landing top interval")
@@ -228,8 +225,7 @@ def run_jump_probe_trial(
     timestep = float(model.opt.timestep)
     if not math.isclose(timestep, wheel_config.timestep_s, rel_tol=0.0, abs_tol=1.0e-12):
         raise MujocoModelError(
-            f"jump-probe model timestep {timestep} disagrees with config "
-            f"{wheel_config.timestep_s}"
+            f"jump-probe model timestep {timestep} disagrees with config {wheel_config.timestep_s}"
         )
     low_approach_s, high_seam_s = wheel_probe_route_endpoints(ramp)
     radius = REFERENCE_WHEEL_DIAMETER_M / 2.0
@@ -245,9 +241,7 @@ def run_jump_probe_trial(
         position_error = low_approach_s - float(data.qpos[ids.path_qpos])
         hold_acceleration = (
             wheel_config.velocity_gain_s_inv * (0.0 - float(data.qvel[ids.path_dof]))
-            + wheel_config.velocity_gain_s_inv
-            * position_error
-            / wheel_config.settle_time_s
+            + wheel_config.velocity_gain_s_inv * position_error / wheel_config.settle_time_s
         )
         data.qfrc_applied[ids.path_dof] = float(
             np.clip(
@@ -266,9 +260,7 @@ def run_jump_probe_trial(
     mujoco.mj_forward(model, data)
 
     maximum_steps = max(1, int(math.ceil(jump_config.timeout_s / timestep)))
-    post_landing_steps = max(
-        1, int(math.ceil(jump_config.post_landing_observation_s / timestep))
-    )
+    post_landing_steps = max(1, int(math.ceil(jump_config.post_landing_observation_s / timestep)))
     finite_state = True
     finite_contacts = True
     became_airborne = False
@@ -291,9 +283,7 @@ def run_jump_probe_trial(
         data.qfrc_applied[:] = 0.0
         if coordinate < high_seam_s:
             drive_force = (
-                wheel_config.wheel_mass_kg
-                * wheel_config.velocity_gain_s_inv
-                * (speed - velocity)
+                wheel_config.wheel_mass_kg * wheel_config.velocity_gain_s_inv * (speed - velocity)
                 + wheel_config.wheel_mass_kg * 9.81 * slope_rise_per_run
             )
             data.qfrc_applied[ids.path_dof] = float(
@@ -375,9 +365,7 @@ def run_jump_probe_trial(
         and completed_post_landing_observation
         and post_landing_contact_steps > 0
         and post_landing_minimum_height
-        >= landing.landing_top_height_m
-        + radius
-        - 2.0 * jump_config.landing_height_tolerance_m
+        >= landing.landing_top_height_m + radius - 2.0 * jump_config.landing_height_tolerance_m
     )
     required_to_land = speed >= jump_config.required_success_speed_m_s - 1.0e-12
     checks = {
@@ -580,13 +568,9 @@ def run_fixed_fly_ramp_jump_probe(
         },
         "dimensions": dimensions,
         "summary": {
-            "dimension_records_passed": sum(
-                record["gap_dimension_pass"] for record in dimensions
-            ),
+            "dimension_records_passed": sum(record["gap_dimension_pass"] for record in dimensions),
             "dimension_record_count": len(dimensions),
-            "landed_on_top_trials": sum(
-                trial["outcome"] == "LANDED_ON_TOP" for trial in trials
-            ),
+            "landed_on_top_trials": sum(trial["outcome"] == "LANDED_ON_TOP" for trial in trials),
             "short_or_lip_impact_trials": sum(
                 trial["outcome"] == "SHORT_OR_LIP_IMPACT" for trial in trials
             ),
@@ -594,9 +578,7 @@ def run_fixed_fly_ramp_jump_probe(
                 trial["status"] == "PASS" for trial in required_trials
             ),
             "required_speed_trial_count": len(required_trials),
-            "solver_warning_count": sum(
-                sum(trial["solver_warnings"].values()) for trial in trials
-            ),
+            "solver_warning_count": sum(sum(trial["solver_warnings"].values()) for trial in trials),
         },
         "trials": trials,
         "claim_boundary": (

@@ -19,7 +19,14 @@ def test_turn_phase_command_grids_are_deterministic() -> None:
     assert len(spin.commands) == 12
     assert len(arc.commands) == 16
     assert len(reversal.commands) == 36
-    assert sorted({command.yaw_rad_s for command in spin.commands}) == [-0.6, -0.4, -0.2, 0.2, 0.4, 0.6]
+    assert sorted({command.yaw_rad_s for command in spin.commands}) == [
+        -0.6,
+        -0.4,
+        -0.2,
+        0.2,
+        0.4,
+        0.6,
+    ]
     assert sorted({command.vx_mps for command in arc.commands}) == [-0.3, 0.3]
     assert tuple(reversal.commands[index].yaw_rad_s for index in range(3)) == (-0.6, 0.0, 0.6)
     assert turn_phase_registry() == turn_phase_registry()

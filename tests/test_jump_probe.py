@@ -131,9 +131,7 @@ def test_jump_probe_matrix_separates_low_speed_outcomes_from_required_gate(
             },
         }
 
-    monkeypatch.setattr(
-        "rmuc2026_mujoco.jump_probe.measure_runtime_landing_profile", fake_measure
-    )
+    monkeypatch.setattr("rmuc2026_mujoco.jump_probe.measure_runtime_landing_profile", fake_measure)
     monkeypatch.setattr("rmuc2026_mujoco.jump_probe.build_wheel_probe_model", fake_build)
     monkeypatch.setattr("rmuc2026_mujoco.jump_probe.run_jump_probe_trial", fake_trial)
     output = tmp_path / "jump-probe.json"

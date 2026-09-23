@@ -62,13 +62,18 @@ _RAMP_NORTH, _RAMP_SOUTH = tuple(_ramp_route(route) for route in FIXED_FLY_RAMPS
 
 SCENARIOS: Mapping[str, ScenarioSpec] = {
     "full_eval": ScenarioSpec(
-        "full_eval", "full", "complete field interaction baseline",
+        "full_eval",
+        "full",
+        "complete field interaction baseline",
         {"selector": "field_global", "visual": "full"},
         {"strategy": "pack_recommended_spawn_or_external_reset"},
-        (), ("human_view", "viewer", "mujoco", "isaac"),
+        (),
+        ("human_view", "viewer", "mujoco", "isaac"),
     ),
     "turn_basic": ScenarioSpec(
-        "turn_basic", "collision_only", "flat area for forward, reverse and in-place turning",
+        "turn_basic",
+        "collision_only",
+        "flat area for forward, reverse and in-place turning",
         {"selector": "flat_open_area", "visual": "omitted"},
         {
             "strategy": "screened_flat_spawn",
@@ -113,16 +118,25 @@ SCENARIOS: Mapping[str, ScenarioSpec] = {
                 },
             },
         },
-        (), ("human_view", "mujoco", "isaac"),
+        (),
+        ("human_view", "mujoco", "isaac"),
     ),
     "stairs_basic": ScenarioSpec(
-        "stairs_basic", "collision_only", "stairs and their approach/exit connection",
+        "stairs_basic",
+        "collision_only",
+        "stairs and their approach/exit connection",
         {"selector": "stairs_and_connection", "visual": "omitted"},
-        {"strategy": "external_route_spawn", "approach_directions": ["forward", "reverse", "diagonal"]},
-        (), ("human_view", "mujoco", "isaac"),
+        {
+            "strategy": "external_route_spawn",
+            "approach_directions": ["forward", "reverse", "diagonal"],
+        },
+        (),
+        ("human_view", "mujoco", "isaac"),
     ),
     "slope_basic": ScenarioSpec(
-        "slope_basic", "collision_only", "ordinary traversable slopes below the dedicated fly ramps",
+        "slope_basic",
+        "collision_only",
+        "ordinary traversable slopes below the dedicated fly ramps",
         {
             "selector": "ordinary_slope_catalog",
             "visual": "omitted",
@@ -142,25 +156,35 @@ SCENARIOS: Mapping[str, ScenarioSpec] = {
             "traversal_rule": dict(SLOPE_TRAVERSAL_RULE),
             "topology_verified": False,
         },
-        (), ("human_view", "mujoco", "isaac"),
+        (),
+        ("human_view", "mujoco", "isaac"),
     ),
     "fly_ramp_north": ScenarioSpec(
-        "fly_ramp_north", "collision_only", "audited north fly ramp",
+        "fly_ramp_north",
+        "collision_only",
+        "audited north fly ramp",
         {"selector": "route", "route_id": _RAMP_NORTH["route_id"], "visual": "omitted"},
         {"strategy": "route_endpoints", "wheel_diameter_m": 0.12},
-        (_RAMP_NORTH,), ("human_view", "mujoco", "isaac"),
+        (_RAMP_NORTH,),
+        ("human_view", "mujoco", "isaac"),
     ),
     "fly_ramp_south": ScenarioSpec(
-        "fly_ramp_south", "collision_only", "audited south fly ramp",
+        "fly_ramp_south",
+        "collision_only",
+        "audited south fly ramp",
         {"selector": "route", "route_id": _RAMP_SOUTH["route_id"], "visual": "omitted"},
         {"strategy": "route_endpoints", "wheel_diameter_m": 0.12},
-        (_RAMP_SOUTH,), ("human_view", "mujoco", "isaac"),
+        (_RAMP_SOUTH,),
+        ("human_view", "mujoco", "isaac"),
     ),
     "boundary_contact": ScenarioSpec(
-        "boundary_contact", "collision_only", "field edge and perimeter contact",
+        "boundary_contact",
+        "collision_only",
+        "field edge and perimeter contact",
         {"selector": "perimeter_and_boundary", "visual": "omitted"},
         {"strategy": "external_boundary_spawn", "boundary_margin_m": 0.25},
-        (), ("human_view", "mujoco", "isaac"),
+        (),
+        ("human_view", "mujoco", "isaac"),
     ),
 }
 
@@ -188,7 +212,9 @@ def scenario_descriptor(
     spec = get_scenario(scenario_id)
     selected_profile = profile or spec.profile
     if selected_profile not in asset.available_runtime_profiles:
-        raise ValueError(f"scenario {scenario_id!r} requires unavailable profile {selected_profile!r}")
+        raise ValueError(
+            f"scenario {scenario_id!r} requires unavailable profile {selected_profile!r}"
+        )
     payload = {
         "scenario": spec.to_dict(),
         "scenario_id": spec.scenario_id,
@@ -231,8 +257,14 @@ def _bounds(asset: FieldAsset) -> list[list[float]]:
         y = np.asarray(data["y_m"], dtype=float)
     spawn = asset.recommended_spawn
     return [
-        [float(x[0] - spawn["x_before_translation_m"]), float(y[0] - spawn["y_before_translation_m"])],
-        [float(x[-1] - spawn["x_before_translation_m"]), float(y[-1] - spawn["y_before_translation_m"])],
+        [
+            float(x[0] - spawn["x_before_translation_m"]),
+            float(y[0] - spawn["y_before_translation_m"]),
+        ],
+        [
+            float(x[-1] - spawn["x_before_translation_m"]),
+            float(y[-1] - spawn["y_before_translation_m"]),
+        ],
     ]
 
 

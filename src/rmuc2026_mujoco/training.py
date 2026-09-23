@@ -184,7 +184,9 @@ class MuJoCoScenario:
     def metadata(self) -> dict[str, Any]:
         import mujoco
 
-        descriptor = scenario_descriptor(self.asset, self.scenario.scenario_id, profile=self.profile)
+        descriptor = scenario_descriptor(
+            self.asset, self.scenario.scenario_id, profile=self.profile
+        )
         robot_hash = None
         if self.robot_xml is not None:
             robot_hash = hashlib.sha256(self.robot_xml.read_bytes()).hexdigest()

@@ -242,9 +242,7 @@ def _strip_embedded_field_scene(robot_spec: Any) -> None:
     worldbody = robot_spec.worldbody
     root_geoms = list(worldbody.geoms)
     marker_names = {
-        str(geom.name)
-        for geom in root_geoms
-        if getattr(geom, "name", None) is not None
+        str(geom.name) for geom in root_geoms if getattr(geom, "name", None) is not None
     }
     embedded_field = (
         "rmuc2026_field_collision" in marker_names

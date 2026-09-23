@@ -4,6 +4,40 @@ All notable changes to this project will be documented in this file. The format
 is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the
 project intends to follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+## [1.1.0] - 2026-09-23
+
+### Added
+
+- Added the robot-agnostic `turn_basic` benchmark with screened flat-ground
+  starts, spin/arc/reversal phases, and parallel MuJoCo execution. External
+  controllers keep responsibility for robot observations and actions.
+- Added ordinary-slope route screening for `slope_basic`. The field's verified
+  heightfield provides three continuous approach, slope, and exit routes in
+  the current local pack without introducing a second map or changing geometry.
+- Added a slope interaction viewer and example four-wheel rover. External
+  robots and policies use the same model composition and controller callback.
+- Added independent uphill, downhill, and roundtrip results with contact,
+  tilt, penetration, failure, and timing records for each leg.
+- Added automatic MuJoCo slope evaluation across routes, directions, speeds,
+  repeats, and worker processes, with deterministic case identities and
+  optional per-episode trajectories.
+
+### Changed
+
+- `view --scenario slope_basic` defaults to uphill-only evaluation. A roundtrip
+  succeeds after uphill and downhill complete in the same episode. Reaching
+  or crossing an endpoint counts without the former 0.25 s dwell requirement.
+- `run --scenario slope_basic` runs a headless evaluation matrix; `run` keeps
+  the existing turning behavior for `turn_basic`.
+- Package metadata and the public `__version__` identify version `1.1.0`.
+
+This is a code and interface release. It does not distribute generated field
+packs, official assets, or private robots and policies. The current full-field
+runtime pack remains `DRAFT_BLOCKED`; the bounded slope tests do not establish
+whole-field collision accuracy or Isaac training results.
+
 ## [1.0.0] - 2026-09-22
 
 ### Added
@@ -31,8 +65,6 @@ project intends to follow [Semantic Versioning](https://semver.org/).
 This is a code and interface release. Generated runtime packs remain local and
 `DRAFT_BLOCKED`; official STEP/rulebook assets and private robot or policy
 files are not distributed.
-
-## [Unreleased]
 
 ## [0.3.1] - 2026-09-21
 

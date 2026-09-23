@@ -310,8 +310,9 @@ def _lift_freejoint_clear_of_field(
         geom_id
         for geom_id in range(int(model.ngeom))
         if (
-            (mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_GEOM, geom_id) or "")
-            .endswith("/rmuc2026_field_collision")
+            (mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_GEOM, geom_id) or "").endswith(
+                "/rmuc2026_field_collision"
+            )
             or (
                 mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_GEOM, geom_id)
                 == "rmuc2026_field_collision"
@@ -395,7 +396,9 @@ def run_turn_episode(
     spawn = replace(spawn, heading_yaw_rad=float(heading_yaw_rad))
     reset_turn_spawn(model, data, spawn, heading_yaw_rad=heading_yaw_rad)
     controller.reset(model, data, spawn, seed)
-    result = TurnEpisodeResult(seed=seed, phase=phase.phase_id, spawn=spawn, steps=0, sim_time_s=0.0)
+    result = TurnEpisodeResult(
+        seed=seed, phase=phase.phase_id, spawn=spawn, steps=0, sim_time_s=0.0
+    )
     yaw_errors: list[float] = []
     velocity_errors: list[float] = []
     saturation_steps = 0
@@ -438,7 +441,9 @@ def run_turn_episode(
             result.failure_reason = "mujoco_warning"
             break
         for contact_index in range(int(data.ncon)):
-            maximum_penetration = max(maximum_penetration, max(0.0, -float(data.contact[contact_index].dist)))
+            maximum_penetration = max(
+                maximum_penetration, max(0.0, -float(data.contact[contact_index].dist))
+            )
         root = _freejoint_observation(model, data)
         if root is not None:
             minimum_height = min(minimum_height, root["height_m"])
@@ -534,7 +539,9 @@ def run_turn_batch(
     total_steps = sum(int(item["steps"]) for item in episodes)
     warnings = _merge_counts(item["warnings"] for item in episodes)
     result = {
-        "status": "PASS" if not warnings and all(not item["failed"] for item in episodes) else "FAIL",
+        "status": "PASS"
+        if not warnings and all(not item["failed"] for item in episodes)
+        else "FAIL",
         "backend": "mujoco",
         "scenario_id": "turn_basic",
         "phase": phase,
@@ -585,7 +592,9 @@ def _turn_worker(args: tuple[int, Mapping[str, Any]]) -> dict[str, Any]:
         data = mujoco.MjData(model)
         env_seed = int(payload["seed"]) + worker_index * int(payload["envs_per_worker"]) + env_index
         spawn = spawns[(worker_index * int(payload["envs_per_worker"]) + env_index) % len(spawns)]
-        heading = 2.0 * math.pi * ((env_seed % phase_spec.initial_headings) / phase_spec.initial_headings)
+        heading = (
+            2.0 * math.pi * ((env_seed % phase_spec.initial_headings) / phase_spec.initial_headings)
+        )
         episode_spawn = replace(spawn, heading_yaw_rad=heading)
         controller = load_turn_controller(payload.get("controller"), model, data)
         episode_phase = _episode_phase_for_seed(phase_spec, env_seed)
@@ -605,7 +614,9 @@ def _turn_worker(args: tuple[int, Mapping[str, Any]]) -> dict[str, Any]:
         "worker_index": worker_index,
         "environment_count": len(episodes),
         "steps": sum(int(item["steps"]) for item in episodes),
-        "steps_per_second": sum(int(item["steps"]) for item in episodes) / elapsed if elapsed else None,
+        "steps_per_second": sum(int(item["steps"]) for item in episodes) / elapsed
+        if elapsed
+        else None,
         "resource_max_rss_bytes": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * 1024,
         "episodes": episodes,
     }
@@ -651,7 +662,9 @@ def _freejoint_observation(model: Any, data: Any) -> dict[str, float] | None:
         "height_m": float(data.qpos[qadr + 2]),
         "yaw_rad": yaw,
         "yaw_rate_rad_s": float(data.qvel[vadr + 5]),
-        "forward_velocity_mps": float(math.cos(yaw) * linear_velocity[0] + math.sin(yaw) * linear_velocity[1]),
+        "forward_velocity_mps": float(
+            math.cos(yaw) * linear_velocity[0] + math.sin(yaw) * linear_velocity[1]
+        ),
         "tilt_deg": _quaternion_tilt_deg(quaternion),
     }
 

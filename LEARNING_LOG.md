@@ -1,5 +1,22 @@
 # Local validation log
 
+## 2026-09-23 — v1.1.0 release verification
+
+- **User authorization:** the user explicitly requested a repository commit,
+  testing, and publication of version 1.1.0 for the current result.
+- **AGENT_PASS:** Codex updated package metadata, public `__version__` and
+  changelog to 1.1.0. The ignored local `uv.lock` was refreshed; it is not a
+  distributed source file. Repository-wide Ruff formatting was applied to
+  the nine files that previously failed `ruff format --check`.
+- **AGENT_PASS:** 291 synthetic-fixture tests passed. Repository-wide
+  `ruff check` and `ruff format --check` passed. The 1.1.0 source distribution
+  and wheel built, and both passed `scripts/audit_release_contents.py`.
+- **AGENT_PASS (bounded real pack, carried from the prior local regression):**
+  SCUT slope matrix 36/36 and public example rover matrix 18/18 passed on
+  the current local runtime pack; these artifacts stay in ignored `runs/`.
+- **UNVERIFIED:** full-field topology, randomized policy training and actual
+  Isaac execution. The local runtime pack still reports `DRAFT_BLOCKED`.
+
 ## 2026-09-23 — automatic slope matrix and parallel evaluation
 
 - **User request:** run slope testing automatically for simulation/training

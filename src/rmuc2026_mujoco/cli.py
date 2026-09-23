@@ -153,10 +153,21 @@ def build_parser() -> argparse.ArgumentParser:
     energy_unit.add_argument("y", type=float)
     energy_unit.add_argument("--steps", type=int, default=1000)
     scenarios = commands.add_parser("scenarios", help="list the public field scenario registry")
-    scenarios.add_argument("--asset", type=Path, help="bind the registry to a verified runtime pack")
-    scenarios.add_argument("--scenario", choices=(
-        "full_eval", "turn_basic", "stairs_basic", "slope_basic", "fly_ramp_north", "fly_ramp_south", "boundary_contact"
-    ))
+    scenarios.add_argument(
+        "--asset", type=Path, help="bind the registry to a verified runtime pack"
+    )
+    scenarios.add_argument(
+        "--scenario",
+        choices=(
+            "full_eval",
+            "turn_basic",
+            "stairs_basic",
+            "slope_basic",
+            "fly_ramp_north",
+            "fly_ramp_south",
+            "boundary_contact",
+        ),
+    )
     scenarios.add_argument("--profile", choices=RUNTIME_PROFILE_NAMES)
     slope = commands.add_parser(
         "slope-catalog",
@@ -181,7 +192,8 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--workers", type=int, default=1)
     run.add_argument("--envs-per-worker", type=int, default=1)
     run.add_argument(
-        "--duration", type=float,
+        "--duration",
+        type=float,
         help="episode limit; default: turn 8 s, slopes distance/speed based",
     )
     run.add_argument("--seed", type=int, default=20260922)
@@ -189,21 +201,39 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--telemetry", type=Path, help="write the aggregate run manifest as JSON")
     run.add_argument("--patches", nargs="+", help="slope patch IDs; default: all screened routes")
     run.add_argument(
-        "--directions", nargs="+", choices=("uphill", "downhill", "roundtrip"),
+        "--directions",
+        nargs="+",
+        choices=("uphill", "downhill", "roundtrip"),
         default=["uphill", "downhill", "roundtrip"],
     )
-    run.add_argument("--speeds", nargs="+", type=float, default=[0.3, 0.5], help="slope speeds in m/s")
+    run.add_argument(
+        "--speeds", nargs="+", type=float, default=[0.3, 0.5], help="slope speeds in m/s"
+    )
     run.add_argument("--repeats", type=int, default=1, help="episodes per slope/direction/speed")
-    run.add_argument("--trajectory-dir", type=Path, help="optional slope episode trajectories (50 Hz)")
+    run.add_argument(
+        "--trajectory-dir", type=Path, help="optional slope episode trajectories (50 Hz)"
+    )
     view = commands.add_parser("view")
     view.add_argument("asset", type=Path)
     view.add_argument("--robot", type=Path, help="user-owned robot MJCF to attach to the field")
     view.add_argument("--control", choices=("human", "policy"), default="human")
     view.add_argument("--controller", help="optional user controller factory, module:object")
-    view.add_argument("--scenario", choices=(
-        "full_eval", "turn_basic", "stairs_basic", "slope_basic", "fly_ramp_north", "fly_ramp_south", "boundary_contact"
-    ), default="full_eval")
-    view.add_argument("--headless", action="store_true", help="run physics without opening a viewer")
+    view.add_argument(
+        "--scenario",
+        choices=(
+            "full_eval",
+            "turn_basic",
+            "stairs_basic",
+            "slope_basic",
+            "fly_ramp_north",
+            "fly_ramp_south",
+            "boundary_contact",
+        ),
+        default="full_eval",
+    )
+    view.add_argument(
+        "--headless", action="store_true", help="run physics without opening a viewer"
+    )
     view.add_argument("--steps", type=int, default=1000, help="headless physics steps")
     view.add_argument("--telemetry", type=Path, help="write headless step telemetry as JSON")
     view.add_argument("--patch", help="slope_basic patch ID; default: first screened route")
@@ -457,7 +487,9 @@ def main(argv: list[str] | None = None) -> int:
                     {
                         "backend": "isaac",
                         "status": "DESCRIPTOR_READY",
-                        "robot_mjcf": str(args.robot.expanduser().resolve()) if args.robot else None,
+                        "robot_mjcf": str(args.robot.expanduser().resolve())
+                        if args.robot
+                        else None,
                         "note": "Isaac consumer builds its own parallel backend from this descriptor",
                     }
                 )
@@ -471,10 +503,19 @@ def main(argv: list[str] | None = None) -> int:
                         "increase --workers for parallelism"
                     )
                 payload = run_slope_batch(
-                    args.asset, robot=args.robot, controller=args.controller, patches=args.patches,
-                    directions=args.directions, speeds=args.speeds, repeats=args.repeats,
-                    workers=args.workers, duration_s=args.duration, seed=args.seed,
-                    profile=args.profile, trajectory_dir=args.trajectory_dir, progress=True,
+                    args.asset,
+                    robot=args.robot,
+                    controller=args.controller,
+                    patches=args.patches,
+                    directions=args.directions,
+                    speeds=args.speeds,
+                    repeats=args.repeats,
+                    workers=args.workers,
+                    duration_s=args.duration,
+                    seed=args.seed,
+                    profile=args.profile,
+                    trajectory_dir=args.trajectory_dir,
+                    progress=True,
                 )
                 if args.telemetry is None:
                     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S.%fZ")
@@ -503,7 +544,9 @@ def main(argv: list[str] | None = None) -> int:
             # The full slope matrix is in the saved report; keep console output compact.
             display_payload = payload
             if args.scenario == "slope_basic" and args.backend == "mujoco":
-                display_payload = {key: value for key, value in payload.items() if key != "episodes"}
+                display_payload = {
+                    key: value for key, value in payload.items() if key != "episodes"
+                }
             print(json.dumps(display_payload, indent=2, sort_keys=True))
             return 0 if payload.get("status") in {"PASS", "DESCRIPTOR_READY"} else 2
         asset = FieldAsset.open(args.asset, verify=True)
@@ -698,7 +741,9 @@ def main(argv: list[str] | None = None) -> int:
                         "profile": args.profile,
                         "steps": step + 1 if args.steps else 0,
                         "sim_time_s": float(data.time),
-                        "steps_per_second": (step + 1) / elapsed if args.steps and elapsed else None,
+                        "steps_per_second": (step + 1) / elapsed
+                        if args.steps and elapsed
+                        else None,
                         "contacts": contacts,
                         "warnings": warnings,
                         "finite": finite,
@@ -758,7 +803,9 @@ def main(argv: list[str] | None = None) -> int:
                     if needs_refit:
                         fitted_viewport = _configure_camera(viewer, asset, args.camera)
                     if args.robot is not None:
-                        controller(model, data, step=int(data.time / model.opt.timestep), mode=args.control)
+                        controller(
+                            model, data, step=int(data.time / model.opt.timestep), mode=args.control
+                        )
                         import mujoco
 
                         mujoco.mj_step(model, data)
