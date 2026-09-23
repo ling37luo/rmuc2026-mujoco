@@ -368,6 +368,7 @@ def _run_physx(
     try:
         import carb
         import omni.usd
+        import isaacsim.core.experimental.utils.app as app_utils
         from isaacsim.core.simulation_manager import PhysxScene, SimulationManager
         from isaacsim.sensors.experimental.physics import Contact, ContactSensor
         from omni.physics.core import get_physics_scene_query_interface
@@ -517,6 +518,10 @@ def _run_physx(
                 expected_colliders[(env_index, label)] = f"{env_path}/{wall['box_name']}"
 
         SimulationManager.setup_simulation(dt=_DT_S, device=device)
+        # Contact sensors initialize on timeline Play, before the first step.
+        app_utils.play(commit=True)
+        if not app_utils.is_playing():
+            raise RuntimeError("Isaac timeline did not enter Play")
         SimulationManager.step(steps=1)  # Start physics before scene queries or sensor reads.
         authoring_seconds = time.perf_counter() - started
         query = get_physics_scene_query_interface()
@@ -587,6 +592,8 @@ def _run_physx(
             SimulationManager.step(steps=1)
             for identity, sensor in sensors.items():
                 if identity in first_contacts:
+                    continue
+                if not sensor.get_sensor_reading().is_valid:
                     continue
                 frame = sensor.get_data()
                 if bool(frame["in_contact"]):

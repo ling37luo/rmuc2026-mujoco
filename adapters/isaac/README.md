@@ -50,24 +50,32 @@ load_isaac_training_region_export(
 )
 ```
 
-Then copy the export to an [Isaac Sim 6.1 supported Linux host](https://docs.isaacsim.omniverse.nvidia.com/6.1.0/installation/requirements.html)
-and run, from this repository's root:
+Then put both verified north/south source regions and their schema-3 exports
+under one directory on an [Isaac Sim 6.1 Linux host](https://docs.isaacsim.omniverse.nvidia.com/6.1.0/installation/requirements.html).
+From this repository's root, run:
 
 ```bash
 # This check uses ordinary Python/NumPy and does not start Isaac or PhysX.
 uv run --locked --project . python adapters/isaac/physx_fly_contact_smoke.py \
   /path/to/fly-north-isaac-export --envs 16 --check-only
 
-# Run each size as its own fresh process with the installed Isaac Sim runtime.
-/path/to/isaac-sim/python.sh adapters/isaac/physx_fly_contact_smoke.py \
-  /path/to/fly-north-isaac-export --envs 1 --output /path/to/new-north-1.json
-/path/to/isaac-sim/python.sh adapters/isaac/physx_fly_contact_smoke.py \
-  /path/to/fly-north-isaac-export --envs 4 --output /path/to/new-north-4.json
-/path/to/isaac-sim/python.sh adapters/isaac/physx_fly_contact_smoke.py \
-  /path/to/fly-north-isaac-export --envs 16 --output /path/to/new-north-16.json
+# This launches north and south, each at 1/4/16 environments in fresh processes.
+uv run --locked --project . python adapters/isaac/run_physx_fly_matrix.py \
+  --isaac-python /path/to/isaac-sim/python.sh \
+  --regions-root /path/to/fly-region-root \
+  --output-new-dir /path/to/new-physx-six-case-run \
+  --device cuda:0 --steps 500
 ```
 
-Repeat for the south export. The script authors **one independent static
+For [pip-installed Isaac Sim](https://docs.isaacsim.omniverse.nvidia.com/6.1.0/installation/install_python.html),
+pass its isolated environment's `bin/python` instead of `python.sh`. The matrix
+runner checks each export against its source region before starting PhysX and
+saves six reports, six pairs of console logs, and `summary.json`. It reports a
+pass only when all six contact probes pass without detected PhysX/solver
+warnings and GPU memory was sampled; a failed process or missing report remains
+a failure. The GPU metric is device-wide use, including other processes.
+
+The probe authors **one independent static
 triangle-mesh collider and source-bound perimeter box per environment**; it
 does not share one contact surface and call that 16 environments. Mesh
 vertices are the original height samples, with the same diagonal used by
@@ -88,14 +96,14 @@ the selected saddle cells. The USD float32 point conversion is bounded by
 PhysX collision cooking, ray hits and contact behavior remain unverified until
 the host run succeeds.
 
-The resulting JSON records source/profile hashes, sample order, point
+Each probe JSON records source/profile hashes, sample order, point
 quantization, ray error, first contact on every probe, wall-clock throughput
 and process memory. `PHYSX_CONTACT_PROBE_PASS` means all sphere probes reported
 contact with their expected collider according to raw sensor pairs, the
 terrain rays matched within 1 mm, and the fence rays identified the expected
-static boxes. Inspect the Isaac console log for warnings and record GPU memory
-with `nvidia-smi` separately; the script does not parse solver logs or query
-peak VRAM.
+static boxes. The matrix runner scans console logs for PhysX/solver warnings
+and samples `nvidia-smi` during each case; the probe itself does not query
+process peak VRAM.
 It does not establish robot landing quality, MuJoCo/PhysX friction parity or
 large-scale training throughput. Retain the full field as the final policy
 evaluation scene.
