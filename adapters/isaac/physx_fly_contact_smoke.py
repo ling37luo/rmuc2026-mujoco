@@ -12,9 +12,11 @@ import argparse
 import hashlib
 import json
 import math
+from numbers import Integral
 from pathlib import Path
 import resource
 import time
+from typing import Callable
 
 import numpy as np
 
@@ -34,7 +36,7 @@ def _load_export(root: Path) -> tuple[dict, np.ndarray, np.ndarray, np.ndarray]:
     descriptor = json.loads((root / "descriptor.json").read_text(encoding="utf-8"))
     if (
         descriptor.get("artifact_type") != "rmuc2026_isaac_heightfield_input"
-        or descriptor.get("schema_version") not in (1, 2)
+        or descriptor.get("schema_version") not in (1, 2, 3)
         or descriptor.get("grid_file") != "heightfield.npz"
     ):
         raise ValueError("unsupported offline Isaac export descriptor")
@@ -78,7 +80,7 @@ def _static_boxes(descriptor: dict, x: np.ndarray, y: np.ndarray) -> list[dict]:
         return []
     collision = descriptor.get("collision")
     if not isinstance(collision, dict) or not isinstance(collision.get("static_boxes"), list):
-        raise ValueError("schema 2 export lacks collision.static_boxes")
+        raise ValueError("export lacks collision.static_boxes")
     boxes = collision["static_boxes"]
     if descriptor["scenario_id"] in ("fly_ramp_north", "fly_ramp_south") and not boxes:
         raise ValueError("fly-ramp export has no cropped static perimeter box")
@@ -116,6 +118,41 @@ def _static_boxes(descriptor: dict, x: np.ndarray, y: np.ndarray) -> list[dict]:
         ):
             raise ValueError(f"static box outside crop or invalid dimensions: {name}")
     return boxes
+
+
+def _heightfield_contact(descriptor: dict) -> dict | None:
+    """Read source contact metadata; older exports have no terrain contract."""
+    if descriptor["schema_version"] < 3:
+        return None
+    collision = descriptor.get("collision")
+    contact = collision.get("heightfield") if isinstance(collision, dict) else None
+    if not isinstance(contact, dict) or set(contact) != {
+        "name",
+        "contype",
+        "conaffinity",
+        "friction",
+        "solref",
+    }:
+        raise ValueError("schema 3 export lacks collision.heightfield")
+    try:
+        friction = np.asarray(contact["friction"], dtype=np.float64)
+        solref = np.asarray(contact["solref"], dtype=np.float64)
+        if (
+            contact["name"] != "rmuc2026_field_collision"
+            or type(contact["contype"]) is not int
+            or type(contact["conaffinity"]) is not int
+            or contact["contype"] < 0
+            or contact["conaffinity"] < 0
+            or friction.shape != (3,)
+            or solref.shape != (2,)
+            or not np.isfinite(friction).all()
+            or not np.isfinite(solref).all()
+            or np.any(friction < 0)
+        ):
+            raise ValueError("invalid terrain contact metadata")
+    except (TypeError, ValueError) as exc:
+        raise ValueError("invalid collision.heightfield contact metadata") from exc
+    return contact
 
 
 def _wall_probe(box: dict, approach_xy: list[float]) -> dict:
@@ -211,6 +248,7 @@ def _preflight(root: Path, envs: int) -> tuple[np.ndarray, np.ndarray, np.ndarra
     probes = _route_probes(descriptor, x, y, height)
     offsets = environment_offsets(envs, x, y)
     boxes = _static_boxes(descriptor, x, y)
+    terrain_contact = _heightfield_contact(descriptor)
     _check_environment_box_separation(boxes, offsets)
     wall_probes = [_wall_probe(box, descriptor["route"]["approach_xyz_m"][:2]) for box in boxes]
     source = descriptor["identity"]
@@ -239,9 +277,78 @@ def _preflight(root: Path, envs: int) -> tuple[np.ndarray, np.ndarray, np.ndarra
         "probe_sites": probes,
         "static_boxes": boxes,
         "static_box_count_per_env": len(boxes),
+        "heightfield_contact": terrain_contact,
+        "material_mapping": {
+            "status": "source_sliding_friction_proxy_unverified_runtime"
+            if terrain_contact is not None
+            else "not_available_in_legacy_export",
+            "physx_static_dynamic_from_mujoco_sliding": terrain_contact is not None,
+            "friction_combine_mode": "max" if terrain_contact else None,
+            "restitution": 0.0 if terrain_contact else None,
+            "not_mapped": [
+                "mujoco_torsional_friction",
+                "mujoco_rolling_friction",
+                "mujoco_solref",
+                "mujoco_contype_conaffinity",
+            ]
+            if terrain_contact is not None
+            else [],
+        },
         "wall_probe_sites": wall_probes,
     }
     return x, y, height, record
+
+
+def _raw_contact_body_path(value: object, decode_body_id: Callable[[int], object]) -> str | None:
+    """Resolve an Isaac raw contact body token to its absolute USD prim path."""
+    if isinstance(value, Integral) and not isinstance(value, bool):
+        value = decode_body_id(int(value))
+    if hasattr(value, "pathString"):
+        value = value.pathString
+    return value if isinstance(value, str) and value.startswith("/") else None
+
+
+def _raw_contact_observation(
+    raw_contacts: object,
+    sphere_path: str,
+    expected_collider: str,
+    decode_body_id: Callable[[int], object],
+) -> dict:
+    """Accept only raw pairs between this sphere and its own expected collider."""
+    if not isinstance(raw_contacts, list):
+        return {
+            "raw_contact_count": 0,
+            "observed_collider": None,
+            "observed_colliders": [],
+            "valid": False,
+        }
+
+    observed = []
+    valid = bool(raw_contacts)
+    for contact in raw_contacts:
+        if not isinstance(contact, dict):
+            valid = False
+            continue
+        body0 = _raw_contact_body_path(contact.get("body0"), decode_body_id)
+        body1 = _raw_contact_body_path(contact.get("body1"), decode_body_id)
+        if body0 == sphere_path and body1 is not None:
+            collider = body1
+        elif body1 == sphere_path and body0 is not None:
+            collider = body0
+        else:
+            valid = False
+            continue
+        observed.append(collider)
+        if collider != expected_collider:
+            valid = False
+
+    observed_colliders = sorted(set(observed))
+    return {
+        "raw_contact_count": len(raw_contacts),
+        "observed_collider": observed_colliders[0] if len(observed_colliders) == 1 else None,
+        "observed_colliders": observed_colliders,
+        "valid": valid,
+    }
 
 
 def _run_physx(
@@ -264,7 +371,7 @@ def _run_physx(
         from isaacsim.core.simulation_manager import PhysxScene, SimulationManager
         from isaacsim.sensors.experimental.physics import Contact, ContactSensor
         from omni.physics.core import get_physics_scene_query_interface
-        from pxr import Gf, UsdGeom, UsdPhysics
+        from pxr import Gf, PhysicsSchemaTools, PhysxSchema, UsdGeom, UsdPhysics, UsdShade
 
         started = time.perf_counter()
         omni.usd.get_context().new_stage()
@@ -282,6 +389,36 @@ def _run_physx(
         physics_scene.set_dt(_DT_S)
         physics_scene.set_enabled_gpu_dynamics(device.startswith("cuda"))
 
+        def physics_material(path: str, sliding_friction: float):
+            material = UsdShade.Material.Define(stage, path)
+            prim = material.GetPrim()
+            api = UsdPhysics.MaterialAPI.Apply(prim)
+            api.CreateStaticFrictionAttr(sliding_friction)
+            api.CreateDynamicFrictionAttr(sliding_friction)
+            api.CreateRestitutionAttr(0.0)
+            PhysxSchema.PhysxMaterialAPI.Apply(prim).CreateFrictionCombineModeAttr().Set(
+                PhysxSchema.Tokens.max
+            )
+            return material
+
+        def bind_material(prim, material) -> None:
+            UsdShade.MaterialBindingAPI.Apply(prim).Bind(
+                material, UsdShade.Tokens.weakerThanDescendants, "physics"
+            )
+
+        terrain_contact = record["heightfield_contact"]
+        if terrain_contact is None:
+            raise ValueError("PhysX runtime probe requires schema 3 terrain contact metadata")
+        terrain_material = physics_material(
+            "/World/PhysicsMaterials/terrain", float(terrain_contact["friction"][0])
+        )
+        box_materials = {
+            box["name"]: physics_material(
+                f"/World/PhysicsMaterials/{box['name']}", float(box["friction"][0])
+            )
+            for box in record["static_boxes"]
+        }
+
         vertices, faces = grid_to_triangle_mesh(x, y, height)
         usd_points = [Gf.Vec3f(*map(float, vertex)) for vertex in vertices.astype(np.float32)]
         usd_face_counts = [3] * len(faces)
@@ -291,6 +428,7 @@ def _run_physx(
         static_boxes = record["static_boxes"]
         wall_probes = record["wall_probe_sites"]
         sensors = {}
+        sensor_bodies = {}
         expected_colliders = {}
         for env_index, (offset_x, offset_y) in enumerate(offsets):
             env_path = f"/World/env_{env_index}"
@@ -308,6 +446,7 @@ def _run_physx(
             UsdPhysics.MeshCollisionAPI.Apply(mesh.GetPrim()).CreateApproximationAttr(
                 UsdPhysics.Tokens.none
             )
+            bind_material(mesh.GetPrim(), terrain_material)
             for box in static_boxes:
                 cube = UsdGeom.Cube.Define(stage, f"{env_path}/{box['name']}")
                 cube.CreateSizeAttr(2.0)
@@ -320,6 +459,7 @@ def _run_physx(
                 )
                 cube.AddScaleOp().Set(Gf.Vec3f(*map(float, box["size_m"])))
                 UsdPhysics.CollisionAPI.Apply(cube.GetPrim())
+                bind_material(cube.GetPrim(), box_materials[box["name"]])
             for label, probe in probes.items():
                 px, py = probe["xy_m"]
                 sphere_path = f"{env_path}/probe_{label}"
@@ -333,6 +473,7 @@ def _run_physx(
                     )
                 )
                 UsdPhysics.CollisionAPI.Apply(sphere.GetPrim())
+                bind_material(sphere.GetPrim(), terrain_material)
                 UsdPhysics.RigidBodyAPI.Apply(sphere.GetPrim())
                 UsdPhysics.MassAPI.Apply(sphere.GetPrim()).CreateMassAttr(0.4)
                 sensors[(env_index, label)] = ContactSensor(
@@ -343,6 +484,7 @@ def _run_physx(
                         translations=np.array([[0.0, 0.0, 0.0]]),
                     )
                 )
+                sensor_bodies[(env_index, label)] = sphere_path
                 expected_colliders[(env_index, label)] = mesh.GetPath().pathString
             for wall in wall_probes:
                 label = f"wall:{wall['box_name']}"
@@ -358,6 +500,7 @@ def _run_physx(
                     )
                 )
                 UsdPhysics.CollisionAPI.Apply(sphere.GetPrim())
+                bind_material(sphere.GetPrim(), box_materials[wall["box_name"]])
                 body = UsdPhysics.RigidBodyAPI.Apply(sphere.GetPrim())
                 velocity = np.asarray(wall["direction_xyz"]) * _WALL_SPHERE_SPEED_M_S
                 body.CreateVelocityAttr(Gf.Vec3f(*map(float, velocity)))
@@ -370,6 +513,7 @@ def _run_physx(
                         translations=np.array([[0.0, 0.0, 0.0]]),
                     )
                 )
+                sensor_bodies[(env_index, label)] = sphere_path
                 expected_colliders[(env_index, label)] = f"{env_path}/{wall['box_name']}"
 
         SimulationManager.setup_simulation(dt=_DT_S, device=device)
@@ -447,6 +591,12 @@ def _run_physx(
                 frame = sensor.get_data()
                 if bool(frame["in_contact"]):
                     force = float(np.asarray(frame["force"]).item())
+                    contact = _raw_contact_observation(
+                        sensor.get_raw_data(),
+                        sensor_bodies[identity],
+                        expected_colliders[identity],
+                        PhysicsSchemaTools.intToSdfPath,
+                    )
                     first_contacts[identity] = {
                         "env": identity[0],
                         "site": identity[1],
@@ -455,7 +605,8 @@ def _run_physx(
                         "force_n": force,
                         "number_of_contacts": int(frame["number_of_contacts"]),
                         "expected_collider": expected_colliders[identity],
-                        "valid": math.isfinite(force) and force > 0.0,
+                        **contact,
+                        "valid": math.isfinite(force) and force > 0.0 and contact["valid"],
                     }
         step_seconds = time.perf_counter() - begin_steps
         report = {
@@ -519,13 +670,17 @@ def main() -> int:
         report = {
             **record,
             "runtime_status": "UNVERIFIED_RUNTIME",
-            "scope": "terrain_only_legacy_export"
-            if record["export_schema_version"] == 1
-            else "terrain_and_cropped_fence_export",
+            "scope": (
+                "terrain_only_legacy_export"
+                if record["export_schema_version"] == 1
+                else "terrain_and_cropped_fence_without_terrain_contact"
+                if record["export_schema_version"] == 2
+                else "terrain_and_cropped_fence_with_source_contact_metadata"
+            ),
         }
     else:
-        if record["export_schema_version"] == 1:
-            parser.error("schema 1 is terrain-only; export schema 2 for a fly-pack PhysX check")
+        if record["export_schema_version"] < 3:
+            parser.error("schema 1/2 lacks terrain contact metadata; export schema 3 for PhysX")
         report = _run_physx(
             x, y, height, record, envs=args.envs, steps=args.steps, device=args.device
         )

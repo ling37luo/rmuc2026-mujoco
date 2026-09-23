@@ -143,3 +143,64 @@ def test_fly_static_fence_contract_rejects_uncropped_or_missing_box() -> None:
     with pytest.raises(ValueError, match="outside crop"):
         _PROBE._static_boxes(descriptor, x, y)
     assert _PROBE._static_boxes({"schema_version": 1}, x, y) == []
+
+
+def test_raw_contact_observation_requires_exact_probe_and_collider_pair() -> None:
+    sphere = "/World/env_0/probe_takeoff"
+    terrain = "/World/env_0/terrain"
+    other_terrain = "/World/env_1/terrain"
+    fence = "/World/env_0/rmuc2026_perimeter_top"
+    body_paths = {1: sphere, 2: terrain, 3: other_terrain, 4: fence}
+    decode = body_paths.__getitem__
+
+    direct = _PROBE._raw_contact_observation(
+        [{"body0": np.uint64(1), "body1": np.uint64(2)}], sphere, terrain, decode
+    )
+    assert direct == {
+        "raw_contact_count": 1,
+        "observed_collider": terrain,
+        "observed_colliders": [terrain],
+        "valid": True,
+    }
+    reverse = _PROBE._raw_contact_observation(
+        [{"body0": terrain, "body1": sphere}], sphere, terrain, decode
+    )
+    assert reverse["valid"] is True
+    assert reverse["observed_collider"] == terrain
+
+    for raw, observed in (
+        ([], None),
+        ([{"body0": 1, "body1": 3}], other_terrain),
+        ([{"body0": 1, "body1": 4}], fence),
+        ([{"body0": 2, "body1": 3}], None),
+        ([{"body0": 1}], None),
+    ):
+        result = _PROBE._raw_contact_observation(raw, sphere, terrain, decode)
+        assert result["valid"] is False
+        assert result["observed_collider"] == observed
+
+    mixed = _PROBE._raw_contact_observation(
+        [{"body0": 1, "body1": 2}, {"body0": 1, "body1": 3}], sphere, terrain, decode
+    )
+    assert mixed["valid"] is False
+    assert mixed["observed_collider"] is None
+    assert mixed["observed_colliders"] == [terrain, other_terrain]
+
+
+def test_physx_fly_probe_requires_source_heightfield_contact_metadata() -> None:
+    terrain = {
+        "name": "rmuc2026_field_collision",
+        "contype": 2,
+        "conaffinity": 1,
+        "friction": [1.0, 0.005, 0.0001],
+        "solref": [0.02, 1.0],
+    }
+    descriptor = {"schema_version": 3, "collision": {"heightfield": terrain}}
+    assert _PROBE._heightfield_contact(descriptor) == terrain
+    assert _PROBE._heightfield_contact({"schema_version": 2}) is None
+    descriptor["collision"]["heightfield"] = {**terrain, "friction": [float("nan"), 0, 0]}
+    with pytest.raises(ValueError, match="heightfield contact metadata"):
+        _PROBE._heightfield_contact(descriptor)
+    descriptor["collision"].pop("heightfield")
+    with pytest.raises(ValueError, match="lacks collision.heightfield"):
+        _PROBE._heightfield_contact(descriptor)

@@ -228,3 +228,29 @@ the marked route and reverse down, then inspect the saved traversal report.
   hashes did not change.
 - **UNVERIFIED:** actual Isaac Sim/PhysX contact, friction and runtime scaling.
   No robot policy was trained and no ordinary-slope training asset changed.
+
+## 2026-09-23 — fly-ramp contact and material follow-up
+
+- **AGENT_PASS (MuJoCo):** independent neutral 120 mm probes compared the v6
+  complete field with both v4 fly regions. Each ramp had 301 centerline, 91
+  lateral and 193 high gap static poses; contact pairs matched. Eight rolling
+  approach/descent/landing segments reached their endpoints with identical
+  contact presence at every step and under `4 µm` position difference. One
+  north takeoff-lip step had two versus one contact point, without loss of
+  support. Three vertical drop sites per ramp matched first and sustained
+  contact. No numerical warning or nonfinite state occurred. Codex reran the
+  saved script; its JSON is in ignored
+  `runs/rmuc2026-training-regions/20260923T_fly_local_candidate_v4/contact_parity_replay_20260923.json`.
+- **AGENT_PASS (source contract):** compiled full/crop MuJoCo models have the
+  same ground friction `[1, 0.005, 0.0001]`, ground `solref=[0.02,1]`, and
+  contact bits `2/1`; the corresponding fence has the same friction and bits,
+  with `solref=[0.04,1]`. Schema-3 Isaac exports now record the ground
+  parameters, while legacy schema 1/2 records remain readable without
+  inventing missing values. Source-bound north/south schema-3 exports and
+  1/4/16-environment offline preflights passed.
+- **AGENT_PASS (software):** the PhysX probe checks raw sensor collider IDs and
+  authors explicit sliding-friction proxy materials on terrain, fence and test
+  spheres. The repository has 355 passing tests; Ruff and diff checks pass.
+- **UNVERIFIED:** this host has no Isaac Sim/PhysX runtime. The materials are
+  an explicit probe approximation, not friction or `solref` equivalence, and
+  actual PhysX contacts, memory and throughput still require an installed host.

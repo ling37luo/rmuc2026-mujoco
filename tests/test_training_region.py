@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from types import SimpleNamespace
+import xml.etree.ElementTree as ET
 
 import mujoco
 import numpy as np
@@ -133,6 +134,14 @@ def test_training_region_exports_exact_source_grid_and_composes(tmp_path, monkey
     assert isaac.scenario["source_manifest_sha256"] == asset.manifest_sha256
     np.testing.assert_allclose(isaac.height_m, local.height_m, atol=1e-7, rtol=0)
     assert len(isaac.static_boxes) == 1
+    assert isaac.heightfield_contact == {
+        "name": "rmuc2026_field_collision",
+        "contype": 2,
+        "conaffinity": 1,
+        "friction": [1.0, 0.005, 0.0001],
+        "solref": [0.02, 1.0],
+    }
+    assert isaac.to_dict()["heightfield_contact"] == isaac.heightfield_contact
 
     with pytest.raises(ValueError, match="already exists"):
         export_training_region(asset, output, scenario_id="fly_ramp_north")
@@ -153,7 +162,7 @@ def test_isaac_offline_export_preserves_exact_grid_scale_and_identity(tmp_path, 
     assert descriptor["identity"]["source_field_xml_sha256"] == sha256_file(
         region_path / "field.xml"
     )
-    assert descriptor["schema_version"] == 2
+    assert descriptor["schema_version"] == 3
     assert descriptor["grid_file_sha256"] == sha256_file(region_path / "collision/heightfield.npz")
     assert descriptor["grid"]["height_values"] == "absolute_world_z_m_no_extra_scale_or_offset"
     np.testing.assert_array_equal(imported.x_m, original.x_m)
@@ -161,7 +170,10 @@ def test_isaac_offline_export_preserves_exact_grid_scale_and_identity(tmp_path, 
     np.testing.assert_array_equal(imported.height_m, original.height_m)
     assert imported.bounds_xy_m == original.bounds_xy_m
     assert imported.scenario["profile_hash"] == region.manifest["profile_hash"]
+    assert imported.scenario["heightfield_contact_status"] == "source_mjcf_recorded"
     assert imported.static_boxes == load_isaac_training_region(region).static_boxes
+    assert descriptor["collision"]["heightfield"] == imported.heightfield_contact
+    assert imported.heightfield_contact == load_isaac_training_region(region).heightfield_contact
     box = imported.static_boxes[0]
     assert box["name"] == "rmuc2026_perimeter_top"
     assert box["pos_m"] == pytest.approx([(original.x_m[0] + original.x_m[-1]) / 2, 0.7, 0.5])
@@ -171,6 +183,39 @@ def test_isaac_offline_export_preserves_exact_grid_scale_and_identity(tmp_path, 
     assert box["solref"] == [0.04, 1.0]
     with pytest.raises(ValueError, match="already exists"):
         export_isaac_training_region(region, export_path)
+
+
+def test_isaac_heightfield_contact_follows_source_mjcf(tmp_path, monkeypatch):
+    asset, _ = _fake_source(tmp_path, monkeypatch)
+    source_xml = asset.entrypoint_for("collision_only")
+    tree = ET.parse(source_xml)
+    geom = tree.getroot().find("./worldbody/geom[@name='rmuc2026_field_collision']")
+    assert geom is not None
+    geom.set("contype", "4")
+    geom.set("conaffinity", "3")
+    geom.set("friction", "0.73 0.004 0.0002")
+    geom.set("solref", "0.031 0.8")
+    tree.write(source_xml, encoding="utf-8")
+
+    region_path = tmp_path / "region"
+    export_training_region(asset, region_path, scenario_id="fly_ramp_north")
+    expected = {
+        "name": "rmuc2026_field_collision",
+        "contype": 4,
+        "conaffinity": 3,
+        "friction": [0.73, 0.004, 0.0002],
+        "solref": [0.031, 0.8],
+    }
+    assert load_isaac_training_region(region_path).heightfield_contact == expected
+    export_path = tmp_path / "offline"
+    descriptor = export_isaac_training_region(region_path, export_path)
+    assert descriptor["collision"]["heightfield"] == expected
+    assert (
+        load_isaac_training_region_export(
+            export_path, source_region=region_path
+        ).heightfield_contact
+        == expected
+    )
 
 
 def test_isaac_offline_export_rejects_grid_or_source_identity_change(tmp_path, monkeypatch):
@@ -199,9 +244,7 @@ def test_isaac_offline_export_rejects_grid_or_source_identity_change(tmp_path, m
         load_isaac_training_region_export(export_path, source_region=region_path)
 
 
-def test_isaac_static_boxes_are_source_bound_and_schema_one_remains_heightfield_only(
-    tmp_path, monkeypatch
-):
+def test_isaac_contact_is_source_bound_and_legacy_schemas_remain_readable(tmp_path, monkeypatch):
     asset, _ = _fake_source(tmp_path, monkeypatch)
     region_path = tmp_path / "region"
     export_training_region(asset, region_path, scenario_id="fly_ramp_north")
@@ -222,6 +265,40 @@ def test_isaac_static_boxes_are_source_bound_and_schema_one_remains_heightfield_
     with pytest.raises(ManifestError, match="verified source region"):
         load_isaac_training_region_export(export_path, source_region=region_path)
 
+    for key, replacement in (
+        ("contype", 3),
+        ("conaffinity", 2),
+        ("friction", [0.7, 0.005, 0.0001]),
+        ("solref", [0.04, 1.0]),
+    ):
+        changed = json.loads(json.dumps(descriptor))
+        changed["collision"]["heightfield"][key] = replacement
+        descriptor_path.write_text(json.dumps(changed), encoding="utf-8")
+        with pytest.raises(ManifestError, match="verified source region"):
+            load_isaac_training_region_export(export_path, source_region=region_path)
+
+    changed = json.loads(json.dumps(descriptor))
+    changed["collision"]["heightfield"]["name"] = "wrong_heightfield"
+    descriptor_path.write_text(json.dumps(changed), encoding="utf-8")
+    with pytest.raises(ManifestError, match="heightfield contact"):
+        load_isaac_training_region_export(export_path, source_region=region_path)
+
+    changed = json.loads(json.dumps(descriptor))
+    changed["collision"].pop("heightfield")
+    descriptor_path.write_text(json.dumps(changed), encoding="utf-8")
+    with pytest.raises(ManifestError, match="collision descriptor"):
+        load_isaac_training_region_export(export_path, source_region=region_path)
+
+    schema_two = json.loads(json.dumps(descriptor))
+    schema_two["schema_version"] = 2
+    schema_two["collision"].pop("heightfield")
+    descriptor_path.write_text(json.dumps(schema_two), encoding="utf-8")
+    imported = load_isaac_training_region_export(export_path, source_region=region_path)
+    assert len(imported.static_boxes) == 1
+    assert imported.heightfield_contact is None
+    assert imported.scenario["heightfield_contact_status"] == "not_recorded_legacy_schema"
+    assert imported.to_dict()["heightfield_contact"] is None
+
     legacy = dict(descriptor)
     legacy["schema_version"] = 1
     legacy["scope"] = "offline_heightfield_data_only_no_physx_contact_validation"
@@ -231,6 +308,8 @@ def test_isaac_static_boxes_are_source_bound_and_schema_one_remains_heightfield_
     descriptor_path.write_text(json.dumps(legacy), encoding="utf-8")
     imported = load_isaac_training_region_export(export_path, source_region=region_path)
     assert imported.static_boxes == ()
+    assert imported.heightfield_contact is None
+    assert imported.scenario["heightfield_contact_status"] == "not_recorded_legacy_schema"
 
 
 def test_training_region_rejects_tampered_collision_file(tmp_path, monkeypatch):
