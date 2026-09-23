@@ -123,7 +123,9 @@ class FlyRampSession:
                 self.model, self.data = compose_with_robot(
                     self.asset, robot_path, profile=profile, friction_preset=friction_preset
                 )
-            self.controller = load_controller(controller, self.model, self.data, mode=mode)
+            self.controller = load_controller(
+                controller, self.model, self.data, mode=mode, field_asset=self.asset
+            )
         joint = _root_joint(self.model)
         self.qadr = int(self.model.jnt_qposadr[joint])
         self.dofadr = int(self.model.jnt_dofadr[joint])

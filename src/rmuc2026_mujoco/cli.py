@@ -821,7 +821,7 @@ def main(argv: list[str] | None = None) -> int:
                 },
             )
         controller = (
-            load_controller(args.controller, model, data, mode=args.control)
+            load_controller(args.controller, model, data, mode=args.control, field_asset=asset)
             if args.controller is not None
             else NoOpController()
         )

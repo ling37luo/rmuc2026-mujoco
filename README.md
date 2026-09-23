@@ -218,6 +218,10 @@ rmuc2026-field view ./local-rmuc2026-field \
   --telemetry runs/turn_basic.json
 ```
 
+Factories that declare an optional `field_asset` keyword receive the selected
+`FieldAsset` or `TrainingRegion`, so terrain observations can use the same
+verified pack that the robot is driving on.
+
 For Python users, `MuJoCoScenario` provides `reset()`, `step()`, telemetry,
 and run metadata without importing PPO/SAC or another RL framework. The
 optional `load_isaac_heightfield()` adapter returns the verified heightfield,
@@ -501,7 +505,8 @@ on its own chassis or other forbidden collision geoms before accepting a
 landing as low-impact. The batch summary includes the maximum for each robot
 geom across all episodes, including episodes whose route outcome is `PASS`.
 These are peaks of individual MuJoCo contacts, not sums across simultaneous
-contact points.
+contact points. Compare impact results with the same MuJoCo version and
+solver configuration; the report records both.
 
 The viewer uses the same `FlyRampSession` as the automatic runner and saves a
 trajectory; press **R** to reset a new attempt. The no-robot example accepts

@@ -157,7 +157,9 @@ class SlopeSession:
             self.model, self.data = compose_with_robot(
                 self.asset, robot, profile=profile, friction_preset=friction_preset
             )
-            self.controller = load_controller(controller, self.model, self.data, mode=mode)
+            self.controller = load_controller(
+                controller, self.model, self.data, mode=mode, field_asset=self.asset
+            )
         self.friction_preset = friction_preset
         self.record_trajectory = record_trajectory
         self.seed = None

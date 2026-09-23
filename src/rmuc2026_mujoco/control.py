@@ -27,8 +27,10 @@ class NoOpController:
         del model, data, step, mode
 
 
-def load_controller(spec: str, model: Any, data: Any, *, mode: str) -> ControlCallback:
-    """Load ``module:factory`` and accept either a callback or a factory."""
+def load_controller(
+    spec: str, model: Any, data: Any, *, mode: str, field_asset: Any = None
+) -> ControlCallback:
+    """Load a callback or factory, optionally giving it the selected field asset."""
 
     if ":" not in spec:
         raise ValueError("controller must use module:object syntax")
@@ -36,8 +38,19 @@ def load_controller(spec: str, model: Any, data: Any, *, mode: str) -> ControlCa
     target = getattr(_load_module(module_name), object_name)
     if not callable(target):
         raise TypeError(f"controller target {spec!r} is not callable")
+    kwargs = {"mode": mode}
+    if field_asset is not None:
+        try:
+            parameter = inspect.signature(target).parameters.get("field_asset")
+        except (TypeError, ValueError):
+            parameter = None
+        if parameter is not None and parameter.kind in (
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            inspect.Parameter.KEYWORD_ONLY,
+        ):
+            kwargs["field_asset"] = field_asset
     try:
-        candidate = target(model, data, mode=mode)
+        candidate = target(model, data, **kwargs)
     except TypeError:
         candidate = target
     if not callable(candidate):
