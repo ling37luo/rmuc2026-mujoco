@@ -90,6 +90,7 @@ TEXT_SUFFIXES = frozenset(
         ".css",
         ".ini",
         ".json",
+        ".kit",
         ".md",
         ".py",
         ".pyi",

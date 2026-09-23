@@ -490,8 +490,6 @@ terrain = load_isaac_training_region_export(
 The export itself is a data handoff and hash/scale check. The separate
 Isaac Sim 6.1 PhysX probe passed terrain and fence contact checks on both
 fly-ramp crops at 1, 4 and 16 environments; it is not a robot training adapter.
-The bounded fly-pack contact and parallel integration results are summarized in
-[`FLY_TRAINING_PACK_STATUS_20260923.md`](FLY_TRAINING_PACK_STATUS_20260923.md).
 
 The same `run_fly_batch(region, ...)` session and controller contract used for
 the full field can evaluate a local region in parallel. From the CLI, select
@@ -506,13 +504,9 @@ rmuc2026-field run ./local-fly-north --scenario fly_ramp_north \
 The footprint radius comes from the user's robot; an episode ends if its
 footprint leaves the local heightfield.
 
-In local 120 mm sphere contact probes, Isaac Lab's kit-less Newton XPBD backend
-supported the 1 cm grid on both ramps; MJWarp's heightfield contact path
-overflowed its contact-pair budget and did not support the sphere correctly.
-This Newton result validates terrain probes only, not robot flight. The
-separate PhysX run measured terrain scale and neutral sphere/fence contact
-for both regions at 1, 4 and 16 environments. Articulated robot training
-still requires robot-specific control and landing checks.
+Optional Newton and PhysX probes check neutral contact with the exported
+terrain and fence; MJWarp's heightfield contact probe remains unsupported.
+Articulated robot training still requires robot-specific landing checks.
 The local rectangle is for training throughput; evaluate learned robot
 policies on the complete `collision_only` or `full` field because long robot
 trajectories can diverge after many contacts even when grid vertices and local

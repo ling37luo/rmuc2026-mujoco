@@ -6,6 +6,8 @@ project intends to follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-09-23
+
 ### Added
 
 - Added executable north/south fly-ramp robot episodes and a parallel speed and
@@ -15,6 +17,25 @@ project intends to follow [Semantic Versioning](https://semver.org/).
 - Added a public four-wheel fly-ramp example and interactive viewer reset,
   plus pack-bound approach/landing routes for MuJoCo and the optional Isaac
   descriptor. No field geometry or collision parameters were changed.
+- Added source-bound, 1 cm north/south fly-ramp training-region exports with
+  recorded grid slices, routes, hashes and perimeter contact. The public
+  MuJoCo batch runner can evaluate either region with external robots and
+  controllers across independent worker processes.
+- Added an optional Isaac data handoff with exact height samples, contact
+  metadata and cropped perimeter boxes, plus an Isaac Sim 6.1 PhysX contact
+  probe for 1, 4 and 16 parallel environments.
+
+### Changed
+
+- Fly-ramp reports distinguish route completion from numerical health and
+  expose peak field-contact force per robot geom. Package metadata and the
+  public `__version__` now identify version `1.2.0`.
+
+This is a code and interface release. Bounded MuJoCo and PhysX terrain-contact
+checks passed; robot landing quality and friction-response parity are not
+certified. The full field and derived regions remain `DRAFT_BLOCKED`, and crop
+edges require trainer resets. Generated field packs, official-source assets
+and robot/policy files are not distributed.
 
 ## [1.1.0] - 2026-09-23
 
