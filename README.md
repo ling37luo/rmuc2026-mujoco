@@ -481,6 +481,8 @@ terrain = load_isaac_training_region_export(
 
 This is a data handoff and hash/scale check, not an Isaac Sim/PhysX contact
 validation or a completed robot training adapter.
+The bounded fly-pack contact and parallel integration results are summarized in
+[`FLY_TRAINING_PACK_STATUS_20260923.md`](FLY_TRAINING_PACK_STATUS_20260923.md).
 
 The same `run_fly_batch(region, ...)` session and controller contract used for
 the full field can evaluate a local region in parallel. From the CLI, select

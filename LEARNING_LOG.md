@@ -189,3 +189,21 @@ rmuc2026-field view ./local-rmuc2026-field --scenario slope_basic \
 
 Next user check: open `view --scenario slope_basic --control human`, drive up
 the marked route and reverse down, then inspect the saved traversal report.
+
+## 2026-09-23 — fly-ramp training pack integration check
+
+- **AGENT_PASS:** north/south v4 local regions were re-opened with verified
+  manifests and hashes; their 1 cm samples and routes matched exact slices of
+  the verified v6 source. Neutral full-versus-crop MuJoCo sphere drops matched
+  final position within `1.2e-11 m` and had no numerical warning.
+- **AGENT_PASS:** the public example rover ran fixed fly-region cases at
+  1/4/16 MuJoCo worker counts with identical per-case physics outcomes and
+  zero nonfinite states/warnings. Kit-less Newton XPBD supported neutral
+  spheres in 1/4/16 independent worlds on both ramps, with at most `0.157 mm`
+  support-height error. These are integration/contact probes, not robot-policy
+  training or a successful jump claim.
+- **UNVERIFIED:** actual Isaac Sim/PhysX contact and scale remain untested on
+  this host. Static heightfield-pair warnings occurred in the 4/16-world
+  Newton runs; sphere-ground contact passed. The full source pack remains
+  `DRAFT_BLOCKED`, and crop edges are external-trainer reset boundaries.
+  Details and source identities are in `FLY_TRAINING_PACK_STATUS_20260923.md`.
