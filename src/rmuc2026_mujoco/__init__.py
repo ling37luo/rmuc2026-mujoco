@@ -58,7 +58,13 @@ from .mjcf import (
     inject_exact_heightfield,
     load_model,
 )
-from .isaac import IsaacHeightfieldInput, load_isaac_heightfield, load_isaac_training_region
+from .isaac import (
+    IsaacHeightfieldInput,
+    export_isaac_training_region,
+    load_isaac_heightfield,
+    load_isaac_training_region,
+    load_isaac_training_region_export,
+)
 from .perimeter_fence import export_fenced_pack, perimeter_fence_contract
 from .query import (
     HEIGHTFIELD_CLAIM_BOUNDARY,
@@ -179,6 +185,7 @@ __all__ = [
     "fly_route_descriptor",
     "export_fenced_pack",
     "export_training_region",
+    "export_isaac_training_region",
     "find_spawn_candidates",
     "height_at",
     "inject_exact_heightfield",
@@ -190,6 +197,7 @@ __all__ = [
     "load_turn_controller",
     "load_isaac_heightfield",
     "load_isaac_training_region",
+    "load_isaac_training_region_export",
     "get_scenario",
     "list_scenarios",
     "measure_runtime_landing_profile",

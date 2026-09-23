@@ -10,7 +10,11 @@ import pytest
 
 from rmuc2026_mujoco.errors import AssetIntegrityError, ManifestError
 from rmuc2026_mujoco.fly_batch import run_fly_batch
-from rmuc2026_mujoco.isaac import load_isaac_training_region
+from rmuc2026_mujoco.isaac import (
+    export_isaac_training_region,
+    load_isaac_training_region,
+    load_isaac_training_region_export,
+)
 from rmuc2026_mujoco.manifest import sha256_file
 from rmuc2026_mujoco.query import HeightFieldData
 from rmuc2026_mujoco.training_region import (
@@ -130,6 +134,55 @@ def test_training_region_exports_exact_source_grid_and_composes(tmp_path, monkey
 
     with pytest.raises(ValueError, match="already exists"):
         export_training_region(asset, output, scenario_id="fly_ramp_north")
+
+
+def test_isaac_offline_export_preserves_exact_grid_scale_and_identity(tmp_path, monkeypatch):
+    asset, _ = _fake_source(tmp_path, monkeypatch)
+    region_path = tmp_path / "region"
+    export_training_region(asset, region_path, scenario_id="fly_ramp_north")
+    region = TrainingRegion.open(region_path)
+    export_path = tmp_path / "offline"
+    descriptor = export_isaac_training_region(region, export_path)
+    imported = load_isaac_training_region_export(export_path, source_region=region)
+    original = region.heightfield()
+
+    assert descriptor["identity"]["region_profile_hash"] == region.manifest["profile_hash"]
+    assert descriptor["identity"]["source_manifest_sha256"] == asset.manifest_sha256
+    assert descriptor["grid_file_sha256"] == sha256_file(region_path / "collision/heightfield.npz")
+    assert descriptor["grid"]["height_values"] == "absolute_world_z_m_no_extra_scale_or_offset"
+    np.testing.assert_array_equal(imported.x_m, original.x_m)
+    np.testing.assert_array_equal(imported.y_m, original.y_m)
+    np.testing.assert_array_equal(imported.height_m, original.height_m)
+    assert imported.bounds_xy_m == original.bounds_xy_m
+    assert imported.scenario["profile_hash"] == region.manifest["profile_hash"]
+    with pytest.raises(ValueError, match="already exists"):
+        export_isaac_training_region(region, export_path)
+
+
+def test_isaac_offline_export_rejects_grid_or_source_identity_change(tmp_path, monkeypatch):
+    asset, _ = _fake_source(tmp_path, monkeypatch)
+    region_path = tmp_path / "region"
+    export_training_region(asset, region_path, scenario_id="fly_ramp_south")
+    export_path = tmp_path / "offline"
+    export_isaac_training_region(region_path, export_path)
+    grid_path = export_path / "heightfield.npz"
+    grid_path.write_bytes(grid_path.read_bytes() + b"tampered")
+    with pytest.raises(AssetIntegrityError, match="hash mismatch"):
+        load_isaac_training_region_export(export_path)
+
+    grid_path.write_bytes((region_path / "collision/heightfield.npz").read_bytes())
+    descriptor_path = export_path / "descriptor.json"
+    descriptor = json.loads(descriptor_path.read_text(encoding="utf-8"))
+    descriptor["grid"]["bounds_xy_m"][0][0] += 0.01
+    descriptor_path.write_text(json.dumps(descriptor), encoding="utf-8")
+    with pytest.raises(ManifestError, match="geometry disagrees"):
+        load_isaac_training_region_export(export_path)
+
+    descriptor["grid"]["bounds_xy_m"][0][0] -= 0.01
+    descriptor["identity"]["source_profile_hash"] = "0" * 64
+    descriptor_path.write_text(json.dumps(descriptor), encoding="utf-8")
+    with pytest.raises(ManifestError, match="verified source region"):
+        load_isaac_training_region_export(export_path, source_region=region_path)
 
 
 def test_training_region_rejects_tampered_collision_file(tmp_path, monkeypatch):

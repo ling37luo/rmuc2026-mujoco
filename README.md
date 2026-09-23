@@ -455,6 +455,33 @@ External MuJoCo code can use `TrainingRegion.open(path)`,
 spawn and identity metadata; the consumer chooses the physics backend. The
 region keeps the source pack's `DRAFT_BLOCKED` validation scope.
 
+For an offline Isaac Sim/PhysX consumer, the same optional adapter can copy
+the region's exact float64 `x_m`, `y_m` and `height_m[y, x]` arrays into a
+standalone directory with a JSON descriptor for world coordinates, 1 cm grid
+spacing, bounds and source/profile hashes. Validate it against the original
+region before importing it; without `source_region`, the file hash and geometry
+are checked but source provenance is only the descriptor's claim. The existing
+in-memory `load_isaac_training_region()` returns float32 arrays instead.
+The consumer must choose its conversion once, record the effective sample
+order and scale, then construct and check its own PhysX heightfield collider:
+
+```python
+from rmuc2026_mujoco import (
+    export_isaac_training_region,
+    load_isaac_training_region_export,
+)
+
+export_isaac_training_region("./local-fly-north", "./local-fly-north-isaac")
+terrain = load_isaac_training_region_export(
+    "./local-fly-north-isaac", source_region="./local-fly-north"
+)
+# terrain.height_m[row, column] is the absolute world Z at
+# (terrain.x_m[column], terrain.y_m[row]); do not rescale it.
+```
+
+This is a data handoff and hash/scale check, not an Isaac Sim/PhysX contact
+validation or a completed robot training adapter.
+
 The same `run_fly_batch(region, ...)` session and controller contract used for
 the full field can evaluate a local region in parallel. From the CLI, select
 the region's recorded scenario; the approach distance comes from its manifest:
