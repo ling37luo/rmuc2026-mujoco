@@ -27,7 +27,7 @@ def test_controller_factory_receives_selected_field_asset(monkeypatch):
 
 def test_controller_adapter_keeps_keyboard_contract(monkeypatch):
     class UserController:
-        viewer_keys = ("w", "a", "s", "d")
+        viewer_keys = ("Up", "Down", "Left", "Right", "space")
 
         def __init__(self):
             self.presses = []
@@ -38,6 +38,9 @@ def test_controller_adapter_keeps_keyboard_contract(monkeypatch):
         def press_name(self, name):
             self.presses.append(name)
 
+        def release_name(self, name):
+            self.presses.append(f"release:{name}")
+
     user = UserController()
     monkeypatch.setattr(
         control, "_load_module", lambda _: SimpleNamespace(make=lambda *_args, **_kwargs: user)
@@ -46,5 +49,6 @@ def test_controller_adapter_keeps_keyboard_contract(monkeypatch):
     callback = control.load_controller("user:make", model, data, mode="human")
     assert callback.viewer_keys == user.viewer_keys
     callback.press_name("W")
+    callback.release_name("UP")
     callback(model, data, step=1, mode="human")
-    assert user.presses == ["W"]
+    assert user.presses == ["W", "release:UP"]

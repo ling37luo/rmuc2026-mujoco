@@ -943,12 +943,13 @@ def main(argv: list[str] | None = None) -> int:
         import mujoco.viewer
 
         controller_key_handler = getattr(controller, "press_name", None)
+        controller_release_handler = getattr(controller, "release_name", None)
         robot_control = None
         if args.robot is not None:
             if args.controller is None:
                 robot_control = "view only (no controller)"
                 print(
-                    "[input] Robot view is passive: W/A/S/D do not drive this robot. "
+                    "[input] Robot view is passive: movement keys do not drive this robot. "
                     "Add --controller MODULE:factory for human or policy control.",
                     flush=True,
                 )
@@ -962,7 +963,7 @@ def main(argv: list[str] | None = None) -> int:
             livery=args.livery,
         )
         close_requested = threading.Event()
-        controller_keys: SimpleQueue[str] = SimpleQueue()
+        controller_keys: SimpleQueue[tuple[str, str]] = SimpleQueue()
         reserved_keys = ("l", "g") + _controller_reserved_keys(controller)
         started = time.monotonic()
         viewer_context = mujoco.viewer.launch_passive(model, data)
@@ -978,7 +979,16 @@ def main(argv: list[str] | None = None) -> int:
                     shortcuts=True,
                     robot_control=robot_control,
                 ),
-                on_key=controller_keys.put if callable(controller_key_handler) else None,
+                on_key=(
+                    lambda name: controller_keys.put(("press", name))
+                    if callable(controller_key_handler)
+                    else None
+                ),
+                on_key_release=(
+                    lambda name: controller_keys.put(("release", name))
+                    if callable(controller_release_handler)
+                    else None
+                ),
                 reserved_keys=reserved_keys,
             )
             viewer_session.listener = listener
@@ -1008,6 +1018,7 @@ def main(argv: list[str] | None = None) -> int:
                 and not close_requested.is_set()
                 and (args.duration == 0.0 or time.monotonic() - started < args.duration)
             ):
+                frame_started = time.monotonic()
                 current_viewport = viewer_viewport_size(viewer)
                 needs_refit = (
                     args.camera == "overview"
@@ -1018,17 +1029,23 @@ def main(argv: list[str] | None = None) -> int:
                     if needs_refit:
                         fitted_viewport = _configure_camera(viewer, asset, args.camera)
                     if callable(controller_key_handler):
-                        _drain_controller_keys(controller_keys, controller_key_handler)
-                    if args.robot is not None:
-                        controller(
-                            model, data, step=int(data.time / model.opt.timestep), mode=args.control
+                        _drain_controller_keys(
+                            controller_keys, controller_key_handler, controller_release_handler
                         )
+                    if args.robot is not None:
                         import mujoco
 
-                        mujoco.mj_step(model, data)
+                        for _ in range(_viewer_physics_substeps(float(model.opt.timestep))):
+                            controller(
+                                model,
+                                data,
+                                step=int(round(data.time / model.opt.timestep)),
+                                mode=args.control,
+                            )
+                            mujoco.mj_step(model, data)
                     display.apply(model, viewer.opt.geomgroup)
                 viewer.sync()
-                time.sleep(1.0 / 60.0)
+                time.sleep(max(0.0, 1.0 / 60.0 - (time.monotonic() - frame_started)))
         return 0
     except (
         Rmuc2026Error,
@@ -1050,31 +1067,49 @@ def _controller_reserved_keys(controller) -> tuple[str, ...]:
     if not callable(getattr(controller, "press_name", None)):
         return ()
     declared = getattr(controller, "viewer_keys", ())
+    named = {"up": "Up", "down": "Down", "left": "Left", "right": "Right", "space": "space"}
     if isinstance(declared, str):
-        declared = tuple(declared)
+        declared = (declared,) if declared.lower() in named else tuple(declared)
     try:
         keys = tuple(declared)
     except TypeError as exc:
         raise ValueError("controller.viewer_keys must contain single letter or digit keys") from exc
     normalized = []
     for key in keys:
-        if not isinstance(key, str) or len(key) != 1 or not key.isascii() or not key.isalnum():
-            raise ValueError("controller.viewer_keys must contain single letter or digit keys")
-        key = key.lower()
+        if not isinstance(key, str):
+            raise ValueError("controller.viewer_keys must contain character or named keys")
+        lower = key.lower()
+        if lower in named:
+            key = named[lower]
+        elif len(key) == 1 and key.isascii() and key.isalnum():
+            key = lower
+        else:
+            raise ValueError("controller.viewer_keys must contain character or named keys")
         if key not in {"l", "g"} and key not in normalized:
             normalized.append(key)
     return tuple(normalized)
 
 
-def _drain_controller_keys(keys: SimpleQueue[str], press_name) -> None:
-    """Deliver buffered viewer presses on the same thread as MuJoCo stepping."""
+def _drain_controller_keys(
+    keys: SimpleQueue[tuple[str, str]], press_name, release_name=None
+) -> None:
+    """Deliver buffered viewer input on the same thread as MuJoCo stepping."""
 
     while True:
         try:
-            name = keys.get_nowait()
+            action, name = keys.get_nowait()
         except Empty:
             return
-        press_name(name)
+        if action == "press":
+            press_name(name)
+        elif action == "release" and callable(release_name):
+            release_name(name)
+
+
+def _viewer_physics_substeps(timestep_s: float) -> int:
+    """Advance about one display frame without making a tiny timestep unbounded."""
+
+    return min(256, max(1, round(1.0 / (60.0 * timestep_s))))
 
 
 def _validate_build_options(target_visual_faces: int, heightfield_resolution: float) -> None:
@@ -1093,6 +1128,7 @@ def _start_display_key_listener(
     keyboard_module=None,
     key_interceptor=None,
     on_key=None,
+    on_key_release=None,
     reserved_keys=None,
 ):
     """Start focus-scoped, edge-triggered L/G controls when pynput is usable.
@@ -1120,6 +1156,7 @@ def _start_display_key_listener(
         key_interceptor, focus_check = input_scope
 
     pressed: set[str] = set()
+    forwarded_pressed: set[str] = set()
     released_at: dict[str, float] = {}
     modifiers: set[str] = set()
 
@@ -1140,8 +1177,15 @@ def _start_display_key_listener(
     def key_name(key) -> str | None:
         if key == keyboard_module.Key.esc:
             return "ESC"
+        named = {"up": "UP", "down": "DOWN", "left": "LEFT", "right": "RIGHT", "space": "SPACE"}
+        for attribute, name in named.items():
+            candidate = getattr(keyboard_module.Key, attribute, None)
+            if candidate is not None and key == candidate:
+                return name
         character = getattr(key, "char", None)
         if isinstance(character, str) and character:
+            if character == " ":
+                return "SPACE"
             return character.upper()
         return None
 
@@ -1173,6 +1217,7 @@ def _start_display_key_listener(
             if on_change is not None:
                 on_change()
         elif on_key is not None:
+            forwarded_pressed.add(name)
             on_key(name)
         return None
 
@@ -1185,6 +1230,10 @@ def _start_display_key_listener(
         if name is not None:
             pressed.discard(name)
             released_at[name] = time.monotonic()
+            if name in forwarded_pressed:
+                forwarded_pressed.discard(name)
+                if on_key_release is not None:
+                    on_key_release(name)
 
     listener = keyboard_module.Listener(
         on_press=on_press,

@@ -132,10 +132,12 @@ Live `L`/`G` interception is enabled only when Linux/X11 can bind the unique
 MuJoCo window owned by the current process. Other platforms and ambiguous
 window sessions fail closed and keep the launch-time modes.
 For an external robot, the viewer is passive until `--controller MODULE:factory`
-is supplied; `W/A/S/D` have no robot action without that controller.
-If a controller handles `press_name(key)`, the generic viewer forwards its key
-presses during simulation. The controller may declare `viewer_keys = ("w", "a", "s", "d")`
-to keep those keys from triggering MuJoCo's built-in shortcuts.
+is supplied; movement keys have no robot action without that controller.
+If a controller handles `press_name(key)` and optionally `release_name(key)`,
+the generic viewer forwards presses and releases during simulation. A controller
+may declare `viewer_keys = ("Up", "Down", "Left", "Right", "space")` to reserve
+only those keys from MuJoCo's built-in shortcuts. Single character keys are
+also supported.
 
 ## Use from Python
 

@@ -140,7 +140,7 @@ class FocusScopedKeyboardListener:
 def create_viewer_key_interceptor(
     keys: tuple[str, ...] = ("l", "g"),
 ) -> tuple[X11ViewerKeyInterceptor, ViewerFocusGuard] | None:
-    """Grab only L/G on this process's X11 MuJoCo window, or fail closed.
+    """Grab declared keys on this process's X11 MuJoCo window, or fail closed.
 
     X11 passive grabs activate only while the target window owns keyboard
     focus.  Other applications keep receiving the same keys.  Platforms that
@@ -167,7 +167,7 @@ def create_viewer_key_interceptor(
         if any(keycode <= 0 for keycode in keycodes):
             connection.close()
             return None
-        # Reserve plain L/G with active lock-key combinations.
+        # Reserve plain declared keys with active lock-key combinations.
         # Modified native shortcuts such as Alt+L and Alt+G remain available.
         lock_masks = {X.LockMask}
         modifier_mapping = connection.get_modifier_mapping()

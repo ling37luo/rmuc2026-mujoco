@@ -14,6 +14,7 @@ from rmuc2026_mujoco.cli import (
     _controller_reserved_keys,
     _drain_controller_keys,
     _start_display_key_listener,
+    _viewer_physics_substeps,
     build_parser,
     main,
 )
@@ -307,7 +308,7 @@ def test_display_keys_fail_closed_without_selective_native_interception(monkeypa
 
 def test_generic_viewer_forwards_controller_keys_on_simulation_thread() -> None:
     class Controller:
-        viewer_keys = ("W", "a", "s", "d", "g", "W")
+        viewer_keys = ("W", "a", "s", "d", "Up", "Down", "Left", "Right", "space", "g", "W")
 
         def __init__(self) -> None:
             self.presses: list[str] = []
@@ -315,26 +316,107 @@ def test_generic_viewer_forwards_controller_keys_on_simulation_thread() -> None:
         def press_name(self, name: str) -> None:
             self.presses.append(name)
 
+        def release_name(self, name: str) -> None:
+            self.presses.append(f"release:{name}")
+
     controller = Controller()
-    assert _controller_reserved_keys(controller) == ("w", "a", "s", "d")
+    assert _controller_reserved_keys(controller) == (
+        "w",
+        "a",
+        "s",
+        "d",
+        "Up",
+        "Down",
+        "Left",
+        "Right",
+        "space",
+    )
     assert _controller_reserved_keys(object()) == ()
 
-    keys: SimpleQueue[str] = SimpleQueue()
-    keys.put("W")
-    keys.put("D")
-    _drain_controller_keys(keys, controller.press_name)
-    assert controller.presses == ["W", "D"]
+    keys: SimpleQueue[tuple[str, str]] = SimpleQueue()
+    keys.put(("press", "UP"))
+    keys.put(("press", "SPACE"))
+    keys.put(("release", "UP"))
+    _drain_controller_keys(keys, controller.press_name, controller.release_name)
+    assert controller.presses == ["UP", "SPACE", "release:UP"]
 
 
 def test_controller_viewer_key_declaration_rejects_non_character_keys() -> None:
     class Controller:
-        viewer_keys = ("space",)
+        viewer_keys = ("escape",)
 
         def press_name(self, _name: str) -> None:
             pass
 
-    with pytest.raises(ValueError, match="single letter or digit"):
+    with pytest.raises(ValueError, match="character or named"):
         _controller_reserved_keys(Controller())
+
+
+def test_generic_listener_forwards_arrow_and_space_press_release_in_order() -> None:
+    class Key:
+        esc = object()
+        up = object()
+        down = object()
+        left = object()
+        right = object()
+        space = object()
+
+    class Listener:
+        def __init__(self, **callbacks) -> None:
+            self.callbacks = callbacks
+
+        def start(self) -> None:
+            pass
+
+        def stop(self) -> None:
+            pass
+
+    class Interceptor:
+        def close(self) -> None:
+            pass
+
+    class Keyboard:
+        pass
+
+    Keyboard.Key = Key
+    Keyboard.Listener = Listener
+
+    class Display:
+        def press_name(self, _name: str) -> bool:
+            return False
+
+    received: list[tuple[str, str]] = []
+    listener = _start_display_key_listener(
+        Display(),
+        threading.Event(),
+        on_key=lambda name: received.append(("press", name)),
+        on_key_release=lambda name: received.append(("release", name)),
+        focus_check=lambda: True,
+        keyboard_module=Keyboard,
+        key_interceptor=Interceptor(),
+    )
+    assert listener is not None
+    press = listener.callbacks["on_press"]
+    release = listener.callbacks["on_release"]
+    press(Key.up)
+    press(Key.up)
+    release(Key.up)
+    press(Key.space)
+    release(Key.space)
+    assert received == [
+        ("press", "UP"),
+        ("release", "UP"),
+        ("press", "SPACE"),
+        ("release", "SPACE"),
+    ]
+    listener.stop()
+
+
+def test_generic_viewer_steps_about_one_display_frame() -> None:
+    assert _viewer_physics_substeps(0.002) == 8
+    assert _viewer_physics_substeps(0.001) == 17
+    assert _viewer_physics_substeps(1.0 / 60.0) == 1
+    assert _viewer_physics_substeps(0.000001) == 256
 
 
 def test_setup_cli_downloads_then_builds_locally(monkeypatch, tmp_path: Path, capsys) -> None:
