@@ -5,8 +5,9 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+from rmuc2026_mujoco import wall_active_contact
 from rmuc2026_mujoco.query import HeightFieldData
-from rmuc2026_mujoco.wall_active_contact import _replace_wall_roof
+from rmuc2026_mujoco.wall_active_contact import _exact_source_convex_mesh, _replace_wall_roof
 
 
 def _fixture():
@@ -54,3 +55,39 @@ def test_changed_roof_or_missing_source_bottom_rejects_without_mutation() -> Non
     with pytest.raises(ValueError, match="gap beneath"):
         _replace_wall_roof(wall, field, output, expected_nodes=len(ix) * len(iy))
     np.testing.assert_array_equal(output, field.height_m)
+
+
+def test_source_wall_facets_are_closed_and_convex_without_scipy(monkeypatch) -> None:
+    trimesh = pytest.importorskip("trimesh")
+    box = trimesh.creation.box(extents=(1.0, 1.0, 1.0))
+    # GLB geometry can duplicate the vertices of every triangle.
+    duplicated = trimesh.Trimesh(
+        vertices=box.triangles.reshape(-1, 3),
+        faces=np.arange(len(box.faces) * 3).reshape(-1, 3),
+        process=False,
+    )
+    monkeypatch.setitem(
+        wall_active_contact.CONVEX_WALL_EVIDENCE,
+        999,
+        {"unique_vertices": 8, "hull_facets": 12, "hull_volume_m3": 1.0},
+    )
+    welded = _exact_source_convex_mesh(duplicated, source_part_index=999)
+    assert len(welded.vertices) == 8
+    assert welded.is_watertight
+
+    dented = box.subdivide()
+    top_center = np.argmin(
+        np.linalg.norm(dented.vertices[:, :2], axis=1) + 10.0 * (dented.vertices[:, 2] < 0.0)
+    )
+    dented.vertices[top_center, 2] -= 0.2
+    monkeypatch.setitem(
+        wall_active_contact.CONVEX_WALL_EVIDENCE,
+        998,
+        {
+            "unique_vertices": len(dented.vertices),
+            "hull_facets": len(dented.faces),
+            "hull_volume_m3": dented.volume,
+        },
+    )
+    with pytest.raises(ValueError, match="no longer convex"):
+        _exact_source_convex_mesh(dented, source_part_index=998)

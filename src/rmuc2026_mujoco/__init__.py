@@ -42,6 +42,7 @@ from .manifest import (
     ValidationReport,
     verify_asset,
 )
+from .lite_profile import export_interactive_lite_pack
 from .jump_probe import (
     JumpProbeConfig,
     LandingProfile,
@@ -126,6 +127,7 @@ __all__ = [
     "FieldAsset",
     "FieldBoundaryGuard",
     "FieldDisplayController",
+    "export_interactive_lite_pack",
     "ControlCallback",
     "NoOpController",
     "HEIGHTFIELD_CLAIM_BOUNDARY",

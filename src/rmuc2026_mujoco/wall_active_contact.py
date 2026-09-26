@@ -27,6 +27,39 @@ EXPECTED_ROOF_NODES_PER_WALL = 7900
 ROOF_ERROR_LIMIT_M = 1.0e-5
 BOTTOM_ERROR_LIMIT_M = 1.0e-5
 WALL_CONTACT_SOLREF = "0.005 1"
+CONVEX_PLANE_TOLERANCE_M = 2.0e-6
+
+
+def _exact_source_convex_mesh(source_mesh: Any, *, source_part_index: int) -> Any:
+    """Use the audited source facets as a convex mesh without a SciPy hull.
+
+    The source GLB duplicates vertices at material/normal seams.  Welding those
+    coincident vertices restores the closed 20-triangle polyhedron.  Checking
+    every source vertex against every outward facet rejects a non-convex edit;
+    asking trimesh for ``convex_hull`` would silently require optional SciPy.
+    """
+
+    evidence = CONVEX_WALL_EVIDENCE[source_part_index]
+    mesh = source_mesh.copy()
+    mesh.merge_vertices()
+    if (
+        len(mesh.vertices) != evidence["unique_vertices"]
+        or len(mesh.faces) != evidence["hull_facets"]
+        or not mesh.is_watertight
+        or not mesh.is_winding_consistent
+        or mesh.euler_number != 2
+        or mesh.volume <= 0.0
+        or not np.isclose(mesh.volume, evidence["hull_volume_m3"], atol=1.0e-5)
+    ):
+        raise ValueError(f"source part {source_part_index} closed convex topology changed")
+    signed_distance = np.einsum(
+        "fvc,fc->fv",
+        mesh.vertices[None, :, :] - mesh.triangles_center[:, None, :],
+        mesh.face_normals,
+    )
+    if float(np.max(signed_distance)) > CONVEX_PLANE_TOLERANCE_M:
+        raise ValueError(f"source part {source_part_index} is no longer convex")
+    return mesh
 
 
 def _replace_wall_roof(
@@ -95,8 +128,10 @@ def _replace_wall_roof(
     }
 
 
-def _source_walls(source_root: Path, asset: FieldAsset) -> tuple[dict[int, Any], dict[str, str]]:
-    """Load two exact GLB parts only after the source/runtime hashes agree."""
+def _verified_source_scene(
+    source_root: Path, asset: FieldAsset
+) -> tuple[Any, np.ndarray, dict[str, str]]:
+    """Load the original GLB in the runtime frame after source/hash checks."""
 
     import trimesh
 
@@ -119,9 +154,6 @@ def _source_walls(source_root: Path, asset: FieldAsset) -> tuple[dict[int, Any],
         raise ValueError("source GLB file hash changed")
 
     scene = trimesh.load(glb_path, force="scene", process=False)
-    nodes = list(scene.graph.nodes_geometry)
-    if len(nodes) <= max(WALL_PARTS):
-        raise ValueError("source GLB part order is incomplete")
     spawn = asset.recommended_spawn
     translation = np.asarray(
         [
@@ -132,6 +164,23 @@ def _source_walls(source_root: Path, asset: FieldAsset) -> tuple[dict[int, Any],
         ],
         dtype=np.float64,
     )
+    return (
+        scene,
+        translation,
+        {
+            "source_manifest_sha256": source_sha,
+            "source_glb_sha256": SOURCE_GLB_SHA256,
+        },
+    )
+
+
+def _source_walls(source_root: Path, asset: FieldAsset) -> tuple[dict[int, Any], dict[str, str]]:
+    """Load two exact GLB parts only after the source/runtime hashes agree."""
+
+    scene, translation, source_identity = _verified_source_scene(source_root, asset)
+    nodes = list(scene.graph.nodes_geometry)
+    if len(nodes) <= max(WALL_PARTS):
+        raise ValueError("source GLB part order is incomplete")
     walls: dict[int, Any] = {}
     for part in WALL_PARTS:
         transform, geometry_name = scene.graph[nodes[part]]
@@ -139,17 +188,10 @@ def _source_walls(source_root: Path, asset: FieldAsset) -> tuple[dict[int, Any],
         original.apply_transform(transform)
         if len(original.faces) != 20 or len(np.unique(original.vertices, axis=0)) != 12:
             raise ValueError(f"source part {part} topology changed")
-        hull = original.convex_hull
-        expected = CONVEX_WALL_EVIDENCE[part]
-        if (
-            len(hull.vertices) != expected["unique_vertices"]
-            or len(hull.faces) != expected["hull_facets"]
-            or not np.isclose(hull.volume, expected["hull_volume_m3"], atol=1.0e-5)
-        ):
-            raise ValueError(f"source part {part} exact convex hull changed")
+        hull = _exact_source_convex_mesh(original, source_part_index=part)
         hull.apply_translation(translation)
         walls[part] = hull
-    return walls, {"source_manifest_sha256": source_sha, "source_glb_sha256": SOURCE_GLB_SHA256}
+    return walls, source_identity
 
 
 def build_verified_wall_replacement(

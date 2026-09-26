@@ -52,6 +52,13 @@ python3 -m venv .venv
 # Headless users can skip all CAD visual meshes when composing/loading.
 .venv/bin/rmuc2026-field view ./local-rmuc2026-field \
   --profile collision_only --friction dry
+
+# Optional local interactive profile: same collision and friction, fewer CAD faces.
+# Pick a budget below the source pack's measured visual-face count.
+.venv/bin/rmuc2026-field lite-pack ./local-rmuc2026-field ./local-rmuc2026-field-lite \
+  --interactive-lite-faces 250000
+.venv/bin/rmuc2026-field view ./local-rmuc2026-field-lite \
+  --profile interactive_lite
 ```
 
 If [`uv`](https://docs.astral.sh/uv/) is already installed, the first three
@@ -590,6 +597,7 @@ local-rmuc2026-field/
 ├── manifest.json
 ├── rmuc2026_field.xml
 ├── rmuc2026_field_collision_only.xml
+├── rmuc2026_field_interactive_lite.xml  # optional schema-4 derivative
 ├── collision/
 │   ├── rmuc2026_heightfield.png   # MuJoCo dimensions/bootstrap
 │   └── rmuc2026_heightfield.npz   # exact verified float samples
@@ -611,9 +619,9 @@ and image comparisons and reports `PASS_SIZE_ONLY` instead of `PASS`.
 New local builds use runtime-pack schema 2 for the named lighting and optional
 livery contracts. The complete livery uses a 5 cm non-contact visual mesh with
 local 2.5/1.25 cm refinement and MuJoCo's fixed-diagonal heightfield interpolation.
-The loader continues to accept
-schema 1 packs and both schema 2 livery forms: the complete baked guide and the
-earlier filtered-marking experiment. Missing schema 2 display controls remain
+Schema 3 adds the optional negative-capable edge experiment; schema 4 binds an
+optional `interactive_lite` visual profile and official-source wall candidates.
+The loader still accepts schema 1–3 packs. Missing display controls remain
 unavailable instead of being inferred.
 
 Both field entrypoints declare a 2 ms MuJoCo timestep with the Newton solver.
@@ -765,11 +773,13 @@ owner; this adds no wall geom. It addresses missing roof support at these wall
 tips, not the rest of their vertical faces or whole-wall collision. The other
 wall footprints already have heightfield contact. A separate, opt-in exact
 convex-mesh replacement transfers their 15,800 roof nodes to the lower source
-floor before adding the two source walls; it has short robot and probe evidence,
-plus twelve 5-second frozen-robot approaches to the two walls at 0.3–1.0 m/s.
-Those routes had no through-wall event or numerical warning and reached at most
-3.30 mm wall contact penetration; reverse/high-side approaches, sustained
-repeated impacts, and the runtime-pack contact-owner contract remain unfinished.
+floor before adding the two source walls. For a verified local schema-4 pack,
+`rmuc2026-field source-wall-pack SOURCE_BUILD PACK NEW_PACK` exports this
+replacement into all runtime profiles and binds its geometry, ownership and
+contact parameters in the new manifest. A constrained 120 mm wheel passed both
+directions at 0.3–1.0 m/s with at most 4.23 mm penetration and no warning.
+Articulated robot wall approaches and sustained impacts are not yet accepted;
+the layer stays `EXPERIMENTAL_BLOCKED` and the pack stays `DRAFT_BLOCKED`.
 
 ### Source-backed outer edge
 

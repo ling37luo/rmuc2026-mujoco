@@ -13,7 +13,15 @@ import pytest
 from PIL import Image
 import mujoco
 
-from rmuc2026_mujoco import FieldAsset, FieldBoundaryGuard, ManifestError, height_at, load_model
+from rmuc2026_mujoco import (
+    AssetIntegrityError,
+    FieldAsset,
+    FieldBoundaryGuard,
+    ManifestError,
+    compose_with_robot,
+    height_at,
+    load_model,
+)
 from rmuc2026_mujoco.collision_candidate import SOURCE_GLB_SHA256
 from rmuc2026_mujoco.download import OFFICIAL_STEP_SHA256, OFFICIAL_STEP_SIZE
 from rmuc2026_mujoco.pack import (
@@ -37,6 +45,7 @@ from rmuc2026_mujoco.livery import (
     GROUND_MARKING_REMOVED_BY_DESIGN,
     GROUND_MARKING_RETAINED_CONTENT,
 )
+from rmuc2026_mujoco.lite_profile import export_interactive_lite_pack
 from rmuc2026_mujoco.perimeter_fence import (
     FENCE_NAMES,
     HEIGHTFIELD_EDGE_FENCE_SCHEMA,
@@ -266,6 +275,88 @@ def test_negative_heightfield_uses_schema3_offset_encoding(tmp_path: Path) -> No
     assert model.geom_pos[gid, 2] == pytest.approx(-5.0)
     expected = np.asarray([[0.0, 5.1 / 6.0], [5.1 / 6.0, 5.2 / 6.0]])
     np.testing.assert_allclose(model.hfield_data.reshape(2, 2), expected, atol=2e-7, rtol=0)
+
+
+def test_interactive_lite_uses_same_collision_with_separate_hashed_visuals(
+    tmp_path: Path,
+) -> None:
+    pytest.importorskip("fast_simplification")
+    import trimesh
+
+    source = _synthetic_source_build(tmp_path / "source")
+    source_manifest_path = source / "manifest.json"
+    source_manifest = json.loads(source_manifest_path.read_text(encoding="utf-8"))
+    visual_path = source / source_manifest["visual_meshes"][1]["file"]
+    visual_payload = trimesh.creation.icosphere(subdivisions=2).export(file_type="obj")
+    visual_path.write_bytes(
+        visual_payload.encode("utf-8") if isinstance(visual_payload, str) else visual_payload
+    )
+    source_manifest["visual_meshes"][1]["sha256"] = _sha(visual_path)
+    source_manifest["collision"]["resolution_m"] = 1.0
+    source_manifest_path.write_text(json.dumps(source_manifest), encoding="utf-8")
+
+    full_pack = tmp_path / "full_pack"
+    lite_pack = tmp_path / "lite_pack"
+    export_runtime_asset_pack(source, full_pack)
+    result = export_interactive_lite_pack(full_pack, lite_pack, target_visual_faces=300)
+    asset = FieldAsset.open(lite_pack)
+    assert result["schema_version"] == 4
+    assert result["visual_lite"]["source_visual_faces"] > 300
+    assert result["visual_lite"]["output_visual_faces"] <= 300
+    assert asset.available_runtime_profiles == ("full", "interactive_lite", "collision_only")
+    assert asset.manifest["validation_status"] == "DRAFT_BLOCKED"
+    assert asset.entrypoint_for("interactive_lite").name == "rmuc2026_field_interactive_lite.xml"
+
+    full, _ = load_model(asset, profile="full")
+    lite, _ = load_model(asset, profile="interactive_lite")
+    assert full.nmesh == lite.nmesh == 38
+    assert full.ngeom == lite.ngeom
+    np.testing.assert_array_equal(full.geom_contype, lite.geom_contype)
+    np.testing.assert_array_equal(full.geom_conaffinity, lite.geom_conaffinity)
+    np.testing.assert_array_equal(full.geom_friction, lite.geom_friction)
+    np.testing.assert_array_equal(full.geom_solref, lite.geom_solref)
+    np.testing.assert_array_equal(full.hfield_data, lite.hfield_data)
+
+    robot_xml = tmp_path / "robot.xml"
+    robot_xml.write_text(
+        '<mujoco model="robot"><worldbody><body name="robot" pos="0 0 1">'
+        '<freejoint/><geom type="sphere" size=".1"/></body></worldbody></mujoco>',
+        encoding="utf-8",
+    )
+    composed, _ = compose_with_robot(asset, robot_xml, profile="interactive_lite")
+    assert composed.nmesh == 38
+
+    lite_xml = asset.entrypoint_for("interactive_lite")
+    original_xml = lite_xml.read_bytes()
+    lite_xml.write_bytes(
+        original_xml.replace(b'friction="1 0.005 0.0001"', b'friction=".2 .005 .0001"')
+    )
+    changed_manifest = json.loads((lite_pack / "manifest.json").read_text(encoding="utf-8"))
+    xml_record = next(
+        record
+        for record in changed_manifest["contents"]["files"]
+        if record["file"] == lite_xml.name
+    )
+    xml_record["size_bytes"] = lite_xml.stat().st_size
+    xml_record["sha256"] = _sha(lite_xml)
+    (lite_pack / "manifest.json").write_text(json.dumps(changed_manifest), encoding="utf-8")
+    with pytest.raises(ManifestError, match="changes MJCF beyond visual mesh files"):
+        FieldAsset.open(lite_pack, verify=False)
+    lite_xml.write_bytes(original_xml)
+    (lite_pack / "manifest.json").write_text(json.dumps(result), encoding="utf-8")
+
+    lite_record = result["visual_lite"]["meshes"][1]
+    (lite_pack / lite_record["file"]).write_text("o tampered\n", encoding="ascii")
+    with pytest.raises(AssetIntegrityError, match="size mismatch|SHA-256 mismatch"):
+        FieldAsset.open(lite_pack)
+
+
+def test_interactive_lite_rejects_a_noop_budget(tmp_path: Path) -> None:
+    source = _synthetic_source_build(tmp_path / "source")
+    full_pack = tmp_path / "full_pack"
+    export_runtime_asset_pack(source, full_pack)
+    with pytest.raises(ExportBlocked, match="cannot improve"):
+        export_interactive_lite_pack(full_pack, tmp_path / "lite_pack", target_visual_faces=1_000)
 
 
 def test_schema3_rejects_mask_that_disagrees_with_negative_samples(tmp_path: Path) -> None:

@@ -181,14 +181,15 @@ def inject_exact_heightfield(
         raise MujocoModelError(
             f"heightfield shape mismatch: model={(rows, columns)}, asset={source_height.shape}"
         )
-    if int(asset.manifest["schema_version"]) == 3:
+    schema = int(asset.manifest["schema_version"])
+    if schema == 3 or (schema == 4 and minimum < 0.0):
         if (
             minimum >= 0.0
             or maximum <= minimum
             or float(np.min(source_height)) < minimum - 1e-8
             or float(np.max(source_height)) > maximum + 1e-8
         ):
-            raise MujocoModelError("schema-3 heightfield range is inconsistent")
+            raise MujocoModelError("negative heightfield range is inconsistent")
         normalized = (source_height - minimum) / (maximum - minimum)
     else:
         normalized = np.clip(source_height / maximum, 0.0, 1.0)
@@ -232,11 +233,10 @@ def _strip_embedded_field_scene(robot_spec: Any) -> None:
     """Remove an old root-level RMUC field from a complete robot scene.
 
     Some externally supplied robot XML files are exported from a viewer and
-    contain both the robot and an older RMUC field copy.  Keeping that copy
-    would create duplicate collision, livery and light objects when the
-    verified field is attached.  Only run this narrow cleanup when a known
-    RMUC field marker is present; ordinary robot XML files, including their
-    own floors and lights, are left untouched.
+    contain both the robot and an older RMUC field copy. Keeping even unused
+    old meshes and hfields would compile a second field asset into every
+    profile. Only run this narrow cleanup when a known root-level field marker
+    is present; robot floors, lights, cameras and assets are left untouched.
     """
 
     worldbody = robot_spec.worldbody
@@ -251,9 +251,39 @@ def _strip_embedded_field_scene(robot_spec: Any) -> None:
     )
     if not embedded_field:
         return
+
+    def field_geom(name: str) -> bool:
+        return (
+            name in {"rmuc2026_field_collision", "rmuc2026_surface_guide"}
+            or name.startswith(("rmuc2026_visual_", "rmuc2026_perimeter_"))
+            or name.startswith("rmuc2026_official_wall_")
+        )
+
     for geom in root_geoms:
-        robot_spec.delete(geom)
+        if field_geom(str(geom.name)):
+            robot_spec.delete(geom)
     for light in list(worldbody.lights):
-        robot_spec.delete(light)
+        if str(light.name) in {"rmuc2026_key_light", "rmuc2026_fill_light"}:
+            robot_spec.delete(light)
     for camera in list(worldbody.cameras):
-        robot_spec.delete(camera)
+        if str(camera.name) == "rmuc2026_overview":
+            robot_spec.delete(camera)
+
+    for material in list(robot_spec.materials):
+        name = str(material.name)
+        if name.startswith("rmuc2026_material_") or name == "rmuc2026_surface_guide_material":
+            robot_spec.delete(material)
+    for mesh in list(robot_spec.meshes):
+        name = str(mesh.name)
+        if name.startswith("rmuc2026_visual_mesh_") or name in {
+            "rmuc2026_surface_guide_mesh",
+            "rmuc2026_official_wall_402",
+            "rmuc2026_official_wall_403",
+        }:
+            robot_spec.delete(mesh)
+    for hfield in list(robot_spec.hfields):
+        if str(hfield.name) == "rmuc2026_collision":
+            robot_spec.delete(hfield)
+    for texture in list(robot_spec.textures):
+        if str(texture.name) in {"rmuc2026_sky", "rmuc2026_surface_guide_texture"}:
+            robot_spec.delete(texture)

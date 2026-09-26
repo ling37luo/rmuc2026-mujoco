@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import mujoco
 import numpy as np
@@ -13,6 +14,7 @@ from rmuc2026_mujoco import (
     FieldAsset,
     MujocoModelError,
     compose_with_robot,
+    inject_exact_heightfield,
     load_model,
     surface_at,
 )
@@ -41,6 +43,46 @@ def test_collision_only_profile_loads_no_visual_meshes(field_asset_dir: Path) ->
     assert model.nhfield == 1
     actual = np.asarray(model.hfield_data).reshape(3, 4)
     assert np.max(np.abs(actual - _expected_heightfield())) <= 2.0e-7
+
+
+def test_schema4_negative_heightfield_injection_keeps_below_zero_samples(tmp_path: Path) -> None:
+    samples = tmp_path / "heightfield.npz"
+    height = np.asarray([[-1.0, -0.5, 0.0], [0.0, 0.5, 1.0], [1.0, 1.5, 2.0]], dtype=float)
+    np.savez_compressed(
+        samples,
+        x_m=np.asarray([-1.0, 0.0, 1.0]),
+        y_m=np.asarray([-1.0, 0.0, 1.0]),
+        height_m=height,
+    )
+    asset = SimpleNamespace(
+        manifest={"schema_version": 4},
+        recommended_spawn={
+            "x_before_translation_m": 0.0,
+            "y_before_translation_m": 0.0,
+            "terrain_height_m": 0.0,
+        },
+        collision={
+            "samples_file": "heightfield.npz",
+            "rows_y": 3,
+            "columns_x": 3,
+            "minimum_height_m": -1.0,
+            "maximum_height_m": 2.0,
+            "half_size_xy_m": [1.0, 1.0],
+            "geom_center_after_translation_m": [0.0, 0.0, 0.0],
+        },
+        file=lambda _relative, **_kwargs: samples,
+    )
+    model = mujoco.MjModel.from_xml_string(
+        '<mujoco><asset><hfield name="rmuc2026_collision" nrow="3" ncol="3" '
+        'size="1 1 3 .05"/></asset><worldbody><geom type="hfield" '
+        'hfield="rmuc2026_collision" pos="0 0 -1"/></worldbody></mujoco>'
+    )
+
+    inject_exact_heightfield(model, asset)
+
+    np.testing.assert_allclose(
+        np.asarray(model.hfield_data).reshape(3, 3), (height + 1.0) / 3.0, atol=2e-7
+    )
 
 
 @pytest.mark.parametrize(
@@ -146,6 +188,49 @@ def test_compose_strips_recognizable_embedded_field_copy(field_asset_dir: Path) 
         )
         >= 0
     )
+
+
+def test_compose_strips_only_old_field_assets_and_preserves_robot_world(
+    field_asset_dir: Path,
+) -> None:
+    robot = field_asset_dir.parent / "scene_with_old_field_assets.xml"
+    mesh = (field_asset_dir / "visual/tetra.obj").as_posix()
+    robot.write_text(
+        f"""<mujoco model="scene_with_old_field_assets">
+<asset>
+  <mesh name="robot_mesh" file="{mesh}"/>
+  <mesh name="rmuc2026_visual_mesh_0" file="{mesh}"/>
+  <hfield name="rmuc2026_collision" nrow="3" ncol="4" size="1.5 1 2 .05"/>
+  <texture name="rmuc2026_sky" type="skybox" builtin="gradient" width="16" height="96"/>
+  <material name="rmuc2026_material_0" rgba=".2 .2 .2 1"/>
+</asset>
+<worldbody>
+  <geom name="robot_floor" type="plane" size="2 2 .1"/>
+  <geom name="rmuc2026_visual_0" type="mesh" mesh="rmuc2026_visual_mesh_0"
+        material="rmuc2026_material_0" contype="0" conaffinity="0"/>
+  <geom name="rmuc2026_field_collision" type="hfield" hfield="rmuc2026_collision"/>
+  <light name="robot_light"/>
+  <light name="rmuc2026_key_light"/>
+  <camera name="robot_camera"/>
+  <camera name="rmuc2026_overview"/>
+  <body name="robot" pos="0 0 1"><freejoint/>
+    <geom name="robot_geom" type="mesh" mesh="robot_mesh"/>
+  </body>
+</worldbody></mujoco>""",
+        encoding="utf-8",
+    )
+
+    model, _ = compose_with_robot(FieldAsset.open(field_asset_dir), robot, profile="collision_only")
+
+    assert model.nhfield == 1
+    assert model.nmesh == 1
+    assert mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_MESH, "robot_mesh") >= 0
+    assert mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_MESH, "rmuc2026_visual_mesh_0") == -1
+    assert mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, "robot_floor") >= 0
+    assert mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_LIGHT, "robot_light") >= 0
+    assert mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_CAMERA, "robot_camera") >= 0
+    assert mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_LIGHT, "rmuc2026_key_light") == -1
+    assert mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_CAMERA, "rmuc2026_overview") == -1
 
 
 def test_compose_collision_only_profile_and_unofficial_friction(field_asset_dir: Path) -> None:

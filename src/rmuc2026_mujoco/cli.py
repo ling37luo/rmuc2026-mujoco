@@ -35,9 +35,11 @@ from .energy_unit import load_field_with_energy_unit
 from .errors import Rmuc2026Error
 from .fly_routes import APPROACH_BEFORE_LOW_EDGE_M, fly_route_descriptor
 from .manifest import DEFAULT_RUNTIME_PROFILE, RUNTIME_PROFILE_NAMES, FieldAsset, verify_asset
+from .lite_profile import export_interactive_lite_pack
 from .mjcf import UNOFFICIAL_FRICTION_PRESETS, compose_with_robot, load_model
 from .pack import ExportBlocked
 from .perimeter_fence import export_fenced_pack
+from .source_contact_pack import export_source_wall_pack
 from .query import (
     HEIGHTFIELD_CLAIM_BOUNDARY,
     field_bounds,
@@ -123,6 +125,19 @@ def build_parser() -> argparse.ArgumentParser:
     )
     fence.add_argument("source", type=Path)
     fence.add_argument("output", type=Path)
+    lite = commands.add_parser(
+        "lite-pack", help="add a visual-only light profile to a verified local runtime pack"
+    )
+    lite.add_argument("source", type=Path)
+    lite.add_argument("output", type=Path)
+    lite.add_argument("--interactive-lite-faces", type=int, required=True)
+    wall_pack = commands.add_parser(
+        "source-wall-pack",
+        help="make a local experimental pack with official-source 402/403 wall contact",
+    )
+    wall_pack.add_argument("source_build", type=Path)
+    wall_pack.add_argument("runtime_pack", type=Path)
+    wall_pack.add_argument("output", type=Path)
     region = commands.add_parser(
         "training-region",
         help="export one local fly-ramp collision region from a verified field pack",
@@ -287,7 +302,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--profile",
         choices=RUNTIME_PROFILE_NAMES,
         default=DEFAULT_RUNTIME_PROFILE,
-        help="runtime profile; collision_only skips CAD visual meshes",
+        help="runtime profile; interactive_lite is available in locally generated lite packs",
     )
     view.add_argument(
         "--friction",
@@ -456,6 +471,43 @@ def main(argv: list[str] | None = None) -> int:
                     {
                         "output": str(args.output.expanduser().resolve()),
                         "perimeter_fence": contract,
+                    },
+                    indent=2,
+                    sort_keys=True,
+                )
+            )
+            return 0
+        if args.command == "lite-pack":
+            result = export_interactive_lite_pack(
+                args.source,
+                args.output,
+                target_visual_faces=args.interactive_lite_faces,
+            )
+            print(
+                json.dumps(
+                    {
+                        "output": str(args.output.expanduser().resolve()),
+                        "schema_version": result["schema_version"],
+                        "source_visual_faces": result["visual_lite"]["source_visual_faces"],
+                        "output_visual_faces": result["visual_lite"]["output_visual_faces"],
+                        "validation_status": result["validation_status"],
+                    },
+                    indent=2,
+                    sort_keys=True,
+                )
+            )
+            return 0
+        if args.command == "source-wall-pack":
+            result = export_source_wall_pack(args.source_build, args.runtime_pack, args.output)
+            print(
+                json.dumps(
+                    {
+                        "output": str(args.output.expanduser().resolve()),
+                        "schema_version": result["schema_version"],
+                        "source_contact_status": result["collision"]["source_contact_layer"][
+                            "status"
+                        ],
+                        "validation_status": result["validation_status"],
                     },
                     indent=2,
                     sort_keys=True,

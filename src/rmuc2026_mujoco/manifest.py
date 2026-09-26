@@ -36,11 +36,12 @@ from .wall_tip_repair import validate_wall_tip_repair_record, verify_wall_tip_re
 
 
 RUNTIME_ARTIFACT_TYPE = "rmuc2026_mujoco_runtime_asset_pack"
-SUPPORTED_SCHEMA_VERSION = 3
-SUPPORTED_SCHEMA_VERSIONS = frozenset({1, 2, SUPPORTED_SCHEMA_VERSION})
+SUPPORTED_SCHEMA_VERSION = 4
+SUPPORTED_SCHEMA_VERSIONS = frozenset({1, 2, 3, SUPPORTED_SCHEMA_VERSION})
 SUPPORTED_VALIDATION_STATUS = "DRAFT_BLOCKED"
 DEFAULT_RUNTIME_PROFILE = "full"
-RUNTIME_PROFILE_NAMES = ("full", "collision_only")
+RUNTIME_PROFILE_NAMES = ("full", "interactive_lite", "collision_only")
+LITE_VISUAL_METHOD = "quadric_decimation_per_cad_visual_group_v1"
 CURRENT_COLLISION_KIND = "top_surface_heightfield_proxy"
 LEGACY_COLLISION_KIND = "conservative_top_surface_heightfield"
 SUPPORTED_COLLISION_KINDS = frozenset({CURRENT_COLLISION_KIND, LEGACY_COLLISION_KIND})
@@ -484,7 +485,7 @@ def _validate_cross_references(
     minimum = _finite_number(collision.get("minimum_height_m"), label="collision.minimum_height_m")
     if minimum > maximum or (schema_version < 3 and minimum < 0.0):
         raise ManifestError("collision minimum/maximum heights are inconsistent")
-    if schema_version == 3:
+    if schema_version == 3 or (schema_version == 4 and minimum < 0.0):
         if minimum >= 0.0:
             raise ManifestError("schema 3 requires a negative collision minimum")
         _validate_edge_void_provenance(manifest, collision, files, minimum_height_m=minimum)
@@ -541,7 +542,7 @@ def _validate_cross_references(
         raise ManifestError("heightfield_precision shape disagrees with collision")
     if precision.get("float_samples_file") != collision.get("samples_file"):
         raise ManifestError("heightfield_precision sample file disagrees with collision")
-    if schema_version == 3:
+    if schema_version == 3 or (schema_version == 4 and minimum < 0.0):
         if (
             precision.get("minimum_height_m") != minimum
             or precision.get("maximum_height_m") != maximum
@@ -563,14 +564,27 @@ def _validate_cross_references(
     fence_contract = None
     if manifest.get("perimeter_fence") is not None:
         try:
+            # The fixed fence geometry was authored under schema 2. Schema 4
+            # changes visual profiles (and may add a local contact layer), not
+            # that fence frame, so recompute its pinned contract from the same
+            # manifest values with the original schema marker.
+            fence_source = dict(manifest)
+            if schema_version == 4:
+                fence_source["schema_version"] = 2
             fence_contract = perimeter_fence_contract(
-                dict(manifest), schema=manifest["perimeter_fence"]["schema"]
+                fence_source, schema=manifest["perimeter_fence"]["schema"]
             )
         except (IndexError, KeyError, TypeError, ValueError) as exc:
             raise ManifestError(f"invalid perimeter_fence frame: {exc}") from exc
         if manifest["perimeter_fence"] != fence_contract:
             raise ManifestError("perimeter_fence disagrees with the pinned proxy contract")
 
+    lite_visual = _validate_visual_lite(
+        manifest, files, visual_meshes=visual, schema_version=schema_version, verify=verify
+    )
+    source_contact_meshes = _validate_source_contact_layer(
+        manifest, files, collision=collision, schema_version=schema_version
+    )
     _validate_runtime_profiles(
         manifest,
         files,
@@ -591,6 +605,8 @@ def _validate_cross_references(
         require_named_lighting=schema_version >= 2,
         livery_contract=livery_contract,
         fence_contract=fence_contract,
+        lite_visual=lite_visual,
+        source_contact_meshes=source_contact_meshes,
     )
 
 
@@ -955,6 +971,199 @@ def _validate_surface_sampling(value: object) -> None:
         raise ManifestError("visual_layers.livery.surface_sampling mesh counts are inconsistent")
 
 
+def _validate_visual_lite(
+    manifest: Mapping[str, Any],
+    files: Mapping[str, Path],
+    *,
+    visual_meshes: list[object],
+    schema_version: int,
+    verify: bool,
+) -> tuple[str, ...] | None:
+    value = manifest.get("visual_lite")
+    if value is None:
+        return None
+    if schema_version != 4:
+        raise ManifestError("visual_lite requires runtime-pack schema_version 4")
+    lite = _mapping(value, label="visual_lite")
+    if set(lite) != {
+        "source_profile",
+        "method",
+        "target_visual_faces",
+        "source_visual_faces",
+        "output_visual_faces",
+        "physics_changed",
+        "meshes",
+    }:
+        raise ManifestError("visual_lite contains unsupported or missing fields")
+    if (
+        lite.get("source_profile") != "full"
+        or lite.get("method") != LITE_VISUAL_METHOD
+        or lite.get("physics_changed") is not False
+    ):
+        raise ManifestError("visual_lite source, method, or physics contract is invalid")
+    target = _integer(
+        lite.get("target_visual_faces"), label="visual_lite.target_visual_faces", minimum=1
+    )
+    source_total = _integer(
+        lite.get("source_visual_faces"), label="visual_lite.source_visual_faces", minimum=1
+    )
+    output_total = _integer(
+        lite.get("output_visual_faces"), label="visual_lite.output_visual_faces", minimum=1
+    )
+    if target >= source_total or output_total > target:
+        raise ManifestError("visual_lite face budget does not reduce the full visual")
+    meshes = lite.get("meshes")
+    if not isinstance(meshes, list) or len(meshes) != len(visual_meshes):
+        raise ManifestError("visual_lite must cover every full CAD visual mesh")
+    file_roles = {item["file"]: item["role"] for item in manifest["contents"]["files"]}
+    source_sum = 0
+    output_sum = 0
+    lite_files: list[str] = []
+    for index, (value, source_value) in enumerate(zip(meshes, visual_meshes)):
+        row = _mapping(value, label=f"visual_lite.meshes[{index}]")
+        source_row = _mapping(source_value, label=f"visual_meshes[{index}]")
+        if set(row) != {"source_file", "file", "sha256", "source_faces", "faces"}:
+            raise ManifestError(f"visual_lite.meshes[{index}] contains unsupported fields")
+        source_relative = str(source_row["file"])
+        if row.get("source_file") != source_relative:
+            raise ManifestError(f"visual_lite.meshes[{index}] has the wrong source mesh")
+        relative = _nonempty_string(row.get("file"), label=f"visual_lite.meshes[{index}].file")
+        digest = _sha256(row.get("sha256"), label=f"visual_lite.meshes[{index}].sha256")
+        _require_cross_file(files, manifest, relative, digest, label=f"visual_lite.meshes[{index}]")
+        if relative == source_relative or Path(relative).suffix.lower() != ".obj":
+            raise ManifestError(f"visual_lite.meshes[{index}] is not an independent OBJ")
+        if file_roles[relative] != "cad_visual_mesh_lite":
+            raise ManifestError(f"visual_lite.meshes[{index}] has the wrong file role")
+        source_faces = _integer(
+            row.get("source_faces"), label=f"visual_lite.meshes[{index}].source_faces", minimum=1
+        )
+        faces = _integer(row.get("faces"), label=f"visual_lite.meshes[{index}].faces", minimum=1)
+        if faces > source_faces:
+            raise ManifestError(f"visual_lite.meshes[{index}] adds faces")
+        if verify:
+            for path, expected in (
+                (files[source_relative], source_faces),
+                (files[relative], faces),
+            ):
+                with path.open("rb") as stream:
+                    observed = sum(line.startswith(b"f ") for line in stream)
+                if observed != expected:
+                    raise ManifestError(f"visual_lite face count disagrees with {path.name}")
+        source_sum += source_faces
+        output_sum += faces
+        lite_files.append(relative)
+    if (
+        source_sum != source_total
+        or output_sum != output_total
+        or len(set(lite_files)) != len(lite_files)
+    ):
+        raise ManifestError("visual_lite face totals or file identities are inconsistent")
+    return tuple(lite_files)
+
+
+def _validate_source_contact_layer(
+    manifest: Mapping[str, Any],
+    files: Mapping[str, Path],
+    *,
+    collision: Mapping[str, Any],
+    schema_version: int,
+) -> tuple[Mapping[str, Any], ...]:
+    """Bind the opt-in official wall meshes to the carved heightfield."""
+
+    value = collision.get("source_contact_layer")
+    if value is None:
+        return ()
+    if schema_version != 4:
+        raise ManifestError("source_contact_layer requires runtime-pack schema_version 4")
+    layer = _mapping(value, label="collision.source_contact_layer")
+    expected_keys = {
+        "kind",
+        "status",
+        "source_manifest_sha256",
+        "source_glb_sha256",
+        "base_collision_samples_sha256",
+        "updated_collision_samples_sha256",
+        "roof_nodes_transferred",
+        "ownership_regions",
+        "mesh_geoms",
+        "claim_boundary",
+    }
+    if set(layer) != expected_keys:
+        raise ManifestError("source_contact_layer contains unsupported or missing fields")
+    if (
+        layer["kind"] != "official_source_convex_walls_402_403_v1"
+        or layer["status"] != "EXPERIMENTAL_BLOCKED"
+        or layer["source_manifest_sha256"] != manifest["source_identity"]["field_manifest_sha256"]
+        or layer["source_glb_sha256"] != SOURCE_GLB_SHA256
+        or layer["updated_collision_samples_sha256"] != collision["samples_sha256"]
+        or not isinstance(layer["claim_boundary"], str)
+        or not layer["claim_boundary"]
+    ):
+        raise ManifestError("source_contact_layer source or status contract is invalid")
+    base_sha = _sha256(
+        layer["base_collision_samples_sha256"],
+        label="source_contact_layer.base_collision_samples_sha256",
+    )
+    if (
+        base_sha == collision["samples_sha256"]
+        or collision.get("verified_wall_tip_repair") is not None
+    ):
+        raise ManifestError("source contact layer must supersede the original wall roof samples")
+    if (
+        _integer(layer["roof_nodes_transferred"], label="roof_nodes_transferred", minimum=1)
+        != 15800
+    ):
+        raise ManifestError("source contact layer has the wrong transferred roof count")
+    regions = layer["ownership_regions"]
+    if (
+        not isinstance(regions, list)
+        or len(regions) != 2
+        or not all(isinstance(item, dict) for item in regions)
+        or {item.get("source_part_index") for item in regions} != {402, 403}
+        or any(item.get("roof_nodes_transferred") != 7900 for item in regions)
+    ):
+        raise ManifestError("source contact layer ownership regions are invalid")
+    records = layer["mesh_geoms"]
+    if not isinstance(records, list) or len(records) != 2:
+        raise ManifestError("source contact layer requires exactly two wall meshes")
+    by_part: dict[int, Mapping[str, Any]] = {}
+    for index, value in enumerate(records):
+        record = _mapping(value, label=f"source_contact_layer.mesh_geoms[{index}]")
+        if set(record) != {
+            "name",
+            "file",
+            "sha256",
+            "source_part_index",
+            "contype",
+            "conaffinity",
+            "friction",
+            "solref",
+        }:
+            raise ManifestError("source contact mesh record contains unsupported fields")
+        part = record["source_part_index"]
+        if part not in (402, 403) or part in by_part:
+            raise ManifestError("source contact mesh part indices are invalid")
+        name = f"rmuc2026_official_wall_{part}"
+        relative = f"collision/official_wall_{part}.obj"
+        if record["name"] != name or record["file"] != relative:
+            raise ManifestError("source contact mesh name or path is invalid")
+        digest = _sha256(record["sha256"], label=f"source contact mesh {part} sha256")
+        _require_cross_file(files, manifest, relative, digest, label=f"source contact mesh {part}")
+        file_record = next(
+            item for item in manifest["contents"]["files"] if item["file"] == relative
+        )
+        if file_record.get("role") != "source_contact_mesh":
+            raise ManifestError("source contact mesh file role is invalid")
+        if record["contype"] != 2 or record["conaffinity"] != 1:
+            raise ManifestError("source contact mesh bits are invalid")
+        friction = _number_list(record["friction"], label="source contact friction", length=3)
+        solref = _number_list(record["solref"], label="source contact solref", length=2)
+        if friction != (1.0, 0.005, 0.0001) or solref != (0.005, 1.0):
+            raise ManifestError("source contact mesh physical parameters are invalid")
+        by_part[part] = record
+    return tuple(by_part[part] for part in (402, 403))
+
+
 def _validate_runtime_profiles(
     manifest: Mapping[str, Any],
     files: Mapping[str, Path],
@@ -965,6 +1174,8 @@ def _validate_runtime_profiles(
     require_named_lighting: bool,
     livery_contract: _RuntimeLiveryContract | None,
     fence_contract: Mapping[str, Any] | None,
+    lite_visual: tuple[str, ...] | None,
+    source_contact_meshes: tuple[Mapping[str, Any], ...],
 ) -> None:
     """Validate the optional schema-1 profile extension and its MJCF semantics.
 
@@ -982,8 +1193,11 @@ def _validate_runtime_profiles(
     if runtime.get("default") != DEFAULT_RUNTIME_PROFILE:
         raise ManifestError("runtime_profiles.default must be 'full'")
     profiles = _mapping(runtime.get("profiles"), label="runtime_profiles.profiles")
-    if set(profiles) != set(RUNTIME_PROFILE_NAMES):
-        raise ManifestError("runtime_profiles must declare exactly full and collision_only")
+    expected_names = {"full", "collision_only"}
+    if lite_visual is not None:
+        expected_names.add("interactive_lite")
+    if set(profiles) != expected_names:
+        raise ManifestError("runtime_profiles disagree with the declared visual profiles")
 
     expected = {
         "full": {
@@ -999,8 +1213,17 @@ def _validate_runtime_profiles(
             "file_role": "field_mjcf_collision_only",
         },
     }
+    if lite_visual is not None:
+        expected["interactive_lite"] = {
+            "includes_visual_meshes": True,
+            "visual_mesh_count": len(lite_visual),
+            "intended_use": "interactive_visualization_lite",
+            "file_role": "field_mjcf_interactive_lite",
+        }
     entrypoints: set[str] = set()
     for name in RUNTIME_PROFILE_NAMES:
+        if name not in expected_names:
+            continue
         label = f"runtime_profiles.profiles.{name}"
         record = _mapping(profiles.get(name), label=label)
         if set(record) != {
@@ -1032,15 +1255,45 @@ def _validate_runtime_profiles(
             files[entrypoint],
             profile=name,
             expected_visual_mesh_count=int(wanted["visual_mesh_count"]),
-            expected_visual_mesh_files=(visual_mesh_files if name == "full" else ()),
+            expected_visual_mesh_files=(
+                visual_mesh_files
+                if name == "full"
+                else lite_visual
+                if name == "interactive_lite"
+                else ()
+            ),
             collision_contract=collision_contract,
             require_named_lighting=require_named_lighting,
-            livery_contract=(livery_contract if name == "full" else None),
+            livery_contract=(livery_contract if name != "collision_only" else None),
             fence_contract=fence_contract,
+            source_contact_meshes=source_contact_meshes,
         )
 
     if manifest["contents"]["entrypoint"] != profiles["full"]["entrypoint"]:
         raise ManifestError("contents.entrypoint must remain the full runtime profile")
+    if lite_visual is not None:
+        full_xml = ET.parse(files[str(profiles["full"]["entrypoint"])]).getroot()
+        lite_xml = ET.parse(files[str(profiles["interactive_lite"]["entrypoint"])]).getroot()
+        replacements = {
+            row["file"]: row["source_file"] for row in manifest["visual_lite"]["meshes"]
+        }
+        for mesh in lite_xml.findall("./asset/mesh"):
+            current = mesh.get("file")
+            if current in replacements:
+                mesh.set("file", replacements[current])
+        if _semantic_xml(full_xml) != _semantic_xml(lite_xml):
+            raise ManifestError("interactive_lite changes MJCF beyond visual mesh files")
+
+
+def _semantic_xml(element: ET.Element) -> tuple[object, ...]:
+    """Compare field MJCF meaning while ignoring indentation and attribute order."""
+
+    return (
+        element.tag,
+        tuple(sorted(element.attrib.items())),
+        (element.text or "").strip(),
+        tuple(_semantic_xml(child) for child in element),
+    )
 
 
 def _validate_runtime_profile_xml(
@@ -1053,6 +1306,7 @@ def _validate_runtime_profile_xml(
     require_named_lighting: bool,
     livery_contract: _RuntimeLiveryContract | None,
     fence_contract: Mapping[str, Any] | None,
+    source_contact_meshes: tuple[Mapping[str, Any], ...],
 ) -> None:
     try:
         root = ET.parse(path).getroot()
@@ -1088,7 +1342,9 @@ def _validate_runtime_profile_xml(
     mesh_assets = root.findall("./asset/mesh")
     mesh_geoms = [geom for geom in root.iter("geom") if geom.get("mesh")]
     livery_mesh_count = 1 if livery_contract is not None else 0
-    expected_total_mesh_count = expected_visual_mesh_count + livery_mesh_count
+    expected_total_mesh_count = (
+        expected_visual_mesh_count + livery_mesh_count + len(source_contact_meshes)
+    )
     if len(mesh_assets) != expected_total_mesh_count:
         raise ManifestError(
             f"runtime profile {profile!r} declares {len(mesh_assets)} mesh assets; "
@@ -1103,6 +1359,7 @@ def _validate_runtime_profile_xml(
     expected_mesh_files = (
         *expected_visual_mesh_files,
         *((livery_contract.mesh_relative,) if livery_contract is not None else ()),
+        *(str(record["file"]) for record in source_contact_meshes),
     )
     if None in mesh_files or sorted(mesh_files) != sorted(expected_mesh_files):
         raise ManifestError(
@@ -1121,6 +1378,54 @@ def _validate_runtime_profile_xml(
             raise ManifestError(
                 f"runtime profile {profile!r} visual mesh must retain manifest coordinates: "
                 f"{sorted(altered)}"
+            )
+
+    for record in source_contact_meshes:
+        name = str(record["name"])
+        asset_mesh = root.findall(f"./asset/mesh[@name='{name}']")
+        collision_geom = worldbody.findall(f"./geom[@name='{name}']")
+        if (
+            len(asset_mesh) != 1
+            or asset_mesh[0].attrib != {"name": name, "file": record["file"]}
+            or len(collision_geom) != 1
+        ):
+            raise ManifestError(f"runtime profile {profile!r} source wall {name} is missing")
+        geom = collision_geom[0]
+        if set(geom.attrib) != {
+            "name",
+            "type",
+            "mesh",
+            "contype",
+            "conaffinity",
+            "friction",
+            "solref",
+            "group",
+            "rgba",
+        } or any(
+            geom.get(key) != value
+            for key, value in {
+                "name": name,
+                "type": "mesh",
+                "mesh": name,
+                "contype": "2",
+                "conaffinity": "1",
+                "group": "3",
+                "rgba": "0.4 0.4 0.4 0",
+            }.items()
+        ):
+            raise ManifestError(f"runtime profile {profile!r} source wall {name} changed contact")
+        for key in ("friction", "solref"):
+            expected = tuple(float(item) for item in record[key])
+            actual = _xml_number_list_attribute(
+                geom,
+                key,
+                label=f"runtime profile {profile!r} source wall {name} {key}",
+                length=len(expected),
+            )
+            _require_xml_numbers_close(
+                actual,
+                expected,
+                label=f"runtime profile {profile!r} source wall {name} {key}",
             )
 
     file_assets = [
@@ -1294,7 +1599,11 @@ def _validate_runtime_profile_xml(
     expected_size = (
         *collision_contract.half_size_xy_m,
         collision_contract.maximum_height_m
-        - (collision_contract.minimum_height_m if collision_contract.schema_version == 3 else 0.0),
+        - (
+            collision_contract.minimum_height_m
+            if collision_contract.schema_version >= 3 and collision_contract.minimum_height_m < 0.0
+            else 0.0
+        ),
         collision_contract.base_depth_m,
     )
     _require_xml_numbers_close(
@@ -1316,7 +1625,8 @@ def _validate_runtime_profile_xml(
             collision_contract.geom_center_m[2]
             + (
                 collision_contract.minimum_height_m
-                if collision_contract.schema_version == 3
+                if collision_contract.schema_version >= 3
+                and collision_contract.minimum_height_m < 0.0
                 else 0.0
             ),
         ),
@@ -1672,7 +1982,7 @@ def _verify_collision_bootstrap(
     try:
         with np.load(files[samples_relative], allow_pickle=False) as samples:
             height = np.asarray(samples["height_m"], dtype=np.float64)
-            if schema_version == 3:
+            if schema_version >= 3 and minimum_height_m < 0.0:
                 x = np.asarray(samples["x_m"], dtype=np.float64)
                 y = np.asarray(samples["y_m"], dtype=np.float64)
             wall_tip_repair = collision.get("verified_wall_tip_repair")
@@ -1689,7 +1999,7 @@ def _verify_collision_bootstrap(
         raise ManifestError("collision.samples_file shape disagrees with the manifest")
     if not np.isfinite(height).all():
         raise ManifestError("collision.samples_file contains non-finite samples")
-    if schema_version == 3:
+    if schema_version >= 3 and minimum_height_m < 0.0:
         record = collision["edge_void_provenance"]
         if (
             x.shape != (columns,)
@@ -1734,7 +2044,7 @@ def _verify_collision_bootstrap(
         height=decoded_height,
         label=label,
     )
-    if schema_version == 3:
+    if schema_version >= 3 and minimum_height_m < 0.0:
         normalized = (height - minimum_height_m) / (maximum_height_m - minimum_height_m)
         if np.any((normalized < -1e-8) | (normalized > 1.0 + 1e-8)):
             raise ManifestError("schema-3 heightfield normalized samples are outside [0, 1]")
