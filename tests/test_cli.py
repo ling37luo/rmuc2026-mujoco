@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import math
 from pathlib import Path
+from queue import SimpleQueue
 import threading
 
 import pytest
@@ -10,6 +11,8 @@ import pytest
 from rmuc2026_mujoco import DownloadedStep, FieldAsset
 from rmuc2026_mujoco.cli import (
     _configure_camera,
+    _controller_reserved_keys,
+    _drain_controller_keys,
     _start_display_key_listener,
     build_parser,
     main,
@@ -300,6 +303,38 @@ def test_display_keys_fail_closed_without_selective_native_interception(monkeypa
             focus_check=lambda: True,
             keyboard_module=Keyboard,
         )
+
+
+def test_generic_viewer_forwards_controller_keys_on_simulation_thread() -> None:
+    class Controller:
+        viewer_keys = ("W", "a", "s", "d", "g", "W")
+
+        def __init__(self) -> None:
+            self.presses: list[str] = []
+
+        def press_name(self, name: str) -> None:
+            self.presses.append(name)
+
+    controller = Controller()
+    assert _controller_reserved_keys(controller) == ("w", "a", "s", "d")
+    assert _controller_reserved_keys(object()) == ()
+
+    keys: SimpleQueue[str] = SimpleQueue()
+    keys.put("W")
+    keys.put("D")
+    _drain_controller_keys(keys, controller.press_name)
+    assert controller.presses == ["W", "D"]
+
+
+def test_controller_viewer_key_declaration_rejects_non_character_keys() -> None:
+    class Controller:
+        viewer_keys = ("space",)
+
+        def press_name(self, _name: str) -> None:
+            pass
+
+    with pytest.raises(ValueError, match="single letter or digit"):
+        _controller_reserved_keys(Controller())
 
 
 def test_setup_cli_downloads_then_builds_locally(monkeypatch, tmp_path: Path, capsys) -> None:

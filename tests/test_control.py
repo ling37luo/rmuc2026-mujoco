@@ -23,3 +23,28 @@ def test_controller_factory_receives_selected_field_asset(monkeypatch):
     )
     callback(model, data, step=7, mode="policy")
     assert calls == [(model, data, 7, "policy")]
+
+
+def test_controller_adapter_keeps_keyboard_contract(monkeypatch):
+    class UserController:
+        viewer_keys = ("w", "a", "s", "d")
+
+        def __init__(self):
+            self.presses = []
+
+        def __call__(self, _model, _data, *, step, mode):
+            assert (step, mode) == (1, "human")
+
+        def press_name(self, name):
+            self.presses.append(name)
+
+    user = UserController()
+    monkeypatch.setattr(
+        control, "_load_module", lambda _: SimpleNamespace(make=lambda *_args, **_kwargs: user)
+    )
+    model, data = object(), object()
+    callback = control.load_controller("user:make", model, data, mode="human")
+    assert callback.viewer_keys == user.viewer_keys
+    callback.press_name("W")
+    callback(model, data, step=1, mode="human")
+    assert user.presses == ["W"]

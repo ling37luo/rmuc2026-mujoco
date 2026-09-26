@@ -259,6 +259,7 @@ def update_viewer_status_overlay(
     livery: str,
     camera: str,
     shortcuts: bool,
+    robot_control: str | None = None,
 ) -> bool:
     """Put persistent display state in the native viewer when supported.
 
@@ -271,8 +272,14 @@ def update_viewer_status_overlay(
     set_texts = getattr(viewer, "set_texts", None)
     if not callable(set_texts):
         return False
-    shortcut_text = "L lighting | G livery | Esc close" if shortcuts else "use launch options"
+    shortcut_text = (
+        "L lighting | G livery | Esc close"
+        if shortcuts
+        else "L/G unavailable; use --lighting/--livery"
+    )
     content = f"lighting  {lighting}\nlivery   {livery}\ncamera   {camera}\n{shortcut_text}"
+    if robot_control is not None:
+        content += f"\nrobot    {robot_control}"
     try:
         set_texts((100, 3, "RMUC 2026 FIELD", content))
     except Exception:

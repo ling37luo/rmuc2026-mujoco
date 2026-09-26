@@ -213,6 +213,27 @@ def test_status_overlay_uses_native_bottom_right_text_when_available() -> None:
     assert "L lighting | G livery | Esc close" in content
 
 
+def test_status_overlay_distinguishes_passive_robot_and_unavailable_shortcuts() -> None:
+    class Viewer:
+        texts: list[tuple[int, int, str, str]] = []
+
+        def set_texts(self, value) -> None:
+            self.texts.append(value)
+
+    viewer = Viewer()
+    assert update_viewer_status_overlay(
+        viewer,
+        lighting="flat",
+        livery="off",
+        camera="overview",
+        shortcuts=False,
+        robot_control="view only (no controller)",
+    )
+    content = viewer.texts[-1][3]
+    assert "L/G unavailable; use --lighting/--livery" in content
+    assert "robot    view only (no controller)" in content
+
+
 def test_status_overlay_falls_back_without_native_text_api() -> None:
     assert (
         update_viewer_status_overlay(

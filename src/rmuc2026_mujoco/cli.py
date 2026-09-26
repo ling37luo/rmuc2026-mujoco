@@ -6,6 +6,7 @@ import argparse
 import json
 import math
 from pathlib import Path
+from queue import Empty, SimpleQueue
 import sys
 import threading
 import time
@@ -39,7 +40,6 @@ from .lite_profile import export_interactive_lite_pack
 from .mjcf import UNOFFICIAL_FRICTION_PRESETS, compose_with_robot, load_model
 from .pack import ExportBlocked
 from .perimeter_fence import export_fenced_pack
-from .source_contact_pack import export_source_wall_pack
 from .query import (
     HEIGHTFIELD_CLAIM_BOUNDARY,
     field_bounds,
@@ -49,6 +49,7 @@ from .query import (
 from .ramp_source_audit import audit_fly_ramp_source_overlap
 from .scenarios import get_scenario, list_scenarios, scenario_descriptor
 from .slope_catalog import slope_catalog
+from .source_contact_pack import export_source_wall_pack
 from .turning import reset_turn_spawn, run_turn_batch, screen_turn_spawns
 from .training_region import export_training_region
 from .viewer import (
@@ -941,12 +942,28 @@ def main(argv: list[str] | None = None) -> int:
             return 0 if finite and not warnings else 2
         import mujoco.viewer
 
+        controller_key_handler = getattr(controller, "press_name", None)
+        robot_control = None
+        if args.robot is not None:
+            if args.controller is None:
+                robot_control = "view only (no controller)"
+                print(
+                    "[input] Robot view is passive: W/A/S/D do not drive this robot. "
+                    "Add --controller MODULE:factory for human or policy control.",
+                    flush=True,
+                )
+            elif callable(controller_key_handler):
+                robot_control = f"{args.control} controller + keyboard"
+            else:
+                robot_control = f"{args.control} controller (no keyboard handler)"
         display = FieldDisplayController(
             asset,
             lighting=args.lighting,
             livery=args.livery,
         )
         close_requested = threading.Event()
+        controller_keys: SimpleQueue[str] = SimpleQueue()
+        reserved_keys = ("l", "g") + _controller_reserved_keys(controller)
         started = time.monotonic()
         viewer_context = mujoco.viewer.launch_passive(model, data)
         viewer_session = SafePassiveViewerSession(viewer_context)
@@ -959,9 +976,19 @@ def main(argv: list[str] | None = None) -> int:
                     display,
                     camera=args.camera,
                     shortcuts=True,
+                    robot_control=robot_control,
                 ),
+                on_key=controller_keys.put if callable(controller_key_handler) else None,
+                reserved_keys=reserved_keys,
             )
             viewer_session.listener = listener
+            if listener is None:
+                print(
+                    "[input] L/G shortcuts unavailable: install the optional viewer extra "
+                    "and use an X11 MuJoCo window (uv run --locked --extra viewer --project .). "
+                    "Select initial modes with --lighting and --livery.",
+                    flush=True,
+                )
             with viewer.lock():
                 fitted_viewport = (
                     _configure_fly_camera(viewer, fly_route)
@@ -974,6 +1001,7 @@ def main(argv: list[str] | None = None) -> int:
                 display,
                 camera=args.camera,
                 shortcuts=listener is not None,
+                robot_control=robot_control,
             )
             while (
                 viewer.is_running()
@@ -989,6 +1017,8 @@ def main(argv: list[str] | None = None) -> int:
                 with viewer.lock():
                     if needs_refit:
                         fitted_viewport = _configure_camera(viewer, asset, args.camera)
+                    if callable(controller_key_handler):
+                        _drain_controller_keys(controller_keys, controller_key_handler)
                     if args.robot is not None:
                         controller(
                             model, data, step=int(data.time / model.opt.timestep), mode=args.control
@@ -1012,6 +1042,39 @@ def main(argv: list[str] | None = None) -> int:
     ) as exc:
         print(f"rmuc2026-field: {exc}", file=sys.stderr)
         return 2
+
+
+def _controller_reserved_keys(controller) -> tuple[str, ...]:
+    """Reserve only keys explicitly claimed by an external controller."""
+
+    if not callable(getattr(controller, "press_name", None)):
+        return ()
+    declared = getattr(controller, "viewer_keys", ())
+    if isinstance(declared, str):
+        declared = tuple(declared)
+    try:
+        keys = tuple(declared)
+    except TypeError as exc:
+        raise ValueError("controller.viewer_keys must contain single letter or digit keys") from exc
+    normalized = []
+    for key in keys:
+        if not isinstance(key, str) or len(key) != 1 or not key.isascii() or not key.isalnum():
+            raise ValueError("controller.viewer_keys must contain single letter or digit keys")
+        key = key.lower()
+        if key not in {"l", "g"} and key not in normalized:
+            normalized.append(key)
+    return tuple(normalized)
+
+
+def _drain_controller_keys(keys: SimpleQueue[str], press_name) -> None:
+    """Deliver buffered viewer presses on the same thread as MuJoCo stepping."""
+
+    while True:
+        try:
+            name = keys.get_nowait()
+        except Empty:
+            return
+        press_name(name)
 
 
 def _validate_build_options(target_visual_faces: int, heightfield_resolution: float) -> None:
@@ -1154,6 +1217,7 @@ def _show_display_status(
     *,
     camera: str,
     shortcuts: bool,
+    robot_control: str | None = None,
 ) -> None:
     livery = "on" if display.livery_visible else "off"
     if not display.livery_available:
@@ -1164,6 +1228,7 @@ def _show_display_status(
         livery=livery,
         camera=camera,
         shortcuts=shortcuts,
+        robot_control=robot_control,
     )
     _print_display_status(display, shortcuts=shortcuts)
 

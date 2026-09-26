@@ -116,8 +116,14 @@ float above a low patch are locally refined to 2.5 or 1.25 cm where possible; re
 bad cells are omitted to expose the CAD surface. Retained visual triangles
 stay within a few millimetres above the sampled collision surface, so the
 texture does not hide a grounded robot.
-The repository never contains the source or generated images. Press `L` in the
-interactive viewer to switch between the default flat lighting and cast shadows.
+The repository never contains the source or generated images. Launch the interactive
+viewer with the optional keyboard component:
+
+```bash
+uv run --locked --extra viewer --project . rmuc2026-field view PACK --profile interactive_lite
+```
+
+Press `L` in the interactive viewer to switch between the default flat lighting and cast shadows.
 Press `G` to show or hide the optional rulebook livery, which starts hidden and
 never participates in contact. The same initial modes can be selected with
 `--lighting flat|shadow` and `--livery off|on`. Without the optional `viewer`
@@ -125,6 +131,11 @@ dependency, use those startup flags; field loading and physics remain available.
 Live `L`/`G` interception is enabled only when Linux/X11 can bind the unique
 MuJoCo window owned by the current process. Other platforms and ambiguous
 window sessions fail closed and keep the launch-time modes.
+For an external robot, the viewer is passive until `--controller MODULE:factory`
+is supplied; `W/A/S/D` have no robot action without that controller.
+If a controller handles `press_name(key)`, the generic viewer forwards its key
+presses during simulation. The controller may declare `viewer_keys = ("w", "a", "s", "d")`
+to keep those keys from triggering MuJoCo's built-in shortcuts.
 
 ## Use from Python
 

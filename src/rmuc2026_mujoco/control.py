@@ -103,6 +103,8 @@ def _adapt_callback(callback: Any) -> ControlCallback:
         method = getattr(callback, name, None)
         if callable(method):
             setattr(call, name, method)
+    if hasattr(callback, "viewer_keys"):
+        call.viewer_keys = callback.viewer_keys
     if hasattr(callback, "identity"):
         call.identity = callback.identity
     return call
