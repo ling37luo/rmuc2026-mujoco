@@ -82,10 +82,13 @@ class X11ViewerKeyInterceptor:
         connection: Any,
         window: Any,
         grabs: tuple[tuple[int, int], ...],
+        key_names: dict[int, str] | None = None,
     ) -> None:
         self._connection = connection
         self._window = window
         self._grabs = grabs
+        self._key_names = key_names or {}
+        self._key_callback: Callable[[str, bool], None] | None = None
         self._closed = False
         self._stop_event = threading.Event()
         self._drain_thread = threading.Thread(
@@ -98,6 +101,11 @@ class X11ViewerKeyInterceptor:
     @property
     def window_id(self) -> int:
         return int(self._window.id)
+
+    def set_key_callback(self, callback: Callable[[str, bool], None]) -> None:
+        """Dispatch grabbed key events instead of dropping them from the X11 queue."""
+
+        self._key_callback = callback
 
     def close(self) -> None:
         if self._closed:
@@ -112,10 +120,19 @@ class X11ViewerKeyInterceptor:
             pass
 
     def _drain_events(self) -> None:
+        from Xlib import X
+
         while not self._stop_event.wait(0.02):
             try:
                 while self._connection.pending_events():
-                    self._connection.next_event()
+                    event = self._connection.next_event()
+                    name = self._key_names.get(int(getattr(event, "detail", -1)))
+                    if (
+                        name is not None
+                        and event.type in (X.KeyPress, X.KeyRelease)
+                        and self._key_callback is not None
+                    ):
+                        self._key_callback(name, event.type == X.KeyPress)
             except Exception:
                 return
 
@@ -167,6 +184,10 @@ def create_viewer_key_interceptor(
         if any(keycode <= 0 for keycode in keycodes):
             connection.close()
             return None
+        key_names = {
+            keycode: key.upper() if key.lower() != "space" else "SPACE"
+            for key, keycode in zip(keys, keycodes, strict=True)
+        }
         # Reserve plain declared keys with active lock-key combinations.
         # Modified native shortcuts such as Alt+L and Alt+G remain available.
         lock_masks = {X.LockMask}
@@ -208,7 +229,7 @@ def create_viewer_key_interceptor(
         except Exception:
             pass
         return None
-    interceptor = X11ViewerKeyInterceptor(connection, window, grabs)
+    interceptor = X11ViewerKeyInterceptor(connection, window, grabs, key_names)
     guard = ViewerFocusGuard(
         _x11_foreground_window,
         process_id=os.getpid(),

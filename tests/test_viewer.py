@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+from types import SimpleNamespace
 
 import pytest
 
@@ -281,6 +282,49 @@ def test_x11_key_interceptor_releases_every_passive_grab() -> None:
 
     assert window.released == [(46, 32768), (42, 32768)]
     assert connection.events == ["sync", "close"]
+
+
+@pytest.mark.skipif(
+    not sys.platform.startswith("linux"),
+    reason="the grabbed-key dispatch path is Linux/X11 only",
+)
+def test_x11_key_interceptor_dispatches_grabbed_press_and_release() -> None:
+    from Xlib import X
+
+    class Connection:
+        def __init__(self) -> None:
+            self.events = [
+                SimpleNamespace(type=X.KeyPress, detail=46),
+                SimpleNamespace(type=X.KeyRelease, detail=46),
+                SimpleNamespace(type=X.KeyPress, detail=42),
+                SimpleNamespace(type=X.KeyRelease, detail=42),
+                SimpleNamespace(type=X.KeyPress, detail=99),
+            ]
+
+        def pending_events(self) -> int:
+            return len(self.events)
+
+        def next_event(self):
+            return self.events.pop(0)
+
+    class StopAfterOneDrain:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def wait(self, _timeout: float) -> bool:
+            self.calls += 1
+            return self.calls > 1
+
+    interceptor = object.__new__(X11ViewerKeyInterceptor)
+    interceptor._connection = Connection()
+    interceptor._key_names = {46: "L", 42: "G"}
+    interceptor._stop_event = StopAfterOneDrain()
+    received: list[tuple[str, bool]] = []
+    interceptor.set_key_callback(lambda name, is_press: received.append((name, is_press)))
+
+    interceptor._drain_events()
+
+    assert received == [("L", True), ("L", False), ("G", True), ("G", False)]
 
 
 @pytest.mark.skipif(

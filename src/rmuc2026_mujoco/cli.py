@@ -1189,12 +1189,7 @@ def _start_display_key_listener(
             return character.upper()
         return None
 
-    def on_press(key) -> bool | None:
-        modifier = modifier_name(key)
-        if modifier is not None:
-            modifiers.add(modifier)
-            return None
-        name = key_name(key)
+    def press_name(name: str | None) -> bool | None:
         if name is None or name in pressed:
             return None
         now = time.monotonic()
@@ -1221,12 +1216,7 @@ def _start_display_key_listener(
             on_key(name)
         return None
 
-    def on_release(key) -> None:
-        modifier = modifier_name(key)
-        if modifier is not None:
-            modifiers.discard(modifier)
-            return
-        name = key_name(key)
+    def release_name(name: str | None) -> None:
         if name is not None:
             pressed.discard(name)
             released_at[name] = time.monotonic()
@@ -1234,6 +1224,26 @@ def _start_display_key_listener(
                 forwarded_pressed.discard(name)
                 if on_key_release is not None:
                     on_key_release(name)
+
+    def on_press(key) -> bool | None:
+        modifier = modifier_name(key)
+        if modifier is not None:
+            modifiers.add(modifier)
+            return None
+        return press_name(key_name(key))
+
+    def on_release(key) -> None:
+        modifier = modifier_name(key)
+        if modifier is not None:
+            modifiers.discard(modifier)
+            return
+        release_name(key_name(key))
+
+    set_key_callback = getattr(key_interceptor, "set_key_callback", None)
+    if callable(set_key_callback):
+        set_key_callback(
+            lambda name, is_press: press_name(name) if is_press else release_name(name)
+        )
 
     listener = keyboard_module.Listener(
         on_press=on_press,

@@ -412,6 +412,71 @@ def test_generic_listener_forwards_arrow_and_space_press_release_in_order() -> N
     listener.stop()
 
 
+def test_grabbed_and_global_key_events_do_not_toggle_display_twice() -> None:
+    class Key:
+        esc = object()
+
+    class Listener:
+        def __init__(self, **callbacks) -> None:
+            self.callbacks = callbacks
+
+        def start(self) -> None:
+            pass
+
+        def stop(self) -> None:
+            pass
+
+    class Interceptor:
+        callback = None
+
+        def set_key_callback(self, callback) -> None:
+            self.callback = callback
+
+        def close(self) -> None:
+            pass
+
+    class Keyboard:
+        pass
+
+    Keyboard.Key = Key
+    Keyboard.Listener = Listener
+
+    class Character:
+        def __init__(self, char: str) -> None:
+            self.char = char
+
+    class Display:
+        presses: list[str] = []
+
+        def press_name(self, name: str) -> bool:
+            self.presses.append(name)
+            return name in {"L", "G"}
+
+    changed: list[str] = []
+    interceptor = Interceptor()
+    listener = _start_display_key_listener(
+        Display(),
+        threading.Event(),
+        on_change=lambda: changed.append("changed"),
+        focus_check=lambda: True,
+        keyboard_module=Keyboard,
+        key_interceptor=interceptor,
+    )
+    assert listener is not None
+    assert interceptor.callback is not None
+    press = listener.callbacks["on_press"]
+    release = listener.callbacks["on_release"]
+    for name in ("L", "G"):
+        interceptor.callback(name, True)
+        press(Character(name.lower()))
+        interceptor.callback(name, False)
+        release(Character(name.lower()))
+
+    assert Display.presses == ["L", "G"]
+    assert changed == ["changed", "changed"]
+    listener.stop()
+
+
 def test_generic_viewer_steps_about_one_display_frame() -> None:
     assert _viewer_physics_substeps(0.002) == 8
     assert _viewer_physics_substeps(0.001) == 17
