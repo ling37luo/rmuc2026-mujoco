@@ -10,7 +10,7 @@ from rmuc2026_mujoco.acceptance_routes import (
 )
 
 
-def test_fence_presets_cover_four_panels_and_four_corners() -> None:
+def test_fence_presets_cover_four_unobstructed_panel_centers() -> None:
     names = ("left", "right", "bottom", "top")
     positions = ((-14, 0, 1), (14, 0, 1), (0, -7.5, 1), (0, 7.5, 1))
     contract = {
@@ -21,24 +21,16 @@ def test_fence_presets_cover_four_panels_and_four_corners() -> None:
     }
     routes = _fence_routes(contract)
 
-    assert len(routes) == 8
+    assert len(routes) == 4
     assert {route["id"] for route in routes} == {
         "fence_left",
         "fence_right",
         "fence_bottom",
         "fence_top",
-        "fence_corner_left_bottom",
-        "fence_corner_left_top",
-        "fence_corner_right_bottom",
-        "fence_corner_right_top",
     }
     assert all(route["expect"] == "block" for route in routes)
     assert all(route["directions"] == ["forward"] for route in routes)
     assert routes[0]["blocking_geom"] == "rmuc2026_perimeter_left"
-    assert set(routes[4]["blocking_geom"]) == {
-        "rmuc2026_perimeter_left",
-        "rmuc2026_perimeter_bottom",
-    }
 
 
 def test_source_wall_presets_require_declared_mesh_and_bounds() -> None:

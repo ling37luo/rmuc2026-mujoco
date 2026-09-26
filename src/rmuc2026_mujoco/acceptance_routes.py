@@ -34,42 +34,24 @@ def _fence_routes(contract: dict[str, Any]) -> list[dict[str, Any]]:
         name: str,
         start: tuple[float, float],
         end: tuple[float, float],
-        panel: str | tuple[str, str],
+        panel: str,
     ) -> dict:
-        blocking = (
-            panels[panel]["name"]
-            if isinstance(panel, str)
-            else [panels[item]["name"] for item in panel]
-        )
         return {
             "id": name,
             "start_xy_m": list(start),
             "end_xy_m": list(end),
             "expect": "block",
-            "blocking_geom": blocking,
+            "blocking_geom": panels[panel]["name"],
             "directions": ["forward"],
             "basis": "manifest_perimeter_fence_panel_center",
         }
 
-    routes = [
+    return [
         blocked("fence_left", (left_x + 0.5, center_y), (left_x - 0.2, center_y), "left"),
         blocked("fence_right", (right_x - 0.5, center_y), (right_x + 0.2, center_y), "right"),
         blocked("fence_bottom", (center_x, bottom_y + 0.5), (center_x, bottom_y - 0.2), "bottom"),
         blocked("fence_top", (center_x, top_y - 0.5), (center_x, top_y + 0.2), "top"),
     ]
-    for x_side, x_sign in (("left", 1), ("right", -1)):
-        x = left_x if x_side == "left" else right_x
-        for y_side, y_sign in (("bottom", 1), ("top", -1)):
-            y = bottom_y if y_side == "bottom" else top_y
-            routes.append(
-                blocked(
-                    f"fence_corner_{x_side}_{y_side}",
-                    (x + x_sign * 0.6, y + y_sign * 0.6),
-                    (x - x_sign * 0.1, y - y_sign * 0.1),
-                    (x_side, y_side),
-                )
-            )
-    return routes
 
 
 def _source_wall_routes(layer: dict[str, Any]) -> list[dict[str, Any]]:
@@ -114,6 +96,19 @@ def build_preset_routes(pack: FieldAsset | str | Path) -> dict[str, Any]:
         omitted.append({"id": "perimeter", "status": "UNVERIFIED", "reason": "no perimeter fence"})
     else:
         routes.extend(_fence_routes(fence))
+        for x_side in ("left", "right"):
+            for y_side in ("bottom", "top"):
+                omitted.append(
+                    {
+                        "id": f"fence_corner_{x_side}_{y_side}",
+                        "status": "UNVERIFIED_SOURCE_OBSTRUCTED",
+                        "reason": (
+                            "diagonal corner approach intersects official CAD obstacles, "
+                            "including source parts 178/185 and 279-294/298-314; "
+                            "it cannot isolate fence contact"
+                        ),
+                    }
+                )
 
     source_layer = asset.collision.get("source_contact_layer")
     if source_layer is None:
@@ -171,7 +166,10 @@ def build_preset_routes(pack: FieldAsset | str | Path) -> dict[str, Any]:
         {
             "id": "stairs_basic",
             "status": "UNVERIFIED",
-            "reason": "scene registry has no hash-bound stair approach and exit coordinates",
+            "reason": (
+                "no accepted stair-part semantic or hash-bound low/high approach route; "
+                "the source stepped-support groups remain heuristic and can mix levels/underpasses"
+            ),
         }
     )
     return {
