@@ -6,6 +6,30 @@ project intends to follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.2.1] - 2026-09-26
+
+### Added
+
+- Added an opt-in, official-source contact candidate for wall parts 402/403 and
+  a source-bound `interactive_lite` visual profile. The full and lite profiles
+  share the same physical assets and remain `DRAFT_BLOCKED`.
+- Added bounded wheel-route and multi-environment acceptance tools for comparing
+  `full`, `interactive_lite`, and `collision_only` on the same field pack.
+
+### Fixed
+
+- The viewer forwards declared robot-control key presses and releases while
+  stepping the robot at display-frame pace. It now reports when a robot view has
+  no controller.
+- X11 viewer-local L/G key grabs deliver their events to the field display
+  controller without toggling twice when the global listener sees the same key.
+
+This is a code and interface release. The local wall candidate passed bounded
+contact checks, but whole-field topology is not certified. The lite profile did
+not meet the resource-improvement threshold and is not the recommended training
+profile. Generated packs, official assets, and robot or policy files are not
+distributed.
+
 ## [1.2.0] - 2026-09-23
 
 ### Added
