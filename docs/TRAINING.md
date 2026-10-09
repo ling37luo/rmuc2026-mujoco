@@ -8,6 +8,27 @@ The commands below assume the [quick start](../README.md#quick-start) is complet
 the environment is activated, and the working directory is the repository root.
 `run` is headless. Use `view` when you want a window.
 
+## Deck and perimeter contact
+
+Retain the source build with `setup --keep-source-build ./runs/field-source`,
+then check a pack that includes the perimeter proxy:
+
+```bash
+rmuc2026-field perimeter-check ./local-rmuc2026-field \
+  --source-manifest ./runs/field-source/manifest.json --output ./runs/perimeter.json
+```
+
+This selects source-supported strips on all four sides and runs a 120 mm wheel
+through angled approach, sliding in both directions, and retreat at 0.3/0.5/1.0 m/s.
+Height is unconstrained. The report records penetration, support height, contacts,
+acceleration, warnings and phase completion, and compares states and contacts
+across all available profiles. Use `--profiles collision_only` for a shorter check.
+
+`PASS` covers the selected strips. Corner panel joins are checked geometrically;
+source-obstructed corner ground remains unverified for driving. A wheel pass does
+not certify a robot that keeps driving into a wall. Reports remain local, and
+the command does not modify the field pack.
+
 ## Isolated stairs and ledges
 
 When building a 1 cm pack, add `--keep-source-build ./runs/field-source` to

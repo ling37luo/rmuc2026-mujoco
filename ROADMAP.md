@@ -19,7 +19,7 @@ Complex stair assemblies remain outside that validation.
 | --- | --- | --- | --- |
 | 1 | Concise public documentation and reproducible entry points | First | Complete |
 | 2 | Stair approaches, risers and landing transitions | High | Isolated source routes implemented |
-| 3 | Perimeter corners and deck-to-fence transitions | High | Pending |
+| 3 | Perimeter corners and deck-to-fence transitions | High | Source-screened deck strips implemented; corner driving open |
 | 4 | Wall contact and collision ownership | High | Experimental candidate available |
 | 5 | Portable full-field interaction regression | After 2–4 | Partial tooling available |
 | 6 | Parallel performance and profile selection | After baseline regression | Small-scale measurements available |
@@ -49,6 +49,10 @@ unexplained snagging, false support or numerical warnings. Keep robot capability
 failures separate from field-contact defects.
 
 ### 3. Perimeter and deck edges
+
+`perimeter-check` exercises supported deck strips at each side, including wall
+sliding and retreat, with profile parity checks. Obstructed corner ground is
+reported separately from the static fence-panel joins.
 
 Select accessible routes at all four corners and along the top/bottom deck
 transitions. Follow the source obstacles when choosing approaches; an obstructed

@@ -222,6 +222,14 @@ def build_parser() -> argparse.ArgumentParser:
     stairs.add_argument("--source-manifest", type=Path, required=True)
     stairs.add_argument("--output", type=Path, required=True)
     stairs.add_argument("--speeds", type=float, nargs="+", default=[0.3, 0.5, 1.0])
+    perimeter = commands.add_parser(
+        "perimeter-check", help="source-screened fence approach, sliding and retreat checks"
+    )
+    perimeter.add_argument("asset", type=Path)
+    perimeter.add_argument("--source-manifest", type=Path, required=True)
+    perimeter.add_argument("--output", type=Path, required=True)
+    perimeter.add_argument("--speeds", type=float, nargs="+", default=[0.3, 0.5, 1.0])
+    perimeter.add_argument("--profiles", choices=RUNTIME_PROFILE_NAMES, nargs="+")
     run = commands.add_parser(
         "run",
         help="run automatic turning, stair, ordinary-slope or fly-ramp evaluation",
@@ -613,13 +621,20 @@ def main(argv: list[str] | None = None) -> int:
                 payload = {**payload, "output": str(output), "output_action": output_action}
             print(json.dumps(payload, indent=2, sort_keys=True))
             return 0
-        if args.command == "stairs-check":
-            from .stairs import run_stair_checks
-
+        if args.command in {"stairs-check", "perimeter-check"}:
             output = args.output.expanduser().resolve()
             if output.exists():
                 raise ValueError(f"output already exists: {output}")
-            payload = run_stair_checks(args.asset, args.source_manifest, speeds=args.speeds)
+            if args.command == "stairs-check":
+                from .stairs import run_stair_checks
+
+                payload = run_stair_checks(args.asset, args.source_manifest, speeds=args.speeds)
+            else:
+                from .perimeter_check import run_perimeter_checks
+
+                payload = run_perimeter_checks(
+                    args.asset, args.source_manifest, profiles=args.profiles, speeds=args.speeds
+                )
             output.parent.mkdir(parents=True, exist_ok=True)
             output.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
             print(

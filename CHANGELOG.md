@@ -6,6 +6,8 @@ does not remove the full field's `DRAFT_BLOCKED` status.
 
 ## [Unreleased]
 
+- Added source-screened perimeter approach, bidirectional sliding and retreat
+  checks, with contact/state comparisons across field profiles.
 - Added source-bound isolated stair checks, paired wheel/source contact results,
   and `stairs_basic` viewing/batches through the existing robot controller interface.
 - Added optional `--keep-source-build` for reproducible local CAD contact audits.
