@@ -8,6 +8,44 @@ The commands below assume the [quick start](../README.md#quick-start) is complet
 the environment is activated, and the working directory is the repository root.
 `run` is headless. Use `view` when you want a window.
 
+## Performance and parallel layout
+
+Measure your completed pack with the included rover; no policy or CAD source is needed:
+
+```bash
+OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 rmuc2026-field benchmark PACK \
+  --env-counts 1 4 16 --workers 1 4 --steps 2000 --repeats 3 \
+  --output runs/performance.json
+```
+
+Each trial starts fresh processes, one model per worker and independent data per
+environment. Only divisible layouts are run: 1×1, 1×4, 4×1, 1×16 and 4×4
+(workers × environments per worker). A screened flat spawn and fixed four-second
+stop/forward/turn/reverse cycle are shared by every profile. The report compares
+every-step state fingerprints and sampled named contacts, and records load time,
+aggregate steps/s, end-to-end throughput and summed worker RSS. Timing includes
+control and diagnostics; it excludes policy inference and learning. File caches
+are retained, and RSS can double-count shared pages. These are workload measurements,
+not a universal training-capacity claim.
+
+For a visible 1280×720 frame workload, on a desktop with OpenGL:
+
+```bash
+rmuc2026-field benchmark-view PACK --frames 240 --repeats 3 \
+  --screenshots runs/performance-views --output runs/performance-view.json
+```
+
+This shows fixed overview, robot and fly-ramp views with flat lighting and no
+livery. It measures physics, scene update, rendering and buffer presentation,
+with completed GPU work and no frame cap. It excludes native MuJoCo UI panels;
+the result is frame-processing capacity, not the monitor's refresh rate. Compare
+the saved views as well as frame rates before choosing a lighter visual profile.
+
+Start with `full` for viewing and `collision_only` for headless batches. More data
+objects in one worker save repeated model allocations but do not provide CPU
+parallelism. Compare multiple workers on the target host, then reuse the measured
+layout in the external trainer. Keep detailed reports and screenshots local.
+
 ## One-command field regression
 
 Retain the CAD intermediates when building with

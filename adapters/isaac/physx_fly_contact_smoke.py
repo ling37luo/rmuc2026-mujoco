@@ -694,7 +694,7 @@ def main() -> int:
     parser.add_argument(
         "export", type=Path, help="offline export with descriptor.json and heightfield.npz"
     )
-    parser.add_argument("--envs", type=int, choices=(1, 4, 16), default=1)
+    parser.add_argument("--envs", type=int, choices=(1, 4, 16, 64), default=1)
     parser.add_argument("--steps", type=int, default=500)
     parser.add_argument("--device", default="cuda:0")
     parser.add_argument(

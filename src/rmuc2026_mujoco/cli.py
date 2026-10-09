@@ -248,6 +248,26 @@ def build_parser() -> argparse.ArgumentParser:
         check.add_argument("--output", type=Path, required=True)
         check.add_argument("--profiles", choices=RUNTIME_PROFILE_NAMES, nargs="+")
         check.add_argument("--speeds", type=float, nargs="+", default=[0.3, 0.5, 1.0])
+    benchmark = commands.add_parser("benchmark", help="public rover parallel profile benchmark")
+    benchmark.add_argument("asset", type=Path)
+    benchmark.add_argument("--output", type=Path, required=True)
+    benchmark.add_argument("--profiles", choices=RUNTIME_PROFILE_NAMES, nargs="+")
+    benchmark.add_argument("--env-counts", type=int, nargs="+", default=[1, 4, 16])
+    benchmark.add_argument("--workers", type=int, nargs="+", default=[1, 4])
+    benchmark.add_argument("--steps", type=int, default=2000)
+    benchmark.add_argument("--warmup", type=int, default=100)
+    benchmark.add_argument("--repeats", type=int, default=3)
+    benchmark_view = commands.add_parser(
+        "benchmark-view", help="visible GLFW profile frame throughput with the public rover"
+    )
+    benchmark_view.add_argument("asset", type=Path)
+    benchmark_view.add_argument("--output", type=Path, required=True)
+    benchmark_view.add_argument("--profiles", choices=RUNTIME_PROFILE_NAMES, nargs="+")
+    benchmark_view.add_argument("--frames", type=int, default=120)
+    benchmark_view.add_argument("--repeats", type=int, default=3)
+    benchmark_view.add_argument("--width", type=int, default=1280)
+    benchmark_view.add_argument("--height", type=int, default=720)
+    benchmark_view.add_argument("--screenshots", type=Path)
     run = commands.add_parser(
         "run",
         help="run automatic turning, stair, ordinary-slope or fly-ramp evaluation",
@@ -388,6 +408,42 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
+        if args.command == "benchmark":
+            from .performance import run_benchmark
+
+            result = run_benchmark(
+                args.asset,
+                output=args.output,
+                profiles=args.profiles,
+                env_counts=args.env_counts,
+                workers=args.workers,
+                steps=args.steps,
+                warmup=args.warmup,
+                repeats=args.repeats,
+                progress=lambda message: print(message, flush=True),
+            )
+            print(
+                json.dumps(
+                    {k: result[k] for k in ("status", "state_contact_parity", "medians")}, indent=2
+                )
+            )
+            return 0 if result["status"] == "PASS" else 2
+        if args.command == "benchmark-view":
+            from .performance_view import run_view_benchmark
+
+            result = run_view_benchmark(
+                args.asset,
+                output=args.output,
+                profiles=args.profiles,
+                frames=args.frames,
+                repeats=args.repeats,
+                width=args.width,
+                height=args.height,
+                screenshots=args.screenshots,
+                progress=lambda message: print(message, flush=True),
+            )
+            print(json.dumps({k: result[k] for k in ("status", "medians")}, indent=2))
+            return 0 if result["status"] == "PASS" else 2
         if args.command == "source":
             print(
                 json.dumps(

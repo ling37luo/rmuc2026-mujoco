@@ -218,3 +218,20 @@ def test_isaac_python_symlink_is_not_resolved(
     summary = json.loads((output / "summary.json").read_text())
     assert summary["isaac_python"] == str(python_link)
     assert all(row["command"][0] == str(python_link) for row in summary["cases"])
+
+
+def test_selected_scale_keeps_both_source_bound_regions(matrix_inputs, tmp_path):
+    root, python, _ = matrix_inputs
+    output = tmp_path / "scale"
+    assert (
+        _RUNNER.main(_args(root, python, output, device="cpu") + ["--env-counts", "16", "64"]) == 0
+    )
+    result = json.loads((output / "summary.json").read_text())
+    assert result["environment_counts"] == [16, 64]
+    assert [(r["side"], r["envs"]) for r in result["cases"]] == [
+        ("north", 16),
+        ("north", 64),
+        ("south", 16),
+        ("south", 64),
+    ]
+    assert result["acceptance_complete"]

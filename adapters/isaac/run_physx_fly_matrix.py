@@ -1,4 +1,4 @@
-"""Run the two fly-ramp PhysX smoke exports at 1, 4 and 16 environments.
+"""Run the two fly-ramp PhysX smoke exports at selected environment counts.
 
 Launch this runner with the repository's Python environment; it launches each
 Isaac smoke case with a fresh Isaac Python process. The runner itself does not
@@ -325,6 +325,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--output-new-dir", type=Path, required=True)
     parser.add_argument("--device", default="cuda:0")
     parser.add_argument("--steps", type=int, default=500)
+    parser.add_argument(
+        "--env-counts", type=int, nargs="+", choices=(1, 4, 16, 64), default=list(_ENV_COUNTS)
+    )
     args = parser.parse_args(argv)
     if args.steps <= 0:
         parser.error("--steps must be positive")
@@ -348,7 +351,7 @@ def main(argv: list[str] | None = None) -> int:
         "regions_root": str(regions_root),
         "device": args.device,
         "steps": args.steps,
-        "environment_counts": list(_ENV_COUNTS),
+        "environment_counts": list(dict.fromkeys(args.env_counts)),
         "gpu_memory_note": "nvidia-smi memory.used is device-global and includes unrelated processes; sampled peak is not process peak VRAM",
         "source_verification": {},
         "cases": [],
@@ -364,7 +367,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     _write_summary(output_dir / "summary.json", summary)
     for side in _SIDES:
-        for envs in _ENV_COUNTS:
+        for envs in summary["environment_counts"]:
             result = _run_case(
                 isaac_python,
                 output_dir,

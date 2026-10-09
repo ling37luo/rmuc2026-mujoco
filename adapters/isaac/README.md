@@ -58,6 +58,8 @@ python adapters/isaac/run_physx_fly_matrix.py   --isaac-python "$ISAAC_PYTHON" -
 
 Choose a new output directory for each matrix. It runs north and south at 1, 4
 and 16 environments and writes per-case reports, console logs and a summary.
+After those counts pass, add `--env-counts 16 64` to compare a larger layout.
+The standalone probe also accepts `--envs 64`; larger counts remain unmeasured.
 The reports include asset identities, contact results, height error, throughput,
 process memory and GPU memory sampled across the whole device.
 

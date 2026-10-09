@@ -12,7 +12,9 @@ handoff. The seven-section static regression passes on the tested local pack,
 including source-bound isolated stairs, perimeter, reachable corners, walls and
 profile comparisons. Robot task failures remain separate from contact checks.
 Whole-field static contact remains incomplete; complex stair assemblies remain
-outside that validation. Systematic parallel performance comparison is next.
+outside that validation. Local development adds a repeatable public-rover
+performance matrix, visible frame measurements and PhysX region probes through
+64 environments. These measure the stated workloads, not learned-policy capacity.
 
 ## Tasks and order
 
@@ -23,7 +25,7 @@ outside that validation. Systematic parallel performance comparison is next.
 | 3 | Perimeter corners and deck-to-fence transitions | High | Complete for selected deck strips and reachable corner routes |
 | 4 | Wall contact and collision ownership | High | Complete for source-bound side/end and junction routes |
 | 5 | Portable full-field interaction regression | After 2–4 | Complete; seven-section `check` suite with public robots and generated routes |
-| 6 | Parallel performance and profile selection | After baseline regression | Pending systematic comparison; small-scale measurements available |
+| 6 | Parallel performance and profile selection | After baseline regression | Complete for MuJoCo 1/4/16 environments, visible profile comparison and PhysX region contact through 64 |
 
 ### 1. Public documentation
 
@@ -98,6 +100,13 @@ a universal parallel capacity. Check exported terrain, bounds and contact parity
 Compare `full`, `collision_only` and optional `interactive_lite`. Recommend lite
 only if it preserves the needed visual structure and improves memory or viewer
 frame rate by at least 20%; otherwise keep `collision_only` as the resource option.
+
+`benchmark` and `benchmark-view` provide reproducible measurements with included
+robots. The tested lite candidate did not reach the 20% recommendation threshold;
+keep `full` for viewing and `collision_only` for headless batches. The optional
+Isaac matrix accepts counts through 64; its sphere/contact workload does not
+measure articulated-robot training. Larger counts and other hosts need their own
+measurements. Detailed hardware results stay in local reports.
 
 ## Scope
 

@@ -57,6 +57,8 @@ openings are approximations; the base `setup` output does not include this fence
 Profiles in the same pack share collision and material parameters. The lite
 profile has not demonstrated a consistent resource benefit, so it is not the
 recommended performance option. See `rmuc2026-field lite-pack --help` to build one.
+Use [`benchmark` and `benchmark-view`](docs/TRAINING.md#performance-and-parallel-layout)
+to compare worker layouts, memory and visible frame throughput on your host.
 
 ## Display and interaction
 

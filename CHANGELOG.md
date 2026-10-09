@@ -4,6 +4,14 @@ User-visible changes by release. Generated field packs and official assets are
 built locally and are not included in releases. Passing individual scenarios
 does not remove the full field's `DRAFT_BLOCKED` status.
 
+## [Unreleased]
+
+- Added `benchmark` with fresh parallel workers, a fixed public rover workload,
+  per-profile state/contact comparison, load time, throughput and memory reports.
+- Added `benchmark-view` for visible GLFW frame measurements and comparable
+  screenshots; results distinguish frame capacity from native viewer UI refresh.
+- Added selectable Isaac contact-probe matrix counts through 64 environments.
+
 ## [1.3.0] - 2026-10-09
 
 - Added whole-rover corner approach, obstacle contact and reverse-route checks,
