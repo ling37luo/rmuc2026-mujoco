@@ -4,7 +4,7 @@ User-visible changes by release. Generated field packs and official assets are
 built locally and are not included in releases. Passing individual scenarios
 does not remove the full field's `DRAFT_BLOCKED` status.
 
-## [Unreleased]
+## [1.3.0] - 2026-10-09
 
 - Added whole-rover corner approach, obstacle contact and reverse-route checks,
   with footprint-screened paths from accepted perimeter entries.

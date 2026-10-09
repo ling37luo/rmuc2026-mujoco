@@ -6,23 +6,24 @@ RL framework. This plan has six tasks; it does not require training a new policy
 
 ## Current baseline
 
-Version 1.2.1 includes local field construction, external robot/controller
+Version 1.3.0 includes local field construction, external robot/controller
 composition, turning and slope batches, fly-ramp regions and an Isaac data
-handoff. Selected wheel routes and small parallel contact probes have passed.
-Whole-field static contact remains incomplete. Development now includes
-source-bound isolated stair routes, paired wheel checks and robot traversal.
-Complex stair assemblies remain outside that validation.
+handoff. The seven-section static regression passes on the tested local pack,
+including source-bound isolated stairs, perimeter, reachable corners, walls and
+profile comparisons. Robot task failures remain separate from contact checks.
+Whole-field static contact remains incomplete; complex stair assemblies remain
+outside that validation. Systematic parallel performance comparison is next.
 
 ## Tasks and order
 
 | ID | Task | Priority | Status |
 | --- | --- | --- | --- |
 | 1 | Concise public documentation and reproducible entry points | First | Complete |
-| 2 | Stair approaches, risers and landing transitions | High | Isolated source routes implemented |
-| 3 | Perimeter corners and deck-to-fence transitions | High | Selected deck strips and reachable whole-rover corner approaches implemented |
-| 4 | Wall contact and collision ownership | High | Source ownership and repeated side/end contact checks implemented |
-| 5 | Portable full-field interaction regression | After 2–4 | Versioned `check` suite implemented with public robots and generated routes |
-| 6 | Parallel performance and profile selection | After baseline regression | Small-scale measurements available |
+| 2 | Stair approaches, risers and landing transitions | High | Complete for isolated source routes |
+| 3 | Perimeter corners and deck-to-fence transitions | High | Complete for selected deck strips and reachable corner routes |
+| 4 | Wall contact and collision ownership | High | Complete for source-bound side/end and junction routes |
+| 5 | Portable full-field interaction regression | After 2–4 | Complete; seven-section `check` suite with public robots and generated routes |
+| 6 | Parallel performance and profile selection | After baseline regression | Pending systematic comparison; small-scale measurements available |
 
 ### 1. Public documentation
 
