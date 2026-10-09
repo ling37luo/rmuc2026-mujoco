@@ -12,7 +12,7 @@ handoff. The seven-section static regression passes on the tested local pack,
 including source-bound isolated stairs, perimeter, reachable corners, walls and
 profile comparisons. Robot task failures remain separate from contact checks.
 Whole-field static contact remains incomplete; complex stair assemblies remain
-outside that validation. Local development adds a repeatable public-rover
+outside that validation. This release also includes a repeatable public-rover
 performance matrix, visible frame measurements and PhysX region probes through
 64 environments. These measure the stated workloads, not learned-policy capacity.
 
