@@ -238,6 +238,16 @@ def build_parser() -> argparse.ArgumentParser:
     wall.add_argument("--output", type=Path, required=True)
     wall.add_argument("--speeds", type=float, nargs="+", default=[0.3, 0.5, 1.0])
     wall.add_argument("--profiles", choices=RUNTIME_PROFILE_NAMES, nargs="+")
+    for name, description in (
+        ("corner-check", "public rover corner approach, contact and retreat"),
+        ("check", "portable full-field contact and public interaction regression"),
+    ):
+        check = commands.add_parser(name, help=description)
+        check.add_argument("asset", type=Path)
+        check.add_argument("--source-manifest", type=Path, required=True)
+        check.add_argument("--output", type=Path, required=True)
+        check.add_argument("--profiles", choices=RUNTIME_PROFILE_NAMES, nargs="+")
+        check.add_argument("--speeds", type=float, nargs="+", default=[0.3, 0.5, 1.0])
     run = commands.add_parser(
         "run",
         help="run automatic turning, stair, ordinary-slope or fly-ramp evaluation",
@@ -629,7 +639,36 @@ def main(argv: list[str] | None = None) -> int:
                 payload = {**payload, "output": str(output), "output_action": output_action}
             print(json.dumps(payload, indent=2, sort_keys=True))
             return 0
-        if args.command in {"stairs-check", "perimeter-check", "wall-check"}:
+        if args.command == "check":
+            from .regression import run_regression
+
+            payload = run_regression(
+                args.asset,
+                args.source_manifest,
+                output=args.output,
+                profiles=args.profiles,
+                speeds=args.speeds,
+                progress=lambda stage, status: print(f"{stage}: {status}", flush=True),
+            )
+            print(
+                json.dumps(
+                    {
+                        key: payload[key]
+                        for key in (
+                            "status",
+                            "suite_id",
+                            "passed_sections",
+                            "failed_sections",
+                            "unavailable_sections",
+                            "robot_task_outcomes",
+                        )
+                    },
+                    indent=2,
+                )
+            )
+            print(f"Report: {args.output.expanduser().resolve()}")
+            return 0 if payload["status"] == "PASS" else 2
+        if args.command in {"stairs-check", "perimeter-check", "wall-check", "corner-check"}:
             output = args.output.expanduser().resolve()
             if output.exists():
                 raise ValueError(f"output already exists: {output}")
@@ -643,10 +682,16 @@ def main(argv: list[str] | None = None) -> int:
                 payload = run_perimeter_checks(
                     args.asset, args.source_manifest, profiles=args.profiles, speeds=args.speeds
                 )
-            else:
+            elif args.command == "wall-check":
                 from .wall_check import run_wall_checks
 
                 payload = run_wall_checks(
+                    args.asset, args.source_manifest, profiles=args.profiles, speeds=args.speeds
+                )
+            else:
+                from .corner_check import run_corner_checks
+
+                payload = run_corner_checks(
                     args.asset, args.source_manifest, profiles=args.profiles, speeds=args.speeds
                 )
             output.parent.mkdir(parents=True, exist_ok=True)

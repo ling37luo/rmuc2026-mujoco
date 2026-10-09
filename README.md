@@ -132,16 +132,22 @@ inherits global solver options from the parent robot; check the resulting
 | `slope_basic` | Screened routes; separate uphill, downhill and roundtrip results |
 | `fly_ramp_north`, `fly_ramp_south` | Jump episodes and same-source local training regions |
 | `stairs_basic` | Source-checked isolated steps; paired wheel checks and robot traversal |
-| `boundary_contact` | Registry metadata; complete traversal suite is pending |
+| `boundary_contact` | Source-screened perimeter contact and whole-rover corner approach/retreat checks |
 
 The [training guide](docs/TRAINING.md) covers commands, controller interfaces
 and parallel execution. The [Isaac adapter](adapters/isaac/README.md) exports
 field data and provides a separate PhysX contact probe.
 
+`rmuc2026-field check PACK --source-manifest SOURCE/manifest.json --output runs/check.json`
+runs the [portable field regression](docs/TRAINING.md#one-command-field-regression)
+with included robots and automatically generated routes. The report separates
+field checks from robot task outcomes and identifies unavailable pack features.
+
 The main collision surface is a single-height-per-XY heightfield. Underpasses,
 stacked surfaces and overhangs are not represented correctly. An optional
-source-wall export adds local convex collision; robot interaction tests for walls
-and the perimeter are still incomplete. Dynamic match mechanisms are outside the
+source-wall export adds local convex collision. Selected wall, perimeter and
+reachable corner approaches have regression checks; these do not cover every
+structure or robot. Dynamic match mechanisms are outside the
 current locomotion baseline.
 
 Packs therefore retain `DRAFT_BLOCKED`: file verification and individual route
@@ -167,4 +173,5 @@ Tests use synthetic fixtures and do not download official assets.
 本仓库提供统一的 RMUC 2026 场地、机器人接入和训练场景接口。官方文件由使用者
 在本地下载并生成场地包；仓库中不包含场地资产或特定机器人的策略。
 交互查看使用 `full`，批量仿真使用 `collision_only`。普通坡和飞坡已有可运行示例；
-台阶已有局部源几何对照与通行测试；复杂台阶组合、部分墙面和边缘仍需补齐验收。
+台阶、墙面、围栏与可达角落已有局部接触检查，可通过 `check` 统一运行。
+复杂台阶组合、多层结构和任意机器人的通行能力仍不属于已验证范围。

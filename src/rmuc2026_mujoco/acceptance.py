@@ -345,6 +345,7 @@ def _run_route(
     speed_m_s: float,
     max_penetration_m: float,
     prepare_spec=None,
+    trace_callback=None,
 ) -> dict[str, Any]:
     start = route["start_xy_m"] if direction == "forward" else route["end_xy_m"]
     end = route["end_xy_m"] if direction == "forward" else route["start_xy_m"]
@@ -382,6 +383,8 @@ def _run_route(
             maximum_abs_qacc = max(maximum_abs_qacc, float(np.max(np.abs(data.qacc))))
         max_contacts = max(max_contacts, int(data.ncon))
         sample_pairs, penetration, contact_finite = _contact_sample(model, data)
+        if trace_callback is not None:
+            trace_callback(data, sample_pairs)
         pairs.update(sample_pairs)
         maximum_penetration = max(maximum_penetration, penetration)
         finite = (

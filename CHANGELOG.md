@@ -6,6 +6,11 @@ does not remove the full field's `DRAFT_BLOCKED` status.
 
 ## [Unreleased]
 
+- Added whole-rover corner approach, obstacle contact and reverse-route checks,
+  with footprint-screened paths from accepted perimeter entries.
+- Added `check`, a portable static-field regression using included robots,
+  generated routes, public reset/control interfaces and profile comparisons.
+  Reports keep unavailable features and robot task failures explicit.
 - Fixed spawn screening inside mesh-owned walls and outside the fence interior.
 - Added source wall ownership, repeated side/end contact and local corner checks,
   including state/contact comparisons across field profiles.

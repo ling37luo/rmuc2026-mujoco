@@ -19,9 +19,9 @@ Complex stair assemblies remain outside that validation.
 | --- | --- | --- | --- |
 | 1 | Concise public documentation and reproducible entry points | First | Complete |
 | 2 | Stair approaches, risers and landing transitions | High | Isolated source routes implemented |
-| 3 | Perimeter corners and deck-to-fence transitions | High | Deck strips and local corner probes implemented; full-robot corner access open |
+| 3 | Perimeter corners and deck-to-fence transitions | High | Selected deck strips and reachable whole-rover corner approaches implemented |
 | 4 | Wall contact and collision ownership | High | Source ownership and repeated side/end contact checks implemented |
-| 5 | Portable full-field interaction regression | After 2–4 | Partial tooling available |
+| 5 | Portable full-field interaction regression | After 2–4 | Versioned `check` suite implemented with public robots and generated routes |
 | 6 | Parallel performance and profile selection | After baseline regression | Small-scale measurements available |
 
 ### 1. Public documentation
@@ -52,14 +52,14 @@ failures separate from field-contact defects.
 
 `perimeter-check` exercises supported deck strips at each side, including wall
 sliding and retreat, with profile parity checks. Obstructed corner ground is
-reported separately from the static fence-panel joins. `wall-check` adds local
-corner contact and retreat probes, recording the first blocking surface; it
-does not establish a full-robot route through source obstacles.
+reported separately from the static fence-panel joins. `corner-check` connects
+accepted perimeter entries to the nearest supported corner approach for the
+public rover. It contacts the next structure and reverses along the same path.
+Literal corner access blocked by source structures is reported explicitly.
 
-Select accessible routes at all four corners and along the top/bottom deck
-transitions. Follow the source obstacles when choosing approaches; an obstructed
-straight line is not a valid corner test. Exercise angled approach, wall sliding
-and retreat to check the continuous support between the deck and fence.
+The selected routes cover all four corner approaches and top/bottom deck strips.
+Source obstacles remain in place. Wheel checks exercise angled contact and
+sliding; whole-rover checks exercise approach, loaded contact and retreat.
 
 Done when the test footprint cannot drop into an unintended gap or become trapped
 between the playable deck and containment proxy on the selected routes.
@@ -77,10 +77,12 @@ probe suite, and enabling the replacement preserves accepted slope/fly routes.
 
 ### 5. Portable regression
 
-Combine accepted routes into one versioned suite that uses an included robot
-and controller. Cover loading, reset, manual/policy input, stepping and result
-recording through the public interfaces. Compare all profiles of one pack on
-the same inputs. Retain synthetic tests for CI and local-source tests for geometry.
+`check` combines public loading, repeatable reset, manual/policy callbacks,
+stepping, wheel contact checks and example robot episodes. Routes are generated
+from the pack and retained CAD source; all available profiles use the same
+inputs. Each section is saved to one local report. Missing features and robot
+task failures are explicit, separate from field/health results. Synthetic tests
+remain in CI; official-source runs remain local.
 
 Done when another developer can rebuild the field and run the suite without a
 private robot, checkpoint, unpublished report or machine-specific path.

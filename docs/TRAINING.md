@@ -8,6 +8,43 @@ The commands below assume the [quick start](../README.md#quick-start) is complet
 the environment is activated, and the working directory is the repository root.
 `run` is headless. Use `view` when you want a window.
 
+## One-command field regression
+
+Retain the CAD intermediates when building with
+`--keep-source-build ./runs/field-source`. Then run:
+
+```bash
+rmuc2026-field check ./runs/field-contacts \
+  --source-manifest ./runs/field-source/manifest.json \
+  --output ./runs/field-check.json
+```
+
+The versioned suite generates its routes from the selected pack and source.
+It checks public loading/reset/stepping and manual/policy callbacks, ordinary
+slopes, both fly ramps, isolated stairs, perimeter strips, whole-rover corner
+approaches and source walls. It uses the included probes and example robots;
+no private controller, saved route file or checkpoint is needed. All available
+profiles are compared. Add `--profiles collision_only --speeds 0.5` for a shorter run.
+
+`field-contacts` above is a fenced pack with the optional source-wall layer.
+Starting from the quick-start fenced pack and its retained source build:
+
+```bash
+rmuc2026-field lite-pack ./runs/field-fenced ./runs/field-lite \
+  --interactive-lite-faces 600000
+rmuc2026-field source-wall-pack ./runs/field-source ./runs/field-lite ./runs/field-contacts
+```
+
+The suite also accepts other packs. Missing fence/wall layers are reported as
+`NOT_AVAILABLE`, making the overall result `PARTIAL`; they are not silently
+skipped as passes. Exit code 0 means all included field/health checks passed;
+code 2 means failure or incomplete coverage. The JSON is updated after each
+section and includes identities, routes, solver settings, contacts and failures.
+Example robot `task_outcome` and top-level `robot_task_outcomes` separately report
+completed, failed and timed-out actions. A healthy simulation can include a
+robot that tips on stairs or a jump. GUI input/rendering and performance scaling
+are outside this headless suite.
+
 ## Deck and perimeter contact
 
 Retain the source build with `setup --keep-source-build ./runs/field-source`,
@@ -28,6 +65,12 @@ across all available profiles. Use `--profiles collision_only` for a shorter che
 source-obstructed corner ground remains unverified for driving. A wheel pass does
 not certify a robot that keeps driving into a wall. Reports remain local, and
 the command does not modify the field pack.
+
+For whole-rover corner approaches, use `corner-check` with the same arguments.
+It finds supported paths from accepted perimeter entries, contacts the next
+blocking structure, and reverses along the path. Source-obstructed literal
+corners remain obstacles; the report identifies the reachable endpoint and
+source/runtime support differences. Passing does not make the corner empty.
 
 ## Source walls and local corners
 
