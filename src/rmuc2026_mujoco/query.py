@@ -246,7 +246,7 @@ def find_spawn_candidates(
     max_relief_m: float = 0.03,
     ground_height_range_m: tuple[float, float] | None = (-0.05, 0.05),
 ) -> tuple[SpawnCandidate, ...]:
-    """Screen deterministic terrain-only spawn candidates from the heightfield.
+    """Screen terrain spawns, excluding declared wall and fence footprints.
 
     The footprint is approximated by an axis-aligned square enclosing the
     requested radius. Once the runtime-heightfield screening constraints pass,
@@ -315,6 +315,29 @@ def find_spawn_candidates(
         & (footprint_slope <= maximum_slope + 1.0e-12)
         & (clearance >= radius + margin - 1.0e-12)
     )
+    # Mesh-owned walls no longer appear as raised samples in the heightfield.
+    # Their ground-level footprint must still be excluded from reset positions.
+    for region in asset.collision.get("source_contact_layer", {}).get("ownership_regions", []):
+        lower, upper = np.asarray(region["source_bounds_world_m"], dtype=float)
+        valid &= ~(
+            (x_grid + radius >= lower[0])
+            & (x_grid - radius <= upper[0])
+            & (y_grid + radius >= lower[1])
+            & (y_grid - radius <= upper[1])
+        )
+    fence = asset.manifest.get("perimeter_fence")
+    if fence is not None:
+        panels = {p["name"].rsplit("_", 1)[-1]: p for p in fence["panels"]}
+        for side, axis, inward in (
+            ("left", 0, 1),
+            ("right", 0, -1),
+            ("bottom", 1, 1),
+            ("top", 1, -1),
+        ):
+            panel = panels[side]
+            face = float(panel["pos"][axis]) + inward * float(panel["size"][axis])
+            grid = x_grid if axis == 0 else y_grid
+            valid &= inward * (grid - face) >= radius + margin
     if height_range is not None:
         valid &= (local_minimum >= height_range[0] - 1.0e-12) & (
             local_maximum <= height_range[1] + 1.0e-12

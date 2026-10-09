@@ -230,6 +230,14 @@ def build_parser() -> argparse.ArgumentParser:
     perimeter.add_argument("--output", type=Path, required=True)
     perimeter.add_argument("--speeds", type=float, nargs="+", default=[0.3, 0.5, 1.0])
     perimeter.add_argument("--profiles", choices=RUNTIME_PROFILE_NAMES, nargs="+")
+    wall = commands.add_parser(
+        "wall-check", help="source wall ownership and repeated wall/corner contact checks"
+    )
+    wall.add_argument("asset", type=Path)
+    wall.add_argument("--source-manifest", type=Path, required=True)
+    wall.add_argument("--output", type=Path, required=True)
+    wall.add_argument("--speeds", type=float, nargs="+", default=[0.3, 0.5, 1.0])
+    wall.add_argument("--profiles", choices=RUNTIME_PROFILE_NAMES, nargs="+")
     run = commands.add_parser(
         "run",
         help="run automatic turning, stair, ordinary-slope or fly-ramp evaluation",
@@ -621,7 +629,7 @@ def main(argv: list[str] | None = None) -> int:
                 payload = {**payload, "output": str(output), "output_action": output_action}
             print(json.dumps(payload, indent=2, sort_keys=True))
             return 0
-        if args.command in {"stairs-check", "perimeter-check"}:
+        if args.command in {"stairs-check", "perimeter-check", "wall-check"}:
             output = args.output.expanduser().resolve()
             if output.exists():
                 raise ValueError(f"output already exists: {output}")
@@ -629,10 +637,16 @@ def main(argv: list[str] | None = None) -> int:
                 from .stairs import run_stair_checks
 
                 payload = run_stair_checks(args.asset, args.source_manifest, speeds=args.speeds)
-            else:
+            elif args.command == "perimeter-check":
                 from .perimeter_check import run_perimeter_checks
 
                 payload = run_perimeter_checks(
+                    args.asset, args.source_manifest, profiles=args.profiles, speeds=args.speeds
+                )
+            else:
+                from .wall_check import run_wall_checks
+
+                payload = run_wall_checks(
                     args.asset, args.source_manifest, profiles=args.profiles, speeds=args.speeds
                 )
             output.parent.mkdir(parents=True, exist_ok=True)

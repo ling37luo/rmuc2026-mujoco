@@ -95,8 +95,9 @@ def test_pack_without_fence_is_not_silently_accepted(field_asset_dir):
         run_perimeter_checks(field_asset_dir, "unused.json", speeds=[float("nan")])
 
 
-def test_cli_forwards_profiles_and_preserves_existing_report(tmp_path, monkeypatch, capsys):
-    from rmuc2026_mujoco import perimeter_check
+@pytest.mark.parametrize("kind", ["perimeter", "wall"])
+def test_cli_forwards_profiles_and_preserves_existing_report(tmp_path, monkeypatch, kind):
+    from rmuc2026_mujoco import perimeter_check, wall_check
 
     received = {}
 
@@ -104,10 +105,11 @@ def test_cli_forwards_profiles_and_preserves_existing_report(tmp_path, monkeypat
         received.update(kwargs)
         return {"status": "PASS", "summary": {"trials": 12}}
 
-    monkeypatch.setattr(perimeter_check, "run_perimeter_checks", run)
+    module = perimeter_check if kind == "perimeter" else wall_check
+    monkeypatch.setattr(module, f"run_{kind}_checks", run)
     output = tmp_path / "report.json"
     argv = [
-        "perimeter-check",
+        f"{kind}-check",
         "pack",
         "--source-manifest",
         "source.json",

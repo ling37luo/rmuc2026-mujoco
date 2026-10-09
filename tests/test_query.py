@@ -298,6 +298,43 @@ def test_spawn_footprint_rejects_candidates_whose_window_contains_a_bump(
     )
 
 
+def test_spawn_excludes_mesh_owned_wall_and_outside_fence(field_asset_dir: Path):
+    from types import SimpleNamespace
+
+    axis = np.linspace(-1, 1, 41)
+    _replace_heightfield(
+        field_asset_dir, world_x=axis, world_y=axis, world_height=np.zeros((41, 41))
+    )
+    original = FieldAsset.open(field_asset_dir)
+    # Terrain remains flat below an active wall; the wall only exists in metadata.
+    collision = dict(original.collision)
+    collision["source_contact_layer"] = {
+        "ownership_regions": [{"source_bounds_world_m": [[-0.1, -0.4, 0], [0.1, 0.4, 1]]}]
+    }
+    manifest = dict(original.manifest)
+    manifest["perimeter_fence"] = {
+        "panels": [
+            {"name": "fence_left", "pos": [-0.7, 0, 0], "size": [0.025, 1, 1]},
+            {"name": "fence_right", "pos": [0.7, 0, 0], "size": [0.025, 1, 1]},
+            {"name": "fence_bottom", "pos": [0, -0.7, 0], "size": [1, 0.025, 1]},
+            {"name": "fence_top", "pos": [0, 0.7, 0], "size": [1, 0.025, 1]},
+        ]
+    }
+    asset = SimpleNamespace(
+        collision=collision,
+        manifest=manifest,
+        file=original.file,
+        recommended_spawn=original.recommended_spawn,
+    )
+    candidates = find_spawn_candidates(
+        asset, count=100, footprint_radius_m=0.1, boundary_margin_m=0.05, minimum_separation_m=0
+    )
+    assert len(candidates) == 100
+    for c in candidates:
+        assert max(abs(c.x_m), abs(c.y_m)) <= 0.525 + 1e-9
+        assert abs(c.x_m) > 0.2 or abs(c.y_m) > 0.5
+
+
 def test_mujoco_triangle_query_detects_slope_hidden_by_node_gradients(
     field_asset_dir: Path,
 ) -> None:

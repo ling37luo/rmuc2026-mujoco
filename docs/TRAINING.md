@@ -29,6 +29,23 @@ source-obstructed corner ground remains unverified for driving. A wheel pass doe
 not certify a robot that keeps driving into a wall. Reports remain local, and
 the command does not modify the field pack.
 
+## Source walls and local corners
+
+For a pack with source-derived wall collision, run:
+
+```bash
+rmuc2026-field wall-check ./local-rmuc2026-field \
+  --source-manifest ./runs/field-source/manifest.json --output ./runs/walls.json
+```
+
+This compares wall meshes and transferred heightfield samples with the source,
+then tests both sides, free ends and fence junctions with repeated contact and
+retreat at 0.3/0.5/1.0 m/s. It also checks a local wheel approach at each corner,
+recording the first blocking surface and return. Obstructed corners can contact
+terrain before reaching the fence; these are not full-robot access routes.
+Existing reference-floor differences are reported separately from dynamic passes.
+All available profiles use identical inputs and are compared step by step.
+
 ## Isolated stairs and ledges
 
 When building a 1 cm pack, add `--keep-source-build ./runs/field-source` to

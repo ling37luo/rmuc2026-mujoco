@@ -6,6 +6,9 @@ does not remove the full field's `DRAFT_BLOCKED` status.
 
 ## [Unreleased]
 
+- Fixed spawn screening inside mesh-owned walls and outside the fence interior.
+- Added source wall ownership, repeated side/end contact and local corner checks,
+  including state/contact comparisons across field profiles.
 - Added source-screened perimeter approach, bidirectional sliding and retreat
   checks, with contact/state comparisons across field profiles.
 - Added source-bound isolated stair checks, paired wheel/source contact results,

@@ -195,19 +195,28 @@ def _wheel_model(asset, profile, route):
     return model
 
 
-def run_wheel_route(model, route, speed, initial_height):
+def run_wheel_route(model, route, speed, initial_height, *, cycles=1, slide=True):
     """Run the same bounded forces, with no vertical/lateral path constraint."""
     origin, normal, tangent = _route_frame(route)
     data = mujoco.MjData(model)
-    data.qpos[:3] = [*(origin + 0.6 * normal - 0.15 * tangent), initial_height + 0.062]
+    transverse_start = -0.15 if slide else 0.0
+    data.qpos[:3] = [*(origin + 0.6 * normal + transverse_start * tangent), initial_height + 0.062]
     mujoco.mj_forward(model, data)
-    stages = (
-        ("settle", 0.3, None),
+    if not isinstance(cycles, int) or cycles < 1:
+        raise ValueError("cycles must be a positive integer")
+    contact_stages = (
         ("approach", 0.8 / speed + 0.4, (-0.1, 0)),
-        ("slide_positive", 1.2 / speed + 0.5, (0.06, 0.4)),
-        ("slide_negative", 2.0 / speed + 0.5, (0.06, -0.4)),
-        ("retreat", 1.4 / speed + 0.5, (0.6, -0.4)),
+        *(
+            (
+                ("slide_positive", 1.2 / speed + 0.5, (0.06, 0.4)),
+                ("slide_negative", 2.0 / speed + 0.5, (0.06, -0.4)),
+            )
+            if slide
+            else ()
+        ),
+        ("retreat", 1.4 / speed + 0.5, (0.6, -0.4 if slide else 0.0)),
     )
+    stages = (("settle", 0.3, None),) + contact_stages * cycles
     rows, pairs = [], Counter()
     max_penetration = max_qacc = max_z_error = 0.0
     max_contacts = cap_steps = 0

@@ -19,8 +19,8 @@ Complex stair assemblies remain outside that validation.
 | --- | --- | --- | --- |
 | 1 | Concise public documentation and reproducible entry points | First | Complete |
 | 2 | Stair approaches, risers and landing transitions | High | Isolated source routes implemented |
-| 3 | Perimeter corners and deck-to-fence transitions | High | Source-screened deck strips implemented; corner driving open |
-| 4 | Wall contact and collision ownership | High | Experimental candidate available |
+| 3 | Perimeter corners and deck-to-fence transitions | High | Deck strips and local corner probes implemented; full-robot corner access open |
+| 4 | Wall contact and collision ownership | High | Source ownership and repeated side/end contact checks implemented |
 | 5 | Portable full-field interaction regression | After 2–4 | Partial tooling available |
 | 6 | Parallel performance and profile selection | After baseline regression | Small-scale measurements available |
 
@@ -52,7 +52,9 @@ failures separate from field-contact defects.
 
 `perimeter-check` exercises supported deck strips at each side, including wall
 sliding and retreat, with profile parity checks. Obstructed corner ground is
-reported separately from the static fence-panel joins.
+reported separately from the static fence-panel joins. `wall-check` adds local
+corner contact and retreat probes, recording the first blocking surface; it
+does not establish a full-robot route through source obstacles.
 
 Select accessible routes at all four corners and along the top/bottom deck
 transitions. Follow the source obstacles when choosing approaches; an obstructed
@@ -64,10 +66,11 @@ between the playable deck and containment proxy on the selected routes.
 
 ### 4. Wall contact
 
-Finish the existing source-wall candidate with low-side, high-side, reverse and
-repeated-contact cases. Give each replaced region one collision owner and inspect
-seams for duplicate support. Record penetration, contact count and acceleration
-with identical solver settings across candidate and baseline.
+`wall-check` compares the source-wall meshes and lowered heightfield regions,
+then exercises low/high sides, free ends and fence junctions with repeated
+contact and retreat. It records penetration, contact count and acceleration
+and compares identical inputs across profiles. Spawn screening excludes the
+mesh-owned wall footprints even where the underlying heightfield is flat.
 
 Done when the source-bound wall routes and adjacent ground pass the same public
 probe suite, and enabling the replacement preserves accepted slope/fly routes.
