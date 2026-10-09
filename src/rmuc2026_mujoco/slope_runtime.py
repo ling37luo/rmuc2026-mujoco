@@ -123,6 +123,7 @@ class SlopeSession:
         profile="collision_only",
         friction_preset=None,
         record_trajectory=True,
+        route_catalog=None,
     ):
         if direction not in {"uphill", "downhill", "roundtrip"}:
             raise ValueError("direction must be uphill, downhill or roundtrip")
@@ -133,12 +134,19 @@ class SlopeSession:
         if robot is None and controller is not None:
             raise ValueError("--controller requires --robot for slope_basic")
         self.asset = asset if isinstance(asset, FieldAsset) else FieldAsset.open(asset, verify=True)
-        self.catalog = slope_catalog(self.asset)
+        if route_catalog is None:
+            self.catalog = slope_catalog(self.asset)
+            self.scenario_id = "slope_basic"
+        else:
+            from .stairs import load_stair_catalog
+
+            self.catalog = load_stair_catalog(self.asset, route_catalog)
+            self.scenario_id = "stairs_basic"
         self.route = select_slope_route(self.catalog, patch)
         self.bounds = load_heightfield(self.asset).bounds_xy_m
         self.direction, self.mode, self.profile = direction, mode, profile
         self.speed = speed
-        self.profile_hash = scenario_descriptor(self.asset, "slope_basic", profile=profile)[
+        self.profile_hash = scenario_descriptor(self.asset, self.scenario_id, profile=profile)[
             "profile_hash"
         ]
         self.robot_kind = "external_robot" if robot is not None else "example_four_wheel_rover"
@@ -301,7 +309,7 @@ class SlopeSession:
 
     def report(self):
         return {
-            "scenario_id": "slope_basic",
+            "scenario_id": self.scenario_id,
             "route": self.route,
             "source_manifest_sha256": self.asset.manifest_sha256,
             "profile": self.profile,
@@ -365,6 +373,7 @@ def view_slope(args, asset):
         mode=args.control,
         profile=args.profile,
         friction_preset=args.friction_preset,
+        route_catalog=args.route_catalog if args.scenario == "stairs_basic" else None,
     )
     if args.headless:
         for _ in range(args.steps):
@@ -379,7 +388,8 @@ def view_slope(args, asset):
         keys = SimpleQueue()
         context = mujoco.viewer.launch_passive(session.model, session.data)
         print(
-            f"SLOPE_VIEW patch={session.route['route_id']} robot={session.robot_kind}", flush=True
+            f"{'STAIRS' if session.scenario_id == 'stairs_basic' else 'SLOPE'}_VIEW patch={session.route['route_id']} robot={session.robot_kind}",
+            flush=True,
         )
         print(session.progress.status_line(session.data.time), flush=True)
         print(
@@ -440,7 +450,8 @@ def view_slope(args, asset):
                 time.sleep(max(0, 1 / 60 - (time.monotonic() - frame_start)))
     report = session.report()
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S.%fZ")
-    output = args.telemetry or Path("runs") / f"slope_interaction_{stamp}.json"
+    prefix = "stairs" if session.scenario_id == "stairs_basic" else "slope"
+    output = args.telemetry or Path("runs") / f"{prefix}_interaction_{stamp}.json"
     output = output.expanduser().resolve()
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(

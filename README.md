@@ -30,7 +30,9 @@ rmuc2026-field view ./local-rmuc2026-field
 `setup` downloads verified sources into a local cache and creates a new pack.
 To inspect the pinned source identity first, run `rmuc2026-field source`.
 Existing output directories are not overwritten; reuse a completed pack or
-choose a new output directory. If `venv` is unavailable, install your system's
+choose a new output directory. For source contact checks, add
+`--keep-source-build ./runs/field-source` to the build command to retain the CAD
+intermediates. If `venv` is unavailable, install your system's
 Python venv component or use `uv venv .venv`, activate it, and run `uv pip install '.[build,viewer]'`.
 
 A physical perimeter is an optional addition. For a newly built schema-2 pack:
@@ -129,7 +131,8 @@ inherits global solver options from the parent robot; check the resulting
 | `turn_basic` | Screened flat starts; spin, arc and reversal batches |
 | `slope_basic` | Screened routes; separate uphill, downhill and roundtrip results |
 | `fly_ramp_north`, `fly_ramp_south` | Jump episodes and same-source local training regions |
-| `stairs_basic`, `boundary_contact` | Registry metadata; complete traversal suites are pending |
+| `stairs_basic` | Source-checked isolated steps; paired wheel checks and robot traversal |
+| `boundary_contact` | Registry metadata; complete traversal suite is pending |
 
 The [training guide](docs/TRAINING.md) covers commands, controller interfaces
 and parallel execution. The [Isaac adapter](adapters/isaac/README.md) exports
@@ -164,4 +167,4 @@ Tests use synthetic fixtures and do not download official assets.
 本仓库提供统一的 RMUC 2026 场地、机器人接入和训练场景接口。官方文件由使用者
 在本地下载并生成场地包；仓库中不包含场地资产或特定机器人的策略。
 交互查看使用 `full`，批量仿真使用 `collision_only`。普通坡和飞坡已有可运行示例；
-台阶、部分墙面和边缘仍需补齐验收，具体任务见路线图。
+台阶已有局部源几何对照与通行测试；复杂台阶组合、部分墙面和边缘仍需补齐验收。

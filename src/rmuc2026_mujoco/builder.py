@@ -54,17 +54,30 @@ def build_runtime_asset_pack(
     include_surface_guide: bool = False,
     rulebook_pdf: Path | None = None,
     minimum_free_bytes: int = 5 * 1024**3,
+    keep_source_build: Path | None = None,
 ) -> dict[str, Any]:
-    """Create the relocatable runtime pack without retaining the heavy GLB.
+    """Create a runtime pack, optionally retaining source geometry for audits.
 
     The official input and every derivative remain on the caller's machine.
     The temporary full conversion is removed after the compact, hash-bound
-    runtime pack has been produced.
+    runtime pack has been produced, unless ``keep_source_build`` is supplied.
     """
 
     destination = Path(output_dir).expanduser().resolve()
     if destination.exists():
         raise FileExistsError(f"output already exists: {destination}")
+    source_destination = (
+        None if keep_source_build is None else Path(keep_source_build).expanduser().resolve()
+    )
+    if source_destination is not None:
+        if source_destination.exists():
+            raise FileExistsError(f"source build output already exists: {source_destination}")
+        if (
+            source_destination == destination
+            or destination in source_destination.parents
+            or source_destination in destination.parents
+        ):
+            raise ValueError("source build and runtime pack must be separate directories")
     destination.parent.mkdir(parents=True, exist_ok=True)
     free = shutil.disk_usage(destination.parent).free
     if free < minimum_free_bytes:
@@ -91,11 +104,15 @@ def build_runtime_asset_pack(
             decorated_build = temporary_root / "decorated-build"
             decorate_field_build(full_build, Path(rulebook_pdf), decorated_build)
             export_source = decorated_build
-        return export_runtime_asset_pack(
+        result = export_runtime_asset_pack(
             export_source,
             destination,
             include_surface_guide=include_surface_guide,
         )
+        if source_destination is not None:
+            source_destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(full_build), source_destination)
+        return result
     finally:
         shutil.rmtree(temporary_root, ignore_errors=True)
 

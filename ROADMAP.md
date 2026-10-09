@@ -9,15 +9,16 @@ RL framework. This plan has six tasks; it does not require training a new policy
 Version 1.2.1 includes local field construction, external robot/controller
 composition, turning and slope batches, fly-ramp regions and an Isaac data
 handoff. Selected wheel routes and small parallel contact probes have passed.
-Whole-field static contact remains incomplete. `stairs_basic` is registered,
-but its executable, source-bound traversal suite is still pending.
+Whole-field static contact remains incomplete. Development now includes
+source-bound isolated stair routes, paired wheel checks and robot traversal.
+Complex stair assemblies remain outside that validation.
 
 ## Tasks and order
 
 | ID | Task | Priority | Status |
 | --- | --- | --- | --- |
 | 1 | Concise public documentation and reproducible entry points | First | Complete |
-| 2 | Stair approaches, risers and landing transitions | High | Pending |
+| 2 | Stair approaches, risers and landing transitions | High | Isolated source routes implemented |
 | 3 | Perimeter corners and deck-to-fence transitions | High | Pending |
 | 4 | Wall contact and collision ownership | High | Experimental candidate available |
 | 5 | Portable full-field interaction regression | After 2–4 | Partial tooling available |
@@ -34,6 +35,9 @@ Done when documentation links and command interfaces are checked, and a reader
 can distinguish a working example from a controller template or an experiment.
 
 ### 2. Stairs
+
+`stairs-check` and `stairs_basic` provide the initial isolated-step suite.
+Source geometry and robot traversal outcomes are reported separately.
 
 Identify stair components from the pinned source and export their approach,
 riser and landing routes. Check geometry first, then run wheel probes in both

@@ -127,8 +127,10 @@ SCENARIOS: Mapping[str, ScenarioSpec] = {
         "stairs and their approach/exit connection",
         {"selector": "stairs_and_connection", "visual": "omitted"},
         {
-            "strategy": "external_route_spawn",
-            "approach_directions": ["forward", "reverse", "diagonal"],
+            "strategy": "source_bound_stair_catalog",
+            "approach_directions": ["uphill", "downhill", "roundtrip"],
+            "catalog_command": "stairs-check",
+            "robot_traversal_separate_from_contact_validation": True,
         },
         (),
         ("human_view", "mujoco", "isaac"),

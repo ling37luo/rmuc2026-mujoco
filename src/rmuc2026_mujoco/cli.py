@@ -81,6 +81,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     build.add_argument("--include-surface-guide", action="store_true")
     build.add_argument(
+        "--keep-source-build",
+        type=Path,
+        help="retain local CAD intermediates for source contact audits",
+    )
+    build.add_argument(
         "--rulebook",
         type=Path,
         help="local official V2.0.0 rulebook PDF; required with --include-surface-guide",
@@ -112,6 +117,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="1 cm official-source outer void candidate; robot edge validation is blocked",
     )
     setup.add_argument("--include-surface-guide", action="store_true")
+    setup.add_argument(
+        "--keep-source-build",
+        type=Path,
+        help="retain local CAD intermediates for source contact audits",
+    )
     setup.add_argument(
         "--rulebook-cache",
         type=Path,
@@ -205,18 +215,33 @@ def build_parser() -> argparse.ArgumentParser:
     slope.add_argument(
         "--output", type=Path, help="write or update the catalog JSON; reuse identical content"
     )
+    stairs = commands.add_parser(
+        "stairs-check", help="source-bound stair routes and paired wheel contact checks"
+    )
+    stairs.add_argument("asset", type=Path)
+    stairs.add_argument("--source-manifest", type=Path, required=True)
+    stairs.add_argument("--output", type=Path, required=True)
+    stairs.add_argument("--speeds", type=float, nargs="+", default=[0.3, 0.5, 1.0])
     run = commands.add_parser(
         "run",
-        help="run automatic turning, ordinary-slope or fly-ramp evaluation",
+        help="run automatic turning, stair, ordinary-slope or fly-ramp evaluation",
     )
     run.add_argument("asset", type=Path)
     run.add_argument("--robot", type=Path, help="robot MJCF; slopes default to the example rover")
     run.add_argument("--controller", help="user controller factory, module:object")
     run.add_argument(
         "--scenario",
-        choices=("turn_basic", "slope_basic", "fly_ramp", "fly_ramp_north", "fly_ramp_south"),
+        choices=(
+            "turn_basic",
+            "slope_basic",
+            "stairs_basic",
+            "fly_ramp",
+            "fly_ramp_north",
+            "fly_ramp_south",
+        ),
         default="turn_basic",
     )
+    run.add_argument("--route-catalog", type=Path, help="stairs-check report for stairs_basic")
     run.add_argument("--phase", choices=("spin", "arc", "reversal"), default="spin")
     run.add_argument("--backend", choices=("mujoco", "isaac"), default="mujoco")
     run.add_argument("--workers", type=int, default=1)
@@ -284,6 +309,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     view.add_argument("--steps", type=int, default=1000, help="headless physics steps")
     view.add_argument("--telemetry", type=Path, help="write headless step telemetry as JSON")
+    view.add_argument("--route-catalog", type=Path, help="stairs-check report for stairs_basic")
     view.add_argument("--patch", help="slope_basic patch ID; default: first screened route")
     view.add_argument(
         "--direction",
@@ -404,6 +430,7 @@ def main(argv: list[str] | None = None) -> int:
                 include_edge_void=args.experimental_edge_void,
                 include_surface_guide=args.include_surface_guide,
                 rulebook_pdf=args.rulebook,
+                keep_source_build=args.keep_source_build,
             )
             print(
                 json.dumps(
@@ -441,6 +468,7 @@ def main(argv: list[str] | None = None) -> int:
                 heightfield_resolution_m=args.heightfield_resolution,
                 include_edge_void=args.experimental_edge_void,
                 include_surface_guide=args.include_surface_guide,
+                keep_source_build=args.keep_source_build,
                 rulebook_pdf=(
                     downloaded_rulebook.path if downloaded_rulebook is not None else None
                 ),
@@ -585,7 +613,25 @@ def main(argv: list[str] | None = None) -> int:
                 payload = {**payload, "output": str(output), "output_action": output_action}
             print(json.dumps(payload, indent=2, sort_keys=True))
             return 0
+        if args.command == "stairs-check":
+            from .stairs import run_stair_checks
+
+            output = args.output.expanduser().resolve()
+            if output.exists():
+                raise ValueError(f"output already exists: {output}")
+            payload = run_stair_checks(args.asset, args.source_manifest, speeds=args.speeds)
+            output.parent.mkdir(parents=True, exist_ok=True)
+            output.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+            print(
+                json.dumps(
+                    {"status": payload["status"], **payload["summary"], "output": str(output)},
+                    indent=2,
+                )
+            )
+            return 0 if payload["status"] == "PASS" else 2
         if args.command == "run":
+            if args.scenario == "stairs_basic" and args.route_catalog is None:
+                raise ValueError("stairs_basic requires --route-catalog from stairs-check")
             if args.backend == "isaac":
                 from .isaac import load_isaac_heightfield
 
@@ -604,6 +650,12 @@ def main(argv: list[str] | None = None) -> int:
                     payload = load_isaac_heightfield(
                         args.asset, scenario=args.scenario, profile=args.profile
                     ).to_dict()
+                if args.scenario == "stairs_basic":
+                    from .stairs import load_stair_catalog
+
+                    payload["route_catalog"] = load_stair_catalog(
+                        FieldAsset.open(args.asset), args.route_catalog
+                    )
                 payload.update(
                     {
                         "backend": "isaac",
@@ -614,7 +666,7 @@ def main(argv: list[str] | None = None) -> int:
                         "note": "Isaac consumer builds its own parallel backend from this descriptor",
                     }
                 )
-            elif args.scenario == "slope_basic":
+            elif args.scenario in {"slope_basic", "stairs_basic"}:
                 from datetime import datetime, timezone
                 from .slope_batch import run_slope_batch
 
@@ -637,10 +689,12 @@ def main(argv: list[str] | None = None) -> int:
                     profile=args.profile,
                     trajectory_dir=args.trajectory_dir,
                     progress=True,
+                    route_catalog=args.route_catalog if args.scenario == "stairs_basic" else None,
                 )
                 if args.telemetry is None:
                     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S.%fZ")
-                    args.telemetry = Path("runs") / f"slope_batch_{stamp}.json"
+                    prefix = "stairs" if args.scenario == "stairs_basic" else "slope"
+                    args.telemetry = Path("runs") / f"{prefix}_batch_{stamp}.json"
             elif args.scenario in {"fly_ramp", "fly_ramp_north", "fly_ramp_south"}:
                 from datetime import datetime, timezone
                 from .fly_batch import DEFAULT_SPEEDS_MPS, run_fly_batch
@@ -700,7 +754,8 @@ def main(argv: list[str] | None = None) -> int:
             # Full episode rows are in the saved report; keep console output compact.
             display_payload = payload
             if (
-                args.scenario in {"slope_basic", "fly_ramp", "fly_ramp_north", "fly_ramp_south"}
+                args.scenario
+                in {"slope_basic", "stairs_basic", "fly_ramp", "fly_ramp_north", "fly_ramp_south"}
                 and args.backend == "mujoco"
             ):
                 display_payload = {
@@ -820,9 +875,11 @@ def main(argv: list[str] | None = None) -> int:
             return 0 if status == "PASS" else 2
         if args.duration < 0.0:
             raise ValueError("--duration must be non-negative")
-        if args.scenario == "slope_basic":
+        if args.scenario in {"slope_basic", "stairs_basic"}:
             from .slope_runtime import view_slope
 
+            if args.scenario == "stairs_basic" and args.route_catalog is None:
+                raise ValueError("stairs_basic requires --route-catalog from stairs-check")
             if args.steps < 0:
                 raise ValueError("--steps must be non-negative")
             return view_slope(args, asset)

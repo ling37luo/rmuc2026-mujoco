@@ -484,7 +484,10 @@ def test_generic_viewer_steps_about_one_display_frame() -> None:
     assert _viewer_physics_substeps(0.000001) == 256
 
 
-def test_setup_cli_downloads_then_builds_locally(monkeypatch, tmp_path: Path, capsys) -> None:
+@pytest.mark.parametrize("keep_source", [False, True])
+def test_setup_cli_downloads_then_builds_locally(
+    monkeypatch, tmp_path: Path, capsys, keep_source
+) -> None:
     step = tmp_path / "cache" / "RMUC2026_V2.0.0.stp"
     output = tmp_path / "runtime-pack"
     calls: list[tuple[str, Path]] = []
@@ -508,6 +511,7 @@ def test_setup_cli_downloads_then_builds_locally(monkeypatch, tmp_path: Path, ca
             "include_edge_void": False,
             "include_surface_guide": False,
             "rulebook_pdf": None,
+            "keep_source_build": tmp_path / "source" if keep_source else None,
         }
         calls.append(("build", Path(output_dir)))
         return {
@@ -527,6 +531,7 @@ def test_setup_cli_downloads_then_builds_locally(monkeypatch, tmp_path: Path, ca
                 "--step-cache",
                 str(step),
             ]
+            + (["--keep-source-build", str(tmp_path / "source")] if keep_source else [])
         )
         == 0
     )

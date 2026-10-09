@@ -126,6 +126,7 @@ def _slope_worker(payload):
         mode="policy",
         profile=payload["profile"],
         record_trajectory=payload["trajectory_dir"] is not None,
+        route_catalog=payload.get("route_catalog"),
     )
     solver = {
         "timestep_s": float(session.model.opt.timestep),
@@ -206,6 +207,7 @@ def run_slope_batch(
     profile="collision_only",
     trajectory_dir=None,
     progress=False,
+    route_catalog=None,
 ):
     """Run all selected slopes/directions automatically with spawn multiprocessing.
 
@@ -219,7 +221,14 @@ def run_slope_batch(
     if (robot is None) != (controller is None):
         raise ValueError("provide both --robot and --controller, or neither for the example rover")
     field = asset if isinstance(asset, FieldAsset) else FieldAsset.open(asset, verify=True)
-    catalog = slope_catalog(field)
+    scenario_id = "slope_basic"
+    if route_catalog is None:
+        catalog = slope_catalog(field)
+    else:
+        from .stairs import load_stair_catalog
+
+        catalog = load_stair_catalog(field, route_catalog)
+        scenario_id = "stairs_basic"
     cases = slope_cases(
         catalog,
         patches=patches,
@@ -229,13 +238,20 @@ def run_slope_batch(
         seed=seed,
         duration_s=duration_s,
     )
+    if scenario_id == "stairs_basic":
+        for case in cases:
+            case["case_id"] = case["case_id"].replace("slope_", "stairs_", 1)
     workers_used = min(workers, len(cases))
     trajectory_path = (
         None if trajectory_dir is None else Path(trajectory_dir).expanduser().resolve()
     )
     if trajectory_path is not None:
         trajectory_path.mkdir(parents=True, exist_ok=True)
-        if any(trajectory_path.glob("slope_*.json")):
+        if any(
+            trajectory_path.glob(
+                "stairs_*.json" if scenario_id == "stairs_basic" else "slope_*.json"
+            )
+        ):
             raise ValueError(
                 "trajectory directory already contains slope episodes; choose a new directory"
             )
@@ -246,6 +262,7 @@ def run_slope_batch(
         "profile": profile,
         "progress": progress,
         "trajectory_dir": None if trajectory_path is None else str(trajectory_path),
+        "route_catalog": catalog if scenario_id == "stairs_basic" else None,
     }
     payloads = [
         {**common, "worker_index": i, "cases": cases[i::workers_used]} for i in range(workers_used)
@@ -266,11 +283,14 @@ def run_slope_batch(
     return {
         "schema_version": 1,
         "backend": "mujoco",
-        "scenario_id": "slope_basic",
+        "scenario_id": scenario_id,
         "status": "PASS" if counts["passed"] == len(cases) else "FAIL",
+        "physics_status": "PASS"
+        if not warnings and not counts["errors"] and all(e.get("finite", False) for e in episodes)
+        else "FAIL",
         "profile": profile,
         "source_manifest_sha256": field.manifest_sha256,
-        "profile_hash": scenario_descriptor(field, "slope_basic", profile=profile)["profile_hash"],
+        "profile_hash": scenario_descriptor(field, scenario_id, profile=profile)["profile_hash"],
         "heightfield_samples_sha256": field.collision["samples_sha256"],
         "robot_mjcf_sha256": results[0]["robot_mjcf_sha256"],
         "controller": controller or "builtin_example_rover",

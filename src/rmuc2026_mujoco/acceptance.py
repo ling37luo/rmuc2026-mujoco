@@ -97,10 +97,13 @@ def _probe_model(
     *,
     start_xy_m: tuple[float, float],
     direction_xy: tuple[float, float],
+    prepare_spec=None,
 ) -> tuple[Any, Any]:
     """Add the same public 120 mm wheel to any field profile without editing it."""
 
     spec = mujoco.MjSpec.from_file(str(asset.entrypoint_for(profile)))
+    if prepare_spec is not None:
+        prepare_spec(spec)
     ux, uy = direction_xy
     lateral = (-uy, ux)
     body = spec.worldbody.add_body(name=PROBE_BODY, pos=[*start_xy_m, 0.0])
@@ -341,12 +344,15 @@ def _run_route(
     direction: str,
     speed_m_s: float,
     max_penetration_m: float,
+    prepare_spec=None,
 ) -> dict[str, Any]:
     start = route["start_xy_m"] if direction == "forward" else route["end_xy_m"]
     end = route["end_xy_m"] if direction == "forward" else route["start_xy_m"]
     length = math.dist(start, end)
     unit = ((end[0] - start[0]) / length, (end[1] - start[1]) / length)
-    model, data = _probe_model(asset, profile, start_xy_m=start, direction_xy=unit)
+    model, data = _probe_model(
+        asset, profile, start_xy_m=start, direction_xy=unit, prepare_spec=prepare_spec
+    )
     path_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, PATH_JOINT)
     path_qpos = int(model.jnt_qposadr[path_id])
     path_dof = int(model.jnt_dofadr[path_id])
@@ -355,6 +361,11 @@ def _run_route(
     maximum_progress = 0.0
     maximum_penetration = 0.0
     maximum_abs_qacc = 0.0
+    max_vertical_speed = 0.0
+    max_center_z = -math.inf
+    vertical_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, VERTICAL_JOINT)
+    vertical_dof = int(model.jnt_dofadr[vertical_id])
+    body_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, PROBE_BODY)
     max_contacts = 0
     finite = True
     warnings: dict[str, int] = {}
@@ -365,6 +376,8 @@ def _run_route(
         mujoco.mj_step(model, data)
         completed = step + 1
         maximum_progress = max(maximum_progress, float(data.qpos[path_qpos]))
+        max_vertical_speed = max(max_vertical_speed, abs(float(data.qvel[vertical_dof])))
+        max_center_z = max(max_center_z, float(data.xpos[body_id, 2]))
         if data.qacc.size and np.isfinite(data.qacc).all():
             maximum_abs_qacc = max(maximum_abs_qacc, float(np.max(np.abs(data.qacc))))
         max_contacts = max(max_contacts, int(data.ncon))
@@ -399,6 +412,9 @@ def _run_route(
         "steps": completed,
         "route_length_m": length,
         "maximum_progress_m": maximum_progress,
+        "max_vertical_speed_m_s": max_vertical_speed,
+        "max_center_height_m": max_center_z,
+        "final_center_height_m": float(data.xpos[body_id, 2]),
         "reached_finish": reached,
         "blocked_by_expected_geom": blocked_by_expected_geom,
         "finite": finite,

@@ -8,6 +8,38 @@ The commands below assume the [quick start](../README.md#quick-start) is complet
 the environment is activated, and the working directory is the repository root.
 `run` is headless. Use `view` when you want a window.
 
+## Isolated stairs and ledges
+
+When building a 1 cm pack, add `--keep-source-build ./runs/field-source` to
+`setup` or `build`. Source contact checks need that retained CAD build; the
+normal build removes it after exporting the runtime pack.
+
+```bash
+rmuc2026-field stairs-check ./local-rmuc2026-field \
+  --source-manifest ./runs/field-source/manifest.json --output ./runs/stairs.json
+rmuc2026-field run ./local-rmuc2026-field --scenario stairs_basic \
+  --route-catalog ./runs/stairs.json --directions uphill downhill roundtrip \
+  --speeds 0.3 0.5 1.0 --workers 2
+rmuc2026-field view ./local-rmuc2026-field --scenario stairs_basic \
+  --route-catalog ./runs/stairs.json --direction downhill --control policy
+```
+
+`stairs-check` selects isolated risers from reviewed source parts, checks both
+treads and the seam, then compares a 120 mm wheel against the field and a local
+source-plane reference at 0.3/0.5/1.0 m/s. It records blocked approaches as well
+as traversals. A matched blocked approach can pass the contact comparison;
+it does not mean the wheel climbed the step. Field geometry is unchanged.
+
+`run` and `view` use the same catalog, robot composition and direction tracking.
+Add `--robot` and `--controller` to use your own robot, or `--patch ID` in the
+viewer / `--patches ID...` in batches to select a route. `SlopeSession` accepts
+`route_catalog` for Python use. Reports separate numerical health from traversal;
+small example wheels are not expected to climb every source step.
+
+Keep the report local and use a new filename for another contact check. The
+catalog is bound to its field pack. Coverage is limited to selected isolated
+steps; compound stairs, adjacent walls and multilevel structures are not certified.
+
 ## Ordinary slopes
 
 Inspect the available routes, then run the included four-wheel rover:
