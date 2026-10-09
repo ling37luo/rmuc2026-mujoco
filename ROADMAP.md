@@ -1,117 +1,94 @@
 # Roadmap
 
-This roadmap separates loader engineering from claims about field fidelity.
-Completing a code item never upgrades a geometry-validation status by itself.
+The main product is a reproducible full-field interaction baseline. Training
+scenarios use the same source geometry and remain independent of any robot or
+RL framework. This plan has six tasks; it does not require training a new policy.
 
-## 0.1 — asset-free local builder and loader
+## Current baseline
 
-- pin and verify the official STEP identity;
-- perform the CAD conversion only on the user's machine;
-- export relocatable, hash-bound runtime packs;
-- provide full-visual and collision-only MuJoCo profiles;
-- compose a separately licensed robot MJCF with the field;
-- expose explicit, unofficial friction presets;
-- test and audit wheels/source archives without third-party assets.
+Version 1.2.1 includes local field construction, external robot/controller
+composition, turning and slope batches, fly-ramp regions and an Isaac data
+handoff. Selected wheel routes and small parallel contact probes have passed.
+Whole-field static contact remains incomplete. `stairs_basic` is registered,
+but its executable, source-bound traversal suite is still pending.
 
-## 0.2.0 — bounded static-interaction foundations
+## Tasks and order
 
-This release adds a 1 cm heightfield option, deterministic terrain-surface and
-candidate-spawn screening, and evidence tied to the two fixed 17-degree fly
-ramps. It also improves the optional local-only visual guide and its display
-controls. These are bounded capabilities, not whole-field collision approval:
-generated runtime packs retain `DRAFT_BLOCKED`, and spawn screening is not
-topology-verified.
+| ID | Task | Priority | Status |
+| --- | --- | --- | --- |
+| 1 | Concise public documentation and reproducible entry points | First | Complete |
+| 2 | Stair approaches, risers and landing transitions | High | Pending |
+| 3 | Perimeter corners and deck-to-fence transitions | High | Pending |
+| 4 | Wall contact and collision ownership | High | Experimental candidate available |
+| 5 | Portable full-field interaction regression | After 2–4 | Partial tooling available |
+| 6 | Parallel performance and profile selection | After baseline regression | Small-scale measurements available |
 
-## Planned static-interaction work
+### 1. Public documentation
 
-- resolve the source-backed top-edge part 236/552 contact transition before
-  offering it as a robot route. Both the existing and source-negative local
-  1 cm trials reach MuJoCo's 50-contact-per-pair heightfield limit, and a
-  matched robot can leave the field. Nine local exact-source convex roof
-  triangles improve two approaches up to the official edge, but one still
-  fails after crossing it, and the triangles' shared side contacts are not
-  proven exclusive. Source fidelity and safe route behavior require separate
-  gates;
-- decompose the source-backed bottom-edge part-244 roof beyond the one tested
-  convex triangle and validate its adjacent seams. The local one-triangle
-  candidate improved 0.3/0.5 m/s outward routes but raised the 1.0 m/s
-  acceleration peak and left 50-contact heightfield pairs;
-- define and validate robot out-of-bounds termination before promoting the
-  source-ray-masked schema-3 pack. Initial frozen-robot edge routes lost field
-  contact and later produced `BADQACC`; keep the finite -5 m floor labeled
-  as a surrogate rather than a source-measured depth;
-- finish the exact 402/403 wall replacement contract and reverse/high-side,
-  repeated-impact robot routes before enabling its convex contacts in a runtime
-  pack. Twelve short forward approaches did not penetrate the walls, but
-  startup heightfield contact pairs still reached 50 points;
-- register the chassis perimeter proxy against the official-source boundary,
-  resolve its open stretches and window positions, then repeat robot routes
-  before any default activation;
-- add a versioned registry of robot-validated spawn poses and static routes;
-- add query APIs for semantic, unsupported, or unverified zones;
-- add multi-hit vertical and horizontal-blocker audits before any multi-level
-  structure can be promoted;
-- use the source-bound wall and four-edge audit-only candidate registries to
-  select genuinely missing barriers; the current wall footprints already
-  belong to the heightfield except for seven repaired 1 cm wall-end roof
-  samples on exact-source parts 402/403;
-- use the official rulebook's 28 × 15 m, 2.4 m-high perimeter-fence requirement
-  and depicted dart window to scope a labeled fence proxy; the STEP base shell
-  does not fix its exact centerline, thickness, or openings, so keep it out of
-  the default collision pack until placement and contact tests pass;
-- replace only independently accepted structure footprints with mutually
-  exclusive primitive or convex collision while preserving the remaining
-  heightfield bit-for-bit;
-- validate contact ownership so one XY location cannot accidentally collide
-  with both the heightfield and its replacement geometry;
-- add visual LODs with geometry-coverage and silhouette regression gates.
+Keep setup, public examples, current limitations and this task list in the
+repository. Keep personal sessions, machine-specific reports and intermediate
+geometry investigations in local output directories. Example commands must use
+included files or clearly identify the files a consumer must provide.
 
-The intended collision profiles are `fast_heightfield` (current heightfield),
-`hybrid_static` (connected base heightfield plus accepted regular/convex static
-geometry), and eventually `dynamic_facilities` (explicit moving bodies and
-joints). These are design targets, distinct from the current `full` visual and
-`collision_only` loading profiles, not current validation claims.
+Done when documentation links and command interfaces are checked, and a reader
+can distinguish a working example from a controller template or an experiment.
 
-Coordinates and meshes for these features must be generated locally unless
-the upstream rightsholder grants written redistribution permission.
+### 2. Stairs
 
-## 0.3 — robot interaction and remaining topology
+Identify stair components from the pinned source and export their approach,
+riser and landing routes. Check geometry first, then run wheel probes in both
+directions at 0.3, 0.5 and 1.0 m/s; follow with the public rover. Replace a local
+collision region only if the current heightfield demonstrably fails there.
 
-The 2026-09-20 [bounded physical acceptance](PHYSICAL_ACCEPTANCE_20260920.md)
-found passing fly-ramp wheel routes and short central robot runs, but the
-wall contact cap and source-hit edge instability still block this stage.
-The code-only `0.3.0a1` prerelease adds a bounded edge stop signal while the
-experimental collision candidates remain disabled; it is not this stage's
-physical acceptance.
-The `0.3.0a2` code adds an opt-in physical perimeter pack at the inferred
-official core edge. Four sphere and four robot approach routes are stable,
-but the heightfield contact cap, exact fence/window construction and wider
-perimeter routes still block default activation. A source-ray audit resolves
-the two fly-ramp plane-error bands as adjacent official CAD overlap without
-changing their collision geometry. `0.3.0a3` moves only the north/south proxy
-walls to the supported outer apron after detecting 5.5 mm overlap with the fly-ramp
-edges. The new 0.395 m clearance is a geometry correction, not whole-robot
-acceptance. Its fence-only contact time constant was increased from 0.02 s to
-0.04 s after a matched north-wall robot route with the harder setting became
-numerically unstable. The softer candidate completed four bounded side
-approaches, but heightfield contact saturation remains.
+Done when exported routes reproduce their source geometry and traverse without
+unexplained snagging, false support or numerical warnings. Keep robot capability
+failures separate from field-contact defects.
 
-- represent accepted underpasses and stacked surfaces with hybrid collision;
-- register material zones from measured or clearly labeled non-official data;
-- publish paired geometry, contact, and robot-independent traversal tests.
+### 3. Perimeter and deck edges
 
-Movable facilities, energy-unit handling, outposts and bases are optional
-test fixtures. They are not prerequisites for the field's main purpose:
-reproducible robot locomotion and contact interaction.
+Select accessible routes at all four corners and along the top/bottom deck
+transitions. Follow the source obstacles when choosing approaches; an obstructed
+straight line is not a valid corner test. Exercise angled approach, wall sliding
+and retreat to check the continuous support between the deck and fence.
 
-This stage remains blocked until each promoted facility has sufficient source
-evidence and an explicit behavior contract. The project will not replace the
-whole field with unqualified triangle-mesh collision merely to remove the
-`DRAFT_BLOCKED` label.
+Done when the test footprint cannot drop into an unintended gap or become trapped
+between the playable deck and containment proxy on the selected routes.
 
-## Prebuilt assets
+### 4. Wall contact
 
-The Python API is designed so a prebuilt asset archive can be added later.
-Such an archive will be published only after written permission covers the
-official-source-derived OBJ, heightfield, and preview media. Until then,
-GitHub, package indexes, CI, and releases remain code-only.
+Finish the existing source-wall candidate with low-side, high-side, reverse and
+repeated-contact cases. Give each replaced region one collision owner and inspect
+seams for duplicate support. Record penetration, contact count and acceleration
+with identical solver settings across candidate and baseline.
+
+Done when the source-bound wall routes and adjacent ground pass the same public
+probe suite, and enabling the replacement preserves accepted slope/fly routes.
+
+### 5. Portable regression
+
+Combine accepted routes into one versioned suite that uses an included robot
+and controller. Cover loading, reset, manual/policy input, stepping and result
+recording through the public interfaces. Compare all profiles of one pack on
+the same inputs. Retain synthetic tests for CI and local-source tests for geometry.
+
+Done when another developer can rebuild the field and run the suite without a
+private robot, checkpoint, unpublished report or machine-specific path.
+
+### 6. Performance
+
+Measure model loading, simulation throughput and memory with a fixed public
+workload. Reuse the MuJoCo 1/4/16 baseline, then increase Isaac environment counts
+as hardware permits. Report actual counts and resource use rather than promising
+a universal parallel capacity. Check exported terrain, bounds and contact parity.
+
+Compare `full`, `collision_only` and optional `interactive_lite`. Recommend lite
+only if it preserves the needed visual structure and improves memory or viewer
+frame rate by at least 20%; otherwise keep `collision_only` as the resource option.
+
+## Scope
+
+Focus on drivable static ground, stairs, slopes, fly ramps, walls and boundaries.
+Bridge interiors, stacked surfaces and dynamic competition mechanisms are
+separate future work. Official material calibration needs measured data; current
+friction presets remain sensitivity settings. Geometry changes produce new local
+packs, and physical validation is recorded per accepted route or region.

@@ -1,1021 +1,167 @@
 # rmuc2026-mujoco
 
-An **unofficial, asset-free** RMUC 2026 field builder and loader for MuJoCo.
-It turns the pinned official STEP file into a relocatable local runtime pack,
-checks every generated file by SHA-256, loads the field by itself, and can
-compose it with a separately licensed robot MJCF.
+An open-source RMUC 2026 field builder and simulation interface for MuJoCo.
+Build the field from the pinned official CAD source, attach your robot and
+controller, and use the same field for interactive evaluation and training
+scenarios. The runtime depends on MuJoCo and NumPy, with no RL framework required.
 
-The repository contains code and documentation only. It does **not** contain
-the official STEP or rulebook, meshes or heightfields derived from them,
-Fudan robot files, checkpoints, ONNX policies, or RL-Lab run data.
-
-## What you get
-
-- one-command, direct-from-official-source local setup;
-- CAD-derived visual geometry split into material groups;
-- a configurable 1–10 cm collision grid with exact floating-point NPZ injection;
-- `full` viewing and mesh-free `collision_only` training profiles;
-- explicit, non-official dry/low/high friction sensitivity presets;
-- relative paths and a fail-closed manifest/hash contract;
-- an arena-only viewer and `MjSpec` robot composition;
-- an automatic whole-field overview camera;
-- world-space height, normal, slope, relief, and runtime-proxy spawn screening;
-- no reinforcement-learning framework in the runtime dependency tree.
+The repository distributes code. Official sources and generated field assets
+are downloaded and built locally; see [Asset policy](ASSET_POLICY.md).
 
 ## Quick start
 
-Python 3.10–3.12 and MuJoCo 3.3+ are tested. Building from CAD is much heavier
-than loading the result: the official STEP is about 1.25 GB and the local
-conversion requires at least 5 GiB of free disk space.
+Run these commands from the cloned repository. Python 3.10–3.12 are tested.
+The official STEP download is about 1.25 GB; allow at least 5 GiB of free disk
+space for conversion. Loading a finished pack does not require the CAD tools.
 
 ```bash
 git clone https://github.com/ling37luo/rmuc2026-mujoco.git
 cd rmuc2026-mujoco
-
-# Isolated install; no system `python` alias is required. Minimal Ubuntu images
-# may first need: sudo apt install python3-venv
 python3 -m venv .venv
-.venv/bin/python -m pip install --upgrade pip
-.venv/bin/python -m pip install '.[build,viewer]'
+source .venv/bin/activate
+python -m pip install '.[build,viewer]'
 
-# Review the pinned source identity without downloading anything.
-.venv/bin/rmuc2026-field source
-
-# Explicitly download from RoboMaster, verify size/SHA-256, and build locally.
-.venv/bin/rmuc2026-field setup ./local-rmuc2026-field \
-  --heightfield-resolution 0.01 \
-  --include-surface-guide
-
-.venv/bin/rmuc2026-field verify ./local-rmuc2026-field
-.venv/bin/rmuc2026-field view ./local-rmuc2026-field
-
-# Headless users can skip all CAD visual meshes when composing/loading.
-.venv/bin/rmuc2026-field view ./local-rmuc2026-field \
-  --profile collision_only --friction dry
-
-# Optional local interactive profile: same collision and friction, fewer CAD faces.
-# Pick a budget below the source pack's measured visual-face count.
-.venv/bin/rmuc2026-field lite-pack ./local-rmuc2026-field ./local-rmuc2026-field-lite \
-  --interactive-lite-faces 250000
-.venv/bin/rmuc2026-field view ./local-rmuc2026-field-lite \
-  --profile interactive_lite
+rmuc2026-field setup ./local-rmuc2026-field \
+  --heightfield-resolution 0.01 --include-surface-guide
+rmuc2026-field verify ./local-rmuc2026-field
+rmuc2026-field view ./local-rmuc2026-field
 ```
 
-If [`uv`](https://docs.astral.sh/uv/) is already installed, the first three
-installation commands can instead be:
+`setup` downloads verified sources into a local cache and creates a new pack.
+To inspect the pinned source identity first, run `rmuc2026-field source`.
+Existing output directories are not overwritten; reuse a completed pack or
+choose a new output directory. If `venv` is unavailable, install your system's
+Python venv component or use `uv venv .venv`, activate it, and run `uv pip install '.[build,viewer]'`.
+
+A physical perimeter is an optional addition. For a newly built schema-2 pack:
 
 ```bash
-uv venv .venv --python 3.12
-uv pip install --python .venv/bin/python '.[build,viewer]'
+rmuc2026-field fence-pack ./local-rmuc2026-field ./runs/field-fenced
+rmuc2026-field view ./runs/field-fenced
 ```
 
-The executable lives inside `.venv/bin/` unless you activate the environment.
-This avoids both Ubuntu's missing `python` alias and externally-managed system
-Python errors. If `python3 -m venv` reports that `ensurepip` is unavailable,
-install the distribution's `python3-venv` package or use the `uv` route above.
+This creates a new pack with a four-sided containment proxy. Its placement and
+openings are approximations; the base `setup` output does not include this fence.
 
-`setup` caches the source at
-`~/.cache/rmuc2026-mujoco/RMUC2026_V2.0.0.stp`. Use `--step-cache PATH` to
-choose another location. Existing files are reused only after the complete
-identity check passes; outputs are never silently overwritten.
+## Choose a profile
 
-The default visual face budget is 2.3 million for new conversions. Cleaning
-the official mesh before simplification prevents some thin parts from reaching
-the older 450,000-face budget without losing substantial area; the builder
-keeps its face-budget hard gate instead of silently overstepping it. Use the
-`collision_only` profile for headless robot physics when those visual meshes
-are unnecessary.
+| Profile | Use | Contents |
+| --- | --- | --- |
+| `full` | Interactive viewing and final evaluation | CAD visuals and field collision |
+| `collision_only` | Headless simulation and batch evaluation | Same physics, without CAD visual meshes |
+| `interactive_lite` | Optional visual experiment | Reduced CAD meshes, available only in a `lite-pack` export |
 
-If you already have the pinned STEP, the two explicit commands are:
+`full` is the viewer default; batch runs default to `collision_only`.
+Profiles in the same pack share collision and material parameters. The lite
+profile has not demonstrated a consistent resource benefit, so it is not the
+recommended performance option. See `rmuc2026-field lite-pack --help` to build one.
+
+## Display and interaction
 
 ```bash
-.venv/bin/rmuc2026-field download ./RMUC2026_V2.0.0.stp \
-  --acknowledge-reference-only
-.venv/bin/rmuc2026-field build \
-  --step ./RMUC2026_V2.0.0.stp \
-  --output ./local-rmuc2026-field \
-  --heightfield-resolution 0.01 \
-  --include-surface-guide \
-  --rulebook ./RoboMaster-2026-rulebook-V2.0.0.pdf
+rmuc2026-field view ./local-rmuc2026-field \
+  --profile full --lighting flat --livery off
 ```
 
-The acknowledgement records that the upstream publication is treated as
-reference material, not as a redistribution license. It does not accept any
-third-party terms on your behalf.
+- **L** toggles cast shadows; **G** toggles the optional rulebook livery.
+- These shortcuts require the `viewer` extra and a focused Linux/X11 viewer.
+  Other platforms can use the startup flags above.
+- Livery is visual only. The source illustration contains baked objects and
+  shadows, so it is a guide rather than a clean material texture.
 
-`--include-surface-guide` also downloads and verifies the pinned official
-V2.0.0 rulebook into the local cache and extracts its overhead illustration
-locally. The runtime pack keeps the complete overhead illustration, including
-its floor colours, field modules, obstacles, baked robots, and baked shadows.
-Only the boundary-connected near-white page margin becomes transparent;
-interior RGB pixels and world UV coordinates are preserved. This matches the
-earlier `visual5` display instead of reducing the image to a small set of
-chromatic markings. The full picture follows the collision heightfield on a
-5 cm non-contact visual grid. Cells that would cross a sharp height change or
-float above a low patch are locally refined to 2.5 or 1.25 cm where possible; remaining
-bad cells are omitted to expose the CAD surface. Retained visual triangles
-stay within a few millimetres above the sampled collision surface, so the
-texture does not hide a grounded robot.
-The repository never contains the source or generated images. Launch the interactive
-viewer with the optional keyboard component:
+To drive the included example rover on an available ordinary-slope route:
 
 ```bash
-uv run --locked --extra viewer --project . rmuc2026-field view PACK --profile interactive_lite
+rmuc2026-field view ./local-rmuc2026-field \
+  --scenario slope_basic --profile full --control human --camera spawn
 ```
 
-Press `L` in the interactive viewer to switch between the default flat lighting and cast shadows.
-Press `G` to show or hide the optional rulebook livery, which starts hidden and
-never participates in contact. The same initial modes can be selected with
-`--lighting flat|shadow` and `--livery off|on`. Without the optional `viewer`
-dependency, use those startup flags; field loading and physics remain available.
-Live `L`/`G` interception is enabled only when Linux/X11 can bind the unique
-MuJoCo window owned by the current process. Other platforms and ambiguous
-window sessions fail closed and keep the launch-time modes.
-For an external robot, the viewer is passive until `--controller MODULE:factory`
-is supplied; movement keys have no robot action without that controller.
-If a controller handles `press_name(key)` and optionally `release_name(key)`,
-the generic viewer forwards presses and releases during simulation. A controller
-may declare `viewer_keys = ("Up", "Down", "Left", "Right", "space")` to reserve
-only those keys from MuJoCo's built-in shortcuts. Single character keys are
-also supported.
+**W/S** set forward/reverse motion, **A/D** steer, **E** straightens, **X** stops,
+**1–4** select speed, and **R** resets. These example commands stay active until
+changed. Autonomous slope and fly-ramp examples are in the [training guide](docs/TRAINING.md).
 
-## Use from Python
+## Attach your robot
+
+Supply a robot-only MJCF and a controller for its actuators. This public example
+checks composition and stepping with a passive sphere; it does not drive a robot:
+
+```bash
+rmuc2026-field view ./local-rmuc2026-field \
+  --robot examples/simple_robot.xml \
+  --controller examples/controller_template.py:make \
+  --profile collision_only --headless --steps 1000
+```
+
+After creating your own `robot.xml` and `controller.py`, use:
+
+```bash
+rmuc2026-field view ./local-rmuc2026-field \
+  --robot ./robot.xml --controller ./controller.py:make \
+  --control policy --profile full
+```
+
+The [controller template](examples/controller_template.py) shows a factory
+returning a callback that reads state and writes `data.ctrl`. The template
+writes zero actions; replace it with your control logic. Optional `press_name`
+and `release_name` methods receive keyboard events. Declare `viewer_keys` to
+reserve those keys from MuJoCo's native shortcuts. A viewer without a
+controller is passive.
+
+Python integrations use the same composition:
 
 ```python
-from rmuc2026_mujoco import (
-    FieldAsset,
-    field_bounds,
-    find_spawn_candidates,
-    height_at,
-    load_model,
-    surface_at,
-)
-
-field = FieldAsset.open("./local-rmuc2026-field", verify=True)
-model, data = load_model(field, profile="full", friction_preset="dry")
-
-print(field_bounds(field))
-# This preserves v0.1 compatibility and is bilinear by default.
-print(height_at(field, x=0.0, y=0.0))
-# Ask explicitly for MuJoCo's triangular collision surface when needed.
-print(height_at(field, x=0.0, y=0.0, interpolation="mujoco"))
-print(surface_at(field, x=0.0, y=0.0).to_dict())
-for candidate in find_spawn_candidates(field, count=4):
-    print(candidate.to_dict())
-```
-
-The same terrain diagnostics are available without writing Python:
-
-```bash
-.venv/bin/rmuc2026-field surface ./local-rmuc2026-field 0 0 \
-  --window-radius 0.35
-.venv/bin/rmuc2026-field spawns ./local-rmuc2026-field \
-  --count 4 --footprint-radius 0.35 --minimum-separation 1.5
-```
-
-Spawn results provide the terrain contact height, local normal, centre-face
-slope, maximum footprint slope, relief, and grid-boundary clearance. Surface
-height and slope follow MuJoCo's two-triangle heightfield cells rather than a
-centre-gradient approximation. The filters are deterministic **runtime-proxy
-screening**, not certified robot poses: footprint shape, body clearance,
-semantic zones, underpasses, and dynamic obstacles still need robot- and
-route-specific validation.
-
-The current pack does not include a per-cell ray-hit validity mask. During CAD
-conversion, samples with no vertical ray hit can therefore have a filled ground
-value that is indistinguishable at runtime from a measured top surface. A
-screened result must not be trusted for deployment until the relevant region
-has separate topology, clearance, and robot-specific validation.
-
-To attach a robot that you are allowed to use:
-
-```python
-from pathlib import Path
-
 from rmuc2026_mujoco import FieldAsset, compose_with_robot
 
-field = FieldAsset.open("./local-rmuc2026-field")
-model, data = compose_with_robot(
-    field,
-    Path("my_robot.xml"),
-    profile="collision_only",
-    friction_preset="dry",
-)
+field = FieldAsset.open("./local-rmuc2026-field", verify=True)
+model, data = compose_with_robot(field, "./robot.xml", profile="collision_only")
 ```
 
-Supply a **robot-only** MJCF. If an exported viewer XML carries the package's
-recognizable root-level RMUC field copy, the loader removes that old copy
-before attaching the verified pack; ordinary robot floors, lights and world
-bodies are preserved. See
-[`examples/arena_only.py`](examples/arena_only.py) and
-[`examples/compose_robot.py`](examples/compose_robot.py).
+Use the package loaders to inject the verified floating-point heightfield.
+Loading the XML directly uses its quantized bootstrap image. Composition
+inherits global solver options from the parent robot; check the resulting
+`model.opt.timestep` and solver settings. Field entrypoints use a 2 ms timestep.
 
-### Shared scenarios and training adapters
+## Scenarios and current scope
 
-The field repository exposes a small, robot-agnostic scenario registry. It
-keeps the complete `full_eval` baseline separate from lightweight
-`collision_only` stages such as `turn_basic`, `stairs_basic`, the two audited
-fly ramps, and `boundary_contact`. A scenario is metadata bound to a verified
-pack; it never creates or patches field geometry.
-
-```bash
-rmuc2026-field scenarios
-rmuc2026-field scenarios --asset ./local-rmuc2026-field --scenario turn_basic
-```
-
-The same composition is used for an interactive robot viewer and a headless
-run. Robot-specific control stays outside this repository and can be loaded as
-`module:factory`; the factory may return a callback that writes `data.ctrl` or
-applies forces according to the robot's actuator model:
-
-```bash
-rmuc2026-field view ./local-rmuc2026-field \
-  --robot my_robot.xml --control human --controller my_controller:make \
-  --profile full --lighting flat --livery off
-rmuc2026-field view ./local-rmuc2026-field \
-  --robot my_robot.xml --control policy --controller my_policy:make \
-  --profile collision_only --headless --steps 1000 \
-  --telemetry runs/turn_basic.json
-```
-
-Factories that declare an optional `field_asset` keyword receive the selected
-`FieldAsset` or `TrainingRegion`, so terrain observations can use the same
-verified pack that the robot is driving on.
-
-For Python users, `MuJoCoScenario` provides `reset()`, `step()`, telemetry,
-and run metadata without importing PPO/SAC or another RL framework. The
-optional `load_isaac_heightfield()` adapter returns the verified heightfield,
-field bounds, scenario descriptor, and hashes for an Isaac consumer; Isaac is
-not a core dependency and the adapter does not alter source geometry.
-
-#### Ordinary slopes and dedicated fly-ramp training
-
-`slope_basic` derives a small catalog of traversable, plane-like slope patches
-from the verified `collision_only` heightfield. It covers three ordinary slope
-bands (3--6, 6--10, and 10--15 degrees), records a short route and usable
-width for each patch, and leaves gear selection and actuator mapping to the
-robot controller. The catalog is a descriptor bound to the source manifest and
-heightfield hashes; it does not make a second map or add collision geometry.
-
-The two audited fly ramps remain separate as `fly_ramp_north` and
-`fly_ramp_south`. Their takeoff, flight, and landing checks are not mixed into
-ordinary-slope traversal, so a high-parallel trainer can run the ordinary
-catalog while a dedicated fly-ramp package evaluates the full RM field route.
-
-```bash
-rmuc2026-field slope-catalog ./local-rmuc2026-field \
-  --max-per-band 4 --sampling 0.10 \
-  --output runs/slope_basic.json
-rmuc2026-field scenarios --asset ./local-rmuc2026-field --scenario slope_basic
-```
-
-The export can be repeated: identical JSON is reused without rewriting the
-file; changed catalog data updates the output. `output_action` reports
-`WRITTEN`, `REUSED`, or `UPDATED`, independently of the screening `status`.
-This command exports metadata and does not open a simulation window.
-
-Every patch carries the source manifest and collision hashes and keeps the
-heightfield claim boundary: topology, overhangs, vertical clearance, and
-robot-specific success still require the consumer's physics run. A catalog
-reports `READY_HEIGHTFIELD_SCREENED` when every band has a candidate; that is
-not a dynamic pass.
-
-Catalog schema 2 also screens the entire approach, crest, and endpoint
-footprints at 1 cm spacing across the route width. `patches[].route` contains
-the low/high spawn points and waypoints; rejected candidates have a
-`route_rejection`. `runnable_route_count` is distinct from the number of local
-plane candidates. Fly-ramp approach and landing corridors are excluded by
-location as well as slope band. No collision surface is changed by screening.
-
-Open a real slope interaction window with the repository's original example
-four-wheel rover (no external robot or policy required):
-
-```bash
-rmuc2026-field view ./local-rmuc2026-field \
-  --scenario slope_basic --profile full --control human
-```
-
-The camera starts at the selected route. Green marks the low end; orange dots
-follow the route to the high end. Press **W/S** to set forward/reverse motion,
-**A/D** to steer, **E** to straighten, **X** to stop, **1--4** for speed, and
-**R** to restore the initial robot and controller state. Commands persist until
-changed; these are not held-key controls. **L/G** retain the existing display
-shortcuts when the optional viewer dependencies are installed. Route markers
-are viewer decorations and never participate in contact.
-
-Human driving currently uses the optional `viewer` extra on X11 to reserve
-these keys from MuJoCo's native rendering shortcuts. On other viewer backends,
-use `--control policy` or the Python session with your own input handling.
-
-The default is the first continuous screened route. Select another with
-`--patch PATCH_ID`, and choose `--direction uphill|downhill|roundtrip`.
-The default direction is **uphill only**. The three tasks are independent:
-
-| Direction | Start | Completion |
-| --- | --- | --- |
-| `uphill` | Low endpoint | Reach the high endpoint; records uphill only |
-| `downhill` | High endpoint, facing downhill | Reach the low endpoint; records downhill only |
-| `roundtrip` | Low endpoint | Complete uphill, then downhill in the same episode |
-
-For example, add `--direction downhill` to open a downhill-only session.
-An uphill-only result and a separate downhill-only result are not a roundtrip.
-The example's roundtrip controller reverses down the same slope after climbing.
-To run its wheel-speed controller automatically, use
-`--control policy`; this is an illustrative controller, not a trained RM policy:
-
-```bash
-rmuc2026-field view ./local-rmuc2026-field \
-  --scenario slope_basic --profile collision_only --control policy \
-  --direction roundtrip --speed 0.3 --headless --steps 8000
-```
-
-Both paths use the same `SlopeSession` for reset, control, stepping, route
-progress, contact diagnostics, and telemetry. A timestamped report is saved
-under `runs/` by default; `--telemetry PATH` selects another path. Reports
-separate `physics_status` from `traversal_status`: a stationary or too-short run
-can have healthy physics while traversal is `INCOMPLETE`.
-`leg_results.uphill` and `leg_results.downhill` separately record status,
-start/completion times, duration, contact steps, maximum tilt/penetration and
-the first failure. An unrequested leg has status `NOT_REQUESTED`; a requested
-but unstarted leg is `INCOMPLETE` with a null start time. `roundtrip_status`
-is `COMPLETE` only when both legs finish in one roundtrip episode. An uphill
-success stays recorded if the return leg fails or never finishes.
-
-Arrival means reaching the endpoint footprint (12 cm longitudinal tolerance)
-or passing beyond it, within the route width, upright and in field contact.
-There is **no dwell requirement**: fast passes count. The completion timestamp
-and leg statistics are frozen at arrival; later driving does not erase an
-achieved result, while session-wide physics diagnostics continue. Downhill
-duration in a roundtrip includes time spent waiting at the top. The report's
-`traversal_rule` identifies these rules. The viewer prints `SLOPE_PROGRESS`
-whenever a result changes. **R** starts fresh scores and preserves the previous
-episode separately; it never joins two episodes into a roundtrip.
-
-External robots use the same command with `--robot ROBOT.xml --controller
-your_controller:make`. The existing callable controller API is unchanged.
-Optional `configure_route(route, direction, speed)`, `reset(model, data)`, and
-`press_name(name)` methods let a controller receive route context, clear policy
-memory, and handle the viewer keys. Robot-specific timing, commands and joints
-stay in that controller. Its robot collision masks must see the field; the
-loader does not rewrite field contact bits to accommodate a robot. The initial
-pose is placed 2 mm above detected terrain support, preserving the neutral
-joint configuration, and subsequent motion uses ordinary physics.
-
-For external training, `MuJoCoScenario(..., scenario="slope_basic", patch=...)`
-now resets to that same route. `load_isaac_heightfield(...,
-scenario="slope_basic")` supplies both endpoint spawns and the screened routes
-without importing Isaac. Actual Isaac training and team-specific policy success
-are separate acceptance tasks. The full field remains `DRAFT_BLOCKED`.
-
-The viewer timing and controller stepping follow MuJoCo's
-[passive viewer](https://mujoco.readthedocs.io/en/stable/python.html#passive-viewer)
-and [simulation loop](https://mujoco.readthedocs.io/en/stable/programming/simulation.html)
-interfaces.
-
-#### Automatic slope evaluation
-
-Run a complete slope matrix without opening a window or driving manually:
-
-```bash
-rmuc2026-field run ./local-rmuc2026-field --scenario slope_basic \
-  --directions uphill downhill roundtrip --speeds 0.3 0.5 \
-  --repeats 2 --workers 2 --telemetry runs/slope_auto.json
-```
-
-With three screened routes this schedules 36 independent episodes. The default
-robot is the original example rover. To evaluate your own robot/policy, supply
-both `--robot ROBOT.xml` and `--controller your_controller:make`, using the same
-callback as `view`. `configure_route(route, direction, speed)` receives the
-next task before `reset(model, data)` clears the controller state. Controllers
-with private random generators can implement `set_seed(seed)`; standard Python
-and NumPy RNGs are seeded on each reset. A deterministic policy need not react
-differently to different seeds: repeats check reset consistency, not randomized
-robustness unless the consumer explicitly provides randomization.
-
-Each episode ends at success, a recorded failure, a controller error, or a time
-limit. Its result is retained and the next episode resets automatically. A
-roundtrip still needs both legs in that same episode. `--patches ID...` selects
-specific routes; omitted means all screened routes. `--duration SECONDS` sets
-the episode limit; otherwise it is `max(8, 5 + 2 * path_length / speed)`, with
-double path length for roundtrips. A timeout stays incomplete (`truncated=true`)
-and is not reported as successful physics traversal.
-
-`--workers` starts independent processes using `spawn`. Each worker reuses one
-model/data/controller across its assigned episodes. Only one episode is active
-per worker (`--envs-per-worker=1`); increase workers for parallelism. Case IDs
-and seeds are independent of worker count. The default stores summaries only,
-without building trajectory lists. Add `--trajectory-dir NEW_DIRECTORY` to save
-50 Hz trajectories, including failed attempts. Results include per-direction
-success rates, individual leg records, failure reasons, hashes, solver settings,
-throughput and per-worker peak CPU memory. The CLI writes a timestamped report
-under `runs/` if `--telemetry` is omitted; it exits with code 2 if any case does
-not pass, after finishing the matrix.
-
-Python consumers can use `run_slope_batch(...)` or reuse a `SlopeSession` with
-`run_slope_episode(session, case)`. These are policy evaluation/reset/stepping
-utilities; the consumer supplies rewards, optimization and training algorithms.
-For watching an automatic run, use `view --scenario slope_basic --control policy
---direction roundtrip`. Isaac execution remains the external consumer's task.
-
-#### Fly-ramp benchmark
-
-The two audited fly ramps use the same runtime pack as `full_eval`. The
-`collision_only` profile is the default for automatic runs; `full` displays the
-complete field. No second ramp mesh or collision patch is generated. Each
-episode begins on the measured approach surface and follows the real physics
-through ramp entry, takeoff, flight, first recontact and landing. The example
-four-wheel rover is included only as a public interaction baseline:
-
-```bash
-rmuc2026-field run ./local-rmuc2026-field --scenario fly_ramp \
-  --speeds 1.5 1.8 2.0 2.2 2.5 --workers 2 \
-  --telemetry runs/fly_ramp.json
-rmuc2026-field view ./local-rmuc2026-field \
-  --scenario fly_ramp_north --profile full --control policy --camera spawn
-```
-
-Use `fly_ramp_north` or `fly_ramp_south` to select one route. For your own
-robot, add `--robot ROBOT.xml --controller your_controller:make` to either
-command. The optional `configure_route(route, "uphill", speed)` callback receives
-the approach, takeoff and landing coordinates and the commanded speed; the
-controller owns joints, actions and policy timing. For robustness sweeps, add
-`--lateral-offsets -0.05 0 0.05 --heading-offsets-deg -2 0 2 --repeats 3`.
-Use offsets only where the robot footprint fits the audited slope width.
-Use `--approach-distances 0.6 0.9` to compare two screened starting distances
-without changing the field; `view` accepts one `--approach-distance`. The pack's
-heightfield screens each approach footprint, so a farther start near another
-structure may be rejected. Episode reports include the selected distance and
-phase states with route-forward and vertical speed, lateral motion, body tilt,
-and contact counts at ramp entry, takeoff detection and first recontact.
-These route choices still load the same whole-field collision heightfield; they
-are not cropped Isaac training assets.
-
-For many parallel fly-ramp environments, export a **local** region from the
-same verified pack. The exporter copies original 1 cm height samples at exact
-grid indices and preserves the source MuJoCo height scale; it does not resample
-the ramp, alter the full pack, or include
-official CAD/rulebook visuals. The source manifest, collision and scenario
-profile hashes, source grid slice, route, local file hashes, and unchanged
-perimeter fence are recorded in the new manifest. Export each ramp separately:
-
-```bash
-rmuc2026-field training-region ./local-rmuc2026-field ./local-fly-north \
-  --scenario fly_ramp_north --approach-distance 0.9
-rmuc2026-field training-region ./local-rmuc2026-field ./local-fly-south \
-  --scenario fly_ramp_south --approach-distance 0.9
-```
-
-The region keeps 2.5 m of source heightfield beyond the landing target so a
-robot can remain supported through the 0.5 s landing-hold check. This distance
-defines the exported training area, not an additional obstacle.
-
-External MuJoCo code can use `TrainingRegion.open(path)`,
-`compose_training_region_with_robot(region, robot_xml)` and
-`load_isaac_training_region(region)`. The latter only supplies the grid,
-spawn and identity metadata; the consumer chooses the physics backend. The
-region keeps the source pack's `DRAFT_BLOCKED` validation scope.
-
-For an offline Isaac Sim/PhysX consumer, the same optional adapter can copy
-the region's exact float64 `x_m`, `y_m` and `height_m[y, x]` arrays into a
-standalone directory. Its schema-3 descriptor includes the source perimeter
-box that intersects each fly-ramp crop, clipped to the crop's XY bounds so
-parallel copies cannot overlap. It also records the source heightfield's
-collision bits, friction and `solref`, plus world coordinates, 1 cm grid
-spacing, bounds, the source field XML hash and source/profile hashes. Validate
-it against the original region before importing it; without `source_region`,
-the file hash and geometry are checked but source provenance is only the
-descriptor's claim. The existing
-in-memory `load_isaac_training_region()` returns float32 arrays instead.
-The consumer must choose its conversion once, record the effective sample
-order and scale, then construct and check both its terrain and static box
-colliders. Old schema-1/2 exports remain readable, but lack the complete
-heightfield contact record:
-
-```python
-from rmuc2026_mujoco import (
-    export_isaac_training_region,
-    load_isaac_training_region_export,
-)
-
-export_isaac_training_region("./local-fly-north", "./local-fly-north-isaac")
-terrain = load_isaac_training_region_export(
-    "./local-fly-north-isaac", source_region="./local-fly-north"
-)
-# terrain.height_m[row, column] is the absolute world Z at
-# (terrain.x_m[column], terrain.y_m[row]); do not rescale it.
-# terrain.static_boxes lists the source-bound cropped perimeter boxes.
-# terrain.heightfield_contact records MuJoCo contact values for consumers.
-```
-
-The export itself is a data handoff and hash/scale check. The separate
-Isaac Sim 6.1 PhysX probe passed terrain and fence contact checks on both
-fly-ramp crops at 1, 4 and 16 environments; it is not a robot training adapter.
-
-The same `run_fly_batch(region, ...)` session and controller contract used for
-the full field can evaluate a local region in parallel. From the CLI, select
-the region's recorded scenario; the approach distance comes from its manifest:
-
-```bash
-rmuc2026-field run ./local-fly-north --scenario fly_ramp_north \
-  --speeds 2.0 --workers 4 \
-  --footprint-radius 0.35
-```
-
-The footprint radius comes from the user's robot; an episode ends if its
-footprint leaves the local heightfield.
-
-Optional Newton and PhysX probes check neutral contact with the exported
-terrain and fence; MJWarp's heightfield contact probe remains unsupported.
-Articulated robot training still requires robot-specific landing checks.
-The local rectangle is for training throughput; evaluate learned robot
-policies on the complete `collision_only` or `full` field because long robot
-trajectories can diverge after many contacts even when grid vertices and local
-probe contacts match. The rectangle edge is an artificial end of the exported
-heightfield, not a field wall. Training code should reset when the robot's
-footprint approaches `manifest.grid.bounds_xy_m`; use the complete field for
-long routes or uncontrolled excursions.
-`region.contains_footprint(x_m, y_m, radius_m)` provides that rectangle check
-for a robot's chosen footprint radius; a `False` result is a reset condition
-for the external trainer, not a collision with a new wall.
-With optional Newton/Warp installed, `python examples/isaac_newton_fly_probe.py
-./local-fly-north --source-pack ./local-rmuc2026-field` repeats the contact
-smoke against the exported region and verifies its exact source grid slice.
-
-`status=PASS` means the batch ran without solver warnings, non-finite states or
-controller errors. `task_status` and each episode's `outcome` say whether the
-robot completed the jump. A complete jump requires an airborne interval, first
-recontact on the measured landing top, and 0.5 s of top contact with the body
-centre beyond the landing edge and tilt below 45 degrees. Reports distinguish
-short/lip and side impacts, landing instability, tipping, timeout and physics
-errors. They record actual takeoff speed, flight duration, first recontact,
-hashes, solver settings, throughput and worker memory. Failed robot episodes
-remain useful data and do not alter the field collision. The 2.2 m/s single
-wheel diagnostic gate is not a universal robot speed requirement.
-`COMPLETE` describes the route and hold only. Each episode also reports
-`field_normal_force_peak_by_robot_geom_n`, so a robot owner can check impacts
-on its own chassis or other forbidden collision geoms before accepting a
-landing as low-impact. The batch summary includes the maximum for each robot
-geom across all episodes, including episodes whose route outcome is `PASS`.
-These are peaks of individual MuJoCo contacts, not sums across simultaneous
-contact points. Compare impact results with the same MuJoCo version and
-solver configuration; the report records both.
-
-The viewer uses the same `FlyRampSession` as the automatic runner and saves a
-trajectory; press **R** to reset a new attempt. The no-robot example accepts
-**W/S/A/D/E/X** and speed keys **1–4** in human mode when the optional keyboard
-listener is installed. `load_isaac_heightfield(...,
-scenario="fly_ramp_north")` or `fly_ramp_south` supplies the identical route,
-spawn, heightfield and pack/profile hashes to an external Isaac consumer. The
-adapter does not run Isaac training. Whole-field validation remains
-`DRAFT_BLOCKED`.
-
-#### Turning benchmark and parallel runs
-
-`turn_basic` is the first executable benchmark. It screens up to eight starts
-from the verified collision heightfield (0.35 m footprint, 0.50 m boundary
-margin, 3 degree slope and 0.02 m relief limits), then reuses those starts
-across independent environments. The command grid is intentionally small:
-`spin` tests zero-speed yaw, `arc` tests low-speed curves, and `reversal`
-tests both continuous left/right changes. The first 100 Hz policy cycle (five
-2 ms physics steps) is a zero-action warmup; controllers then update at 100 Hz
-while MuJoCo steps at 500 Hz.
-
-The runner owns loading, reset, stepping and diagnostics. A controller owns
-robot-specific observations and actuator mapping through
-`reset(model, data, spawn, seed)`, `step(model, data, command, step_index)`
-and optional `observe(model, data)`. See
-[`examples/turn_controller_template.py`](examples/turn_controller_template.py).
-
-```bash
-rmuc2026-field run ./local-rmuc2026-field \
-  --robot my_robot.xml --controller my_controller:make \
-  --scenario turn_basic --phase spin --backend mujoco \
-  --workers 4 --envs-per-worker 8 --duration 8 --seed 20260922 \
-  --telemetry runs/turn_basic_spin.json
-```
-
-Each worker owns one `MjModel` and creates independent `MjData` objects. The
-result records worker and aggregate steps/s, scene/profile/robot hashes,
-contact and warning counts, non-finite values, failure reasons and per-episode
-turning diagnostics. Use `--backend isaac` to emit the same verified scene
-descriptor for an external Isaac consumer; the core package does not import
-Isaac or a training framework.
-
-## Runtime-pack contract
-
-A generated pack contains:
-
-```text
-local-rmuc2026-field/
-├── manifest.json
-├── rmuc2026_field.xml
-├── rmuc2026_field_collision_only.xml
-├── rmuc2026_field_interactive_lite.xml  # optional schema-4 derivative
-├── collision/
-│   ├── rmuc2026_heightfield.png   # MuJoCo dimensions/bootstrap
-│   └── rmuc2026_heightfield.npz   # exact verified float samples
-└── visual/
-    ├── *.obj
-    ├── rmuc2026_surface_guide.obj                 # optional, local only
-    └── official_rulebook_v2_overhead_surface.png  # optional derived RGBA, local only
-```
-
-Every referenced path must remain inside the pack, be a regular file, and
-match its declared size and SHA-256. Verification also compares the collision
-bootstrap PNG against the float samples it is supposed to quantize: a consumer
-that loads the entrypoint XML directly with MuJoCo reads the image, not the
-samples the loader injects. The PNG is not the authoritative contact surface:
-the loader replaces its quantized values with the verified NPZ floats before
-the first simulation step. `FieldAsset.open(..., verify=False)` skips the hash
-and image comparisons and reports `PASS_SIZE_ONLY` instead of `PASS`.
-
-New local builds use runtime-pack schema 2 for the named lighting and optional
-livery contracts. The complete livery uses a 5 cm non-contact visual mesh with
-local 2.5/1.25 cm refinement and MuJoCo's fixed-diagonal heightfield interpolation.
-Schema 3 adds the optional negative-capable edge experiment; schema 4 binds an
-optional `interactive_lite` visual profile and official-source wall candidates.
-The loader still accepts schema 1–3 packs. Missing display controls remain
-unavailable instead of being inferred.
-
-Both field entrypoints declare a 2 ms MuJoCo timestep with the Newton solver.
-Keep that timestep when evaluating the 1 cm collision candidate. In a composed
-model, MuJoCo takes global options from the parent robot specification, so an
-integration that replaces the field option must validate its own timestep. A
-5 ms parent timestep produced repeatable dense mesh-heightfield contact
-instability in the full wheel-legged integration; restoring 2 ms completed a
-20 second run under the same 2 m/s command without a numerical warning. That
-run does not establish 20 seconds of in-field travel: unconstrained straight
-probes reached the finite heightfield boundary after roughly 6.5--8.1 seconds.
-Registered in-bounds routes are still required for a whole-route stability
-claim. The 2 ms setting is an integration requirement, not a claim that the
-current 2.5-D field is competition-ready.
-
-The full profile keeps each original CAD RGBA value in `visual_meshes[*].rgba`
-and records the actual renderer colour separately in `display_rgba`. The
-`cad_source_contrast_v2` display profile lowers the broad base shell, caps very
-bright CAD whites, and preserves colour ordering. Two uniquely named field
-lights use the original even illumination and start with cast shadows disabled,
-which avoids large-scene shadow-map speckles and dark blocks. `L` changes only
-the field key light's `castshadow` flag. `G` changes only display group 4. Both
-controls leave state, contacts, friction, solver parameters, and robot-owned
-lights unchanged.
-
-The `dry`, `low`, and `high` friction values are project-provided sensitivity
-presets, **not** official RoboMaster material measurements. Robot geom values
-are preserved. The field receives higher contact priority, so its friction
-actually reaches contacts even when a robot has higher authored friction.
-This also selects the field's contact solver parameters for automatically
-generated pairs. Explicit pairs involving the field receive the selected
-friction while retaining their other authored parameters. Global contact
-overrides are rejected because they would mask the requested preset.
-
-| Preset | Sliding coefficient | Torsional coefficient (m) | Rolling coefficient (m) |
-| --- | ---: | ---: | ---: |
-| `low` | 0.35 | 0.002 | 0.00005 |
-| `dry` | 1.0 | 0.005 | 0.0001 |
-| `high` | 1.5 | 0.01 | 0.0002 |
-
-Torsional and rolling coefficients only affect enabled contact dimensions.
-These values support sensitivity tests; they do not label CAD colors as PVC,
-rubber, or metal. Actual material calibration needs measured sliding/stopping
-data, with robot mass, wheel material, surface condition, and test speed recorded.
-
-For a small optional movable-contact test, `energy-unit-probe PACK X Y` drops
-an approximately 400 g free body on screened flat heightfield terrain. Its
-150 mm height and asymmetric 95/80 mm end diameters come from the official
-V2.0.0 rulebook, Figure 4-39; ribs, rim segments, and friction are test proxies.
-It does not modify the runtime pack or certify gripper clearance. For example:
-
-```bash
-.venv/bin/python -m rmuc2026_mujoco.cli energy-unit-probe ./local-rmuc2026-field 0 0.04
-```
-
-### Optional local planar-ramp correction
-
-`rmuc2026_mujoco.contact.refine_planar_ramps` accepts caller-supplied, audited
-plane records and world-space height samples. It returns a separate candidate
-array and an audit report. It corrects only inset interiors, fades changes
-through a transition band, rejects excessive disagreement or overlapping
-patches, and leaves other samples unchanged. It adds no collision mesh or
-second contact surface. It does not modify or promote a runtime pack; callers
-must bind the geometry evidence to the source and test the candidate before use.
-
-## Accuracy boundary
-
-The current collision model is a single-valued 2.5-D top-surface proxy. It is
-useful for flat ground, ramps, steps, and bounded static interaction, but it
-cannot correctly preserve underpasses, stacked surfaces, vertical walls,
-overhangs, or moving field mechanisms. A highest-surface heightfield can seal
-an opening that is visibly open in the CAD mesh. Each region therefore needs
-its own multi-hit, horizontal-blocker, and clearance checks before being
-promoted for physical interaction.
-
-MuJoCo's [heightfield collision documentation](https://mujoco.readthedocs.io/en/latest/XMLreference.html#asset-hfield)
-limits contacts between one heightfield and one geom to 50; contacts beyond
-that limit are discarded. In the frozen-robot top-edge trials, some robot
-geom pairs reached this limit, and simply reducing the grid resolution to
-2 or 4 cm only delayed numerical instability. Source-backed contact ownership
-and robot traversal therefore remain separate acceptance gates for that edge.
-
-For that reason generated manifests deliberately remain `DRAFT_BLOCKED`:
-
-| Layer | Current status |
+| Scenario | Available support |
 | --- | --- |
-| Source identity and file integrity | Checked |
-| CAD-derived visual layout | Available, simplified |
-| Static 1–10 cm heightfield collision | Available; experimental schema 3 can remove audited outer-edge false support |
-| Exact-source wall-end roof support | Seven 1 cm samples repaired for parts 402/403; bounded probe evidence only |
-| Full vertical contact on wall parts 402/403 | Local source-exact replacement candidate; not in the default pack |
-| Perimeter chassis containment | Four-side robot-tested local proxy; placement and gaps are unresolved |
-| Fixed 17° fly-ramp interior and seam audit | Bound to parts 392 and 397 |
-| 120 mm wheel dynamics over those two ramps | Separate 12-trial bounded audit |
-| Top-edge deck robot contact | Local source-derived roof prisms improve two approaches to the edge; shared seams and safe edge exit remain blocked |
-| Bottom-edge deck robot contact | One local source-triangle replacement improves two low-speed routes, but 1.0 m/s and seam gates remain blocked |
-| Multi-level / overhanging collision | Not represented |
-| Dynamic facilities | Not modeled |
-| Official simulator status | No; this project is unofficial |
-| Final whole-field policy validation | Not claimed |
+| `full_eval` | Complete field viewing and external robot evaluation |
+| `turn_basic` | Screened flat starts; spin, arc and reversal batches |
+| `slope_basic` | Screened routes; separate uphill, downhill and roundtrip results |
+| `fly_ramp_north`, `fly_ramp_south` | Jump episodes and same-source local training regions |
+| `stairs_basic`, `boundary_contact` | Registry metadata; complete traversal suites are pending |
 
-The repository also provides a read-only recheck for the previously audited
-parts 292 and 312. It pins the legacy CAD-ray evidence by hash, verifies the
-current 1 cm runtime pack and both source manifests, rejects a changed coordinate
-transform, then recomputes whether the
-current heightfield seals those candidate gaps. The recorded horizontal ray
-masks are replayed for the robot's required entry width. Run it with:
+The [training guide](docs/TRAINING.md) covers commands, controller interfaces
+and parallel execution. The [Isaac adapter](adapters/isaac/README.md) exports
+field data and provides a separate PhysX contact probe.
 
-```bash
-.venv/bin/python -m rmuc2026_mujoco.clearance_review PACK_DIR \
-  --source-manifest SOURCE_MANIFEST.json \
-  --multihit-audit MULTIHIT_AUDIT_DIR \
-  --horizontal-audit HORIZONTAL_AUDIT_DIR \
-  --output NEW_RESULT.json
-```
+The main collision surface is a single-height-per-XY heightfield. Underpasses,
+stacked surfaces and overhangs are not represented correctly. An optional
+source-wall export adds local convex collision; robot interaction tests for walls
+and the perimeter are still incomplete. Dynamic match mechanisms are outside the
+current locomotion baseline.
 
-The JSON reports `integrity_status` separately from its top-level `status`.
-Matching hashes and a complete recheck can yield integrity `PASS` while the
-collision decision remains `BLOCKED`. This audit never edits a runtime pack or
-approves an underpass; diagonal access and contact ownership remain separate
-checks.
+Packs therefore retain `DRAFT_BLOCKED`: file verification and individual route
+checks do not establish whole-field physical accuracy. This label does not
+prevent using the existing scenario tools; evaluate the contacts and routes
+needed by your robot. `dry`, `low` and `high` are optional friction sensitivity
+presets, not measured official material values; omit `--friction` to retain the
+pack's parameters. The project is an unofficial simulator.
 
-### Wall and field-edge collision candidates
+## Documentation and development
 
-The repository can also inspect the original STEP-derived parts against the
-exact local heightfield before proposing new contact geometry. Generate local,
-read-only evidence with:
+- [Training and evaluation](docs/TRAINING.md)
+- [Roadmap: six scoped tasks](ROADMAP.md)
+- [Changelog](CHANGELOG.md) and [contributing](CONTRIBUTING.md)
+- [Technical references](DESIGN_REFERENCES.md)
+- [Asset policy](ASSET_POLICY.md) and [third-party notices](THIRD_PARTY_NOTICES.md)
 
-```bash
-.venv/bin/python -m rmuc2026_mujoco.collision_candidate SOURCE_BUILD WALLS.json
-.venv/bin/python -m rmuc2026_mujoco.boundary_audit SOURCE_BUILD/manifest.json EDGES.json
-```
-
-Both outputs bind the source manifest, official STEP, intermediate GLB, and
-heightfield sample hashes. They are `AUDIT_ONLY` with collision activation
-disabled, and are not runtime packs. The wall audit checks candidate source
-parts and the heightfield already occupying their footprints; the edge audit
-checks all four field boundaries at wheel, curb, and body heights. An uncovered
-edge interval rules out a continuous source wall at that height, while apparent
-coverage alone cannot prove a wall. Keep these locally generated reports out
-of the code repository.
-
-The exact audited official GLB and 1 cm grid have one active, bounded wall-end
-repair: four heightfield nodes at part 402 and three at part 403 are restored
-to their source-triangle roof heights. The record in
-`collision.verified_wall_tip_repair` binds all seven coordinates and resulting
-float samples by hash. The existing heightfield remains the only contact
-owner; this adds no wall geom. It addresses missing roof support at these wall
-tips, not the rest of their vertical faces or whole-wall collision. The other
-wall footprints already have heightfield contact. A separate, opt-in exact
-convex-mesh replacement transfers their 15,800 roof nodes to the lower source
-floor before adding the two source walls. For a verified local schema-4 pack,
-`rmuc2026-field source-wall-pack SOURCE_BUILD PACK NEW_PACK` exports this
-replacement into all runtime profiles and binds its geometry, ownership and
-contact parameters in the new manifest. A constrained 120 mm wheel passed both
-directions at 0.3–1.0 m/s with at most 4.23 mm penetration and no warning.
-Articulated robot wall approaches and sustained impacts are not yet accepted;
-the layer stays `EXPERIMENTAL_BLOCKED` and the pack stays `DRAFT_BLOCKED`.
-
-### Source-backed outer edge
-
-With `--experimental-edge-void` on the audited official GLB at 1 cm resolution,
-the builder marks only
-downward-ray misses within the outer 1.25 m strips. These nodes receive a
-finite -5 m surrogate void instead of a false drivable floor; every interior
-node and every source-hit edge node keeps its original height. Runtime schema 3
-binds the Boolean mask, float NPZ, bootstrap PNG, source GLB hash, and MJCF
-vertical origin/scale together. Older schema 1/2 packs keep their existing
-height encoding. MuJoCo still sees a floor at -5 m; this is not a true hole or
-a physical fence. The middle of the field retains the documented 2.5D limits.
-
-The local source-ray audit changed 277,806 edge samples, with no interior or
-source-hit samples changed. A rolling 120 mm wheel drove outward at 0.3, 0.5,
-and 1.0 m/s without solver warnings; unsupported outside-to-inside travel is
-not a drivable return route. A matched frozen-robot trial at 0.5 m/s on the
-left edge lost contact and later produced `BADQACC`; the same route on the
-schema-2 pack stayed numerically stable because its false floor held the
-robot. The source-ray correction is therefore **experimental and disabled by
-default** until robot out-of-bounds termination is validated. The runtime
-remains `DRAFT_BLOCKED`.
-
-For a fully verified schema-3 pack, `FieldBoundaryGuard.from_asset(asset)`
-provides a read-only stop signal for robot consumers. Call `observe()` once
-before each physics step with the simulation time, robot base XY, total
-heightfield contacts, and the largest contact count for one heightfield/robot
-geom pair. Stop stepping when it returns a record; call `reset()` after a robot
-reset. It stops after 20 source-miss/no-contact steps, or four consecutive
-outward steps with one pair at MuJoCo's 50-contact limit within 0.4 m of the
-grid edge. Bounded left and top robot trials stopped before the tested fall;
-this does not make an edge traversable or change `DRAFT_BLOCKED`.
-
-One separate local physics experiment replaced a single convex roof triangle
-of official part 236 with its exact-source prism and transferred 59,387 roof
-nodes from the heightfield to the official base below. The matched robot
-crossed the tested upper-edge path without an early solver warning, but the
-triangle covers only about 22.6% of that deck's roof face group, adjacent
-source slopes require their own contact owners, and the robot still fell off
-the field. A follow-up local candidate divided all nine roof triangles into
-convex prisms. Two matched robot lanes reached the official deck edge with at
-most 16 total contacts and no warning, but one lane still reported `BADQACC`
-after crossing the edge; internal prism seam contact ownership remains
-unverified. Neither candidate is part of the default pack or a safe robot route.
-Another local official-source triangle experiment at the bottom edge improved
-the tested 0.3 and 0.5 m/s outward paths, but its 1.0 m/s path showed a larger
-acceleration peak, and remaining heightfield pairs still reached the 50-contact
-limit. Neither local triangle is promoted into a runtime pack.
-
-The STEP-derived base shell has no demonstrated continuous body-height fence.
-The official V2.0.0 rulebook, however, specifies a black steel perimeter
-fence whose upper edge is 2.4 m above the field floor around a 28 × 15 m
-battlefield (§4.1, Figure 4-5), and depicts a dart-transfer window in that
-fence (Figure 4-20). Its exact thickness, centerline, and openings cannot be
-recovered from the low base-shell part alone. A fence based on the rulebook
-therefore needs an explicitly labeled geometric proxy and contact probes
-before activation. An 81-panel, 0.3 m chassis-level local proxy has four
-matched robot approach runs without numerical warnings, but 6.8 m of the
-perimeter and uncertain window/corner placement remain. The current runtime
-pack does not add it. Other static
-collision still needs source-bounded contact ownership, seam checks, and robot
-traversal evidence.
-
-### Physical perimeter candidate for robot tests
-
-The repository can now make a **new local schema-2 pack** with four touching
-physical fence boxes. Their centrelines follow the inferred 28 × 15 m raised
-deck edge and their inner faces overlap that deck by 25 mm. This prevents a
-robot from dropping into the lower CAD skirt and becoming trapped between the
-deck edge and a farther-out fence. The two fly-ramp outer corners overlap the
-adjacent wall by about 5.5 mm, below the 10 mm heightfield sample spacing; the
-ramp centrelines remain open. The fence top remains 2.4 m above the field
-floor. It contacts the robot through the pack's collision bits and does not
-stop simulation or require RL-Lab to create geometry:
-
-```bash
-rmuc2026-field fence-pack EXISTING_SCHEMA2_PACK NEW_FENCED_PACK
-rmuc2026-field verify NEW_FENCED_PACK
-rmuc2026-field view NEW_FENCED_PACK
-```
-
-Both `full` and `collision_only` profiles contain the same four fence geoms,
-which are bound to the manifest and verified before loading. The verifier also
-continues to read the previous core-edge, moved-wall, hard-fence, and
-heightfield-edge contracts.
-The 50 mm box thickness, 300 mm buried base, solid collision across the
-dart-transfer aperture, and placement inferred from the runtime heightfield
-are simulation choices;
-this is a robot-containment proxy, not a surveyed reproduction of the steel
-mesh or window. The new fence-only `solref` is `0.04 1`, softer than the
-previous `0.02 1` after a matched Fudan north-wall approach exposed `BADQACC`
-with the hard contact. The heightfield's `solref`, friction and samples remain
-unchanged. It is opt-in and remains `DRAFT_BLOCKED`: four revised 6 s Fudan
-approaches and four 120 mm sphere wall-middle approaches contacted the fence
-without entering the lower skirt or producing a numerical warning. Four
-diagonal corner pushes also stayed on the raised deck. Robot heightfield
-contact pairs can still reach the 50-point cap; all perimeter poses, speeds,
-corners and jumps have not been accepted. Schema-3 source-void packs are not
-accepted as fence-pack inputs until their combined contact is tested.
-
-For the two fixed fly ramps, use the local official-source audit rather than
-flattening real overlap with adjacent CAD parts:
-
-```bash
-rmuc2026-field ramp-source-audit NEW_FENCED_PACK SOURCE_BUILD/manifest.json \
-  --output ./runs/ramp-source-audit.json
-```
-
-On the pinned 1 cm source, all 390 nodes that exceeded the dominant ramp's
-1 mm plane target belonged to the higher surface of adjacent official parts
-393/394 or 398/399. The heightfield matched the highest source rays within
-floating-point precision; overlap-aware interior maxima were below 0.00002 mm.
-This is a static interior check. The separate 12-route wheel test and seam
-location check remain the dynamic and transition evidence.
-
-Run the fixed-ramp dynamics gate against an exported pack with:
-
-```bash
-.venv/bin/python -m rmuc2026_mujoco.wheel_probe ./local-rmuc2026-field \
-  --output ./runs/wheel-probe-result.json
-```
-
-The 12 trials use the hash-bound CAD seam endpoints for both directions at
-0.3, 0.5, and 1.0 m/s. The nominal part vertex extent is retained as geometry
-metadata, but it is not used as a wheel start point beyond the fly-ramp lip.
-Those trials stop at the takeoff seam and therefore do not prove that a robot
-can clear the gap.
-
-Use the free-flight characterization to measure the runtime gap and continue a
-120 mm centreline wheel through takeoff and landing:
-
-```bash
-.venv/bin/python -m rmuc2026_mujoco.jump_probe ./local-rmuc2026-field \
-  --output ./runs/jump-probe-result.json
-```
-
-The ten trials use 1.5, 1.8, 2.0, 2.2, and 2.5 m/s approach commands. Drive
-force is removed at the hash-bound takeoff seam. A trial counts as a top
-landing only after the wheel centre clears the landing face and remains at
-landing-top height for another 0.15 s. The 2.2 m/s required-success threshold
-is a repeatable diagnostic gate for this constrained wheel, not an official
-robot speed requirement.
-
-Rulebook Figure 4-38 gives a marked interaction surface of 1.145 × 0.860 m, a
-17-degree slope and a 0.650 m gap. The hash-bound STEP parts have approximately
-1.213 m horizontal run and 0.963 m structural face width because their border
-and support are included. The report records both bases instead of treating
-that expected difference as a scale error.
-
-Do not use a successful load as proof of official geometry, competition-rule
-compliance, robot recovery, policy quality, or source-to-target equivalence.
-
-## Asset and licensing policy
-
-The original code and documentation are MIT-licensed. That license does not
-cover RoboMaster/RMUC/DJI material or derivatives. Our review found no explicit
-standard asset-redistribution grant in the official publication. That is not a
-legal determination, so this repository takes the narrower path: it keeps
-those files on each user's machine and does not mirror them in source,
-releases, CI, or package indexes. Read [ASSET_POLICY.md](ASSET_POLICY.md) and
-[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) before distributing a locally
-generated pack.
-
-If written redistribution permission is obtained, a separately licensed
-prebuilt asset release can be added later without changing the Python API.
-The staged geometry and interaction work is tracked in [ROADMAP.md](ROADMAP.md).
-The outside projects and collision-design patterns reviewed for future work are
-listed in [DESIGN_REFERENCES.md](DESIGN_REFERENCES.md); no code or assets from
-those repositories are bundled here.
-
-## Development
-
-All tests use tiny synthetic geometry and never fetch official assets.
-
-```bash
-python3 -m venv .venv
-.venv/bin/python -m pip install -e '.[test]'
-.venv/bin/python -m pytest
-.venv/bin/ruff check .
-.venv/bin/ruff format --check .
-```
+For more options, run `rmuc2026-field --help` or a subcommand's `--help`.
+Tests use synthetic fixtures and do not download official assets.
 
 ## 中文说明
 
-这是一个**非官方、源码仓库不带场地资产**的 RMUC 2026 MuJoCo 模块。
-安装 `build` 依赖后，`rmuc2026-field setup` 会直接从 RoboMaster 官方地址
-下载指定 STEP，核对固定大小和 SHA-256，并只在你的电脑上生成可搬运场地包。
-
-打开运行包时，除每个文件的大小与 SHA-256 之外，还会把碰撞引导 PNG 与浮点样本
-逐格比对：直接用 MuJoCo 打开入口 XML 的消费者读到的是这张图，而不是加载器注入的
-样本。跳过哈希校验的 `FieldAsset.open(..., verify=False)` 只会报告
-`PASS_SIZE_ONLY`，不会再被当成完整性通过。
-
-现在的视觉模型来自官方 CAD；碰撞采用可配置 1–10 cm 单值高度场，因此平地、坡道和
-台阶可以直接用于 MuJoCo，但桥下空间、悬空结构、垂直墙面和动态机关还不是精确碰撞。
-所以当前版本适合开发、导航和静态交互验证，不冒充官方比赛仿真器，也不把
-`DRAFT_BLOCKED` 写成“全场已精确验收”。
-
-`full` 模式用于看完整 CAD 外观；`collision_only` 不加载 38 组视觉网格，适合
-无界面训练。`dry/low/high` 只是本项目用于敏感性测试的非官方摩擦预设，不是赛事
-材料实测值。
-
-带 `--include-surface-guide` 构建时，规则手册俯视图只在本机处理。运行包保留俯视图的
-地面颜色、场地模块、障碍物、图中烘焙的机器人和阴影；只把与图片边缘连通的近白页边
-变为透明，内部 RGB 像素和世界坐标贴图位置不变，不会再过滤成只有少量彩色标线。
-视觉曲面使用约 5 cm 网格按 MuJoCo 高度场对角线贴合；可能跨越高低落差的位置局部细分至
-2.5 或 1.25 cm，不合格的单元露出原 CAD 表面。保留的涂装面只比采样碰撞面高数毫米，避免遮住
-已经接地的机器人。
-默认是无投影平光和隐藏涂装；窗口内按 `L`
-切换投影阴影，按 `G` 切换组 4 涂装。两项都只改变显示，不会改变机器人状态、场地接触、
-摩擦或求解器参数。读取器仍兼容 schema 1、完整涂装 schema 2 和此前的筛选标线 schema 2。
-
-Ubuntu 默认可能没有 `python` 命令，所以快速开始现在固定使用 `python3` 创建
-隔离环境，并从 `.venv/bin/` 调用程序；精简系统还需先安装 `python3-venv`，也可以
-直接采用上面的 `uv` 路线。新增的 `surface` 与 `spawns` 命令可查询
-坡度、法向、局部起伏并筛选较平坦的候选出生点。坡度按 MuJoCo 高度场单元的
-真实三角面计算，而不是中心差分近似；但运行包没有保存逐格射线命中有效掩码，
-因此结果只是运行时代理筛选。它们仍只理解单值高度场，不能证明桥下净空、悬挑
-结构或机器人本体一定安全，相关区域还需要单独验证。
-
-兼容性说明：`height_at()` 默认仍是 v0.1 的双线性插值；`surface_at()` 以及显式
-指定 `height_at(..., interpolation="mujoco")` 时才按 MuJoCo 三角碰撞面计算。
-
-你可以单独打开地图，也可以把自己的 robot-only MJCF 接进去。以后获得明确的
-资产再分发许可后，可以另发预构建地图包，让使用者跳过 1.25 GB STEP 的本地转换；
-在此之前，代码可以公开，官方文件和派生资产不能跟着仓库一起上传。
+本仓库提供统一的 RMUC 2026 场地、机器人接入和训练场景接口。官方文件由使用者
+在本地下载并生成场地包；仓库中不包含场地资产或特定机器人的策略。
+交互查看使用 `full`，批量仿真使用 `collision_only`。普通坡和飞坡已有可运行示例；
+台阶、部分墙面和边缘仍需补齐验收，具体任务见路线图。

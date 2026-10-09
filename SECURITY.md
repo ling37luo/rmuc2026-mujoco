@@ -2,8 +2,7 @@
 
 ## Supported versions
 
-Until the first stable release, security fixes are applied to the newest
-published `0.x` release only.
+Security fixes target the latest published release.
 
 ## Reporting a vulnerability
 
@@ -15,7 +14,7 @@ channel; do not publish exploit details or restricted assets.
 
 Please include the affected version, platform, reproduction steps, expected
 and observed behavior, and whether untrusted input is required. Do not attach
-official RMUC files, their derivatives, Fudan assets, credentials, or private
+official RMUC files, their derivatives, external robot assets, credentials, or private
 URLs.
 
 ## Security boundary
@@ -26,7 +25,7 @@ digests before model construction. A matching digest establishes identity, not
 safety, copyright permission, physical correctness, or endorsement.
 
 The project downloads official CAD material only after the user selects the
-`download` or `setup` command and provides the explicit reference-only
-acknowledgement. It verifies the pinned size, STEP header, and SHA-256 before
+`download` or `setup` command. The standalone `download` command requires a
+reference-only acknowledgement; `setup` includes local download and conversion. It verifies the pinned size, STEP header, and SHA-256 before
 conversion. MuJoCo XML and mesh parsing occur in third-party native code, so
 only load asset packs you trust and keep MuJoCo updated.

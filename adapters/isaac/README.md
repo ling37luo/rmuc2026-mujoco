@@ -1,121 +1,72 @@
-# Isaac training adapter
+# Isaac adapter
 
-Isaac/Isaac Lab is an optional consumer of this repository. Keep its runtime
-dependencies in the consumer project and call
-`rmuc2026_mujoco.load_isaac_heightfield(pack, scenario=..., profile="collision_only")`.
-The returned arrays and descriptor contain the verified heightfield, bounds,
-scenario routes, turning phases and spawn-selection contract, source manifest
-hash, profile hash, and collision file hashes. In particular, `turn_basic`
-uses the same phase names (`spin`, `arc`, `reversal`) and profile identity as
-the MuJoCo runner, so a high-parallel Isaac run can be compared with a small
-MuJoCo run without silently changing the field.
+Isaac is an optional consumer. Install its runtime separately; the core field
+package has no Isaac or RL-framework dependency. For complete MuJoCo examples,
+see [Training and evaluation](../../docs/TRAINING.md).
 
-The consumer may convert those arrays to an Isaac heightfield or simplified
-collision actors. It must keep the descriptor with training output and must
-not add RL-Lab-specific geometry patches at runtime.
+## Data handoff
 
-For `fly_ramp_north` and `fly_ramp_south`, the descriptor also contains the
-pack-measured approach, takeoff, gap and landing route plus a terrain-surface
-spawn. The consumer places its own robot at a collision-supported root height;
-the supplied spawn height is the field surface, not a robot pose. The optional
-Isaac adapter remains a descriptor export; the separate contact probe below
-tests that export in PhysX without training a robot.
+`load_isaac_heightfield(pack, scenario=..., profile="collision_only")` returns
+height samples, coordinates, boundaries, routes and source/profile hashes.
+Keep this identity with training results. A terrain spawn is a surface position;
+the consumer must place its own robot at the appropriate supported height.
 
-## Fly-ramp PhysX contact probe
-
-`physx_fly_contact_smoke.py` is a standalone **Isaac Sim 6.1** probe for the
-locally exported north or south fly-ramp region. It is a small contact and
-scale test, not a SCUT/Fudan robot or policy adapter. The north/south 1/4/16
-environment matrix passed on the development host; the local report is
-`runs/rmuc2026-training-regions/20260923T_fly_local_candidate_v4/physx_six_case_verified_20260923/summary.json`
-under RL-Lab. The repository status page summarizes the bounded result.
-
-The input is the two-file schema-3 output of `export_isaac_training_region()`.
-It carries the exact heightfield samples plus the portion of the source
-perimeter fence that intersects the fly-ramp crop. The box is clipped only at
-the crop's artificial XY boundary, so copies in separate environments do not
-overlap. MuJoCo's heightfield and fence collision bits, friction and `solref`
-are recorded for provenance. The probe binds PhysX static and dynamic friction
-to the source sliding-friction coefficient and uses `max` combination for its
-terrain, fence and test spheres. This is a controlled proxy: MuJoCo's
-torsional/rolling friction, `solref` and contact-bit semantics are not mapped,
-and numerical friction equivalence has not been measured.
-First verify the copied export against its source region on the producing
-machine:
+For fly-ramp regions, first run the two `training-region` commands in the
+[training guide](../../docs/TRAINING.md#local-fly-ramp-regions). Then export them
+from the repository root using its activated Python environment:
 
 ```python
-from rmuc2026_mujoco import load_isaac_training_region_export
-
-load_isaac_training_region_export(
-    "/path/to/fly-north-isaac-export",
-    source_region="/path/to/source-fly-north-region",
+from pathlib import Path
+from rmuc2026_mujoco import (
+    export_isaac_training_region,
+    load_isaac_training_region_export,
 )
+
+root = Path("runs/fly-regions")
+for side in ("north", "south"):
+    source = root / side
+    output = root / f"isaac_export_schema3_{side}"
+    export_isaac_training_region(source, output)
+    load_isaac_training_region_export(output, source_region=source)
 ```
 
-Then put both verified north/south source regions and their schema-3 exports
-under one directory on an [Isaac Sim 6.1 Linux host](https://docs.isaacsim.omniverse.nvidia.com/6.1.0/installation/requirements.html).
-From this repository's root, run:
+Use new export directories. Each export contains exact height samples and a
+schema-3 descriptor, including any source perimeter boxes intersecting the crop.
+The contact probe requires regions from a fenced pack, as in the training guide.
+The directory names above are the layout expected by the matrix runner below.
+Artificial crop boundaries require environment resets, not extra field walls.
+
+## Optional PhysX contact probe
+
+The probe targets Isaac Sim 6.1. It uses independent static terrain colliders
+and 120 mm sphere probes to check terrain, seam and perimeter contact. It does
+not load a private robot or train a policy.
+
+Check the export without starting Isaac:
 
 ```bash
-# This check uses ordinary Python/NumPy and does not start Isaac or PhysX.
-uv run --locked --project . python adapters/isaac/physx_fly_contact_smoke.py \
-  /path/to/fly-north-isaac-export --envs 16 --check-only
-
-# This launches north and south, each at 1/4/16 environments in fresh processes.
-uv run --locked --project . python adapters/isaac/run_physx_fly_matrix.py \
-  --isaac-python /path/to/isaac-sim/python.sh \
-  --regions-root /path/to/fly-region-root \
-  --output-new-dir /path/to/new-physx-six-case-run \
-  --device cuda:0 --steps 500
+python adapters/isaac/physx_fly_contact_smoke.py   ./runs/fly-regions/isaac_export_schema3_north --envs 16 --check-only
 ```
 
-For [pip-installed Isaac Sim](https://docs.isaacsim.omniverse.nvidia.com/6.1.0/installation/install_python.html),
-pass its isolated environment's `bin/python` instead of `python.sh`. The matrix
-uses the included minimal `physx_probe.kit` experience, which needs the
-Isaac Sim app, core, sensor, robot and test extensions plus PhysX. The matrix
-runner checks each export against its source region before starting PhysX and
-saves six reports, six pairs of console logs, and `summary.json`. It reports a
-pass only when all six contact probes pass without detected PhysX/solver
-warnings and GPU memory was sampled; a failed process or missing report remains
-a failure. The GPU metric is device-wide use, including other processes.
+Set `ISAAC_PYTHON` to your installed Isaac launcher (`python.sh`, or the Python
+executable in its isolated pip environment). Run this command from the repository
+Python environment; it starts each Isaac case in a separate process:
 
-The probe authors **one independent static
-triangle-mesh collider and source-bound perimeter box per environment**; it
-does not share one contact surface and call that 16 environments. Mesh
-vertices are the original height samples, with the same diagonal used by
-MuJoCo's heightfield; only the required USD float32 point conversion is
-applied. Each environment has four independent
-120 mm sphere probes at approach, low seam, takeoff and landing, plus one
-sideways sphere probe for the fence. Eight non-node vertical PhysX scene rays
-per environment compare cooked terrain height with the source triangles; a
-horizontal ray checks the fence face. Each case runs 500 steps at 1 ms by
-default.
+```bash
+python adapters/isaac/run_physx_fly_matrix.py   --isaac-python "$ISAAC_PYTHON" --regions-root ./runs/fly-regions   --output-new-dir ./runs/physx-fly-check --device cuda:0 --steps 500
+```
 
-On the real 213×614 north and south v4 source grids, 200 non-node samples per
-side were compared against MuJoCo `mj_ray` on the heightfield geom. Direct
-barycentric height on these emitted triangle faces differed by at most
-`2.15e-8 m`; the opposite diagonal would differ by as much as `0.115 m` at
-the selected saddle cells. The USD float32 point conversion is bounded by
-`2.29e-7 m` in these regions. The subsequent six-case PhysX matrix passed with
-all expected sphere and fence contacts and a maximum cooked-terrain ray error
-of `4.03e-5 m`.
+Choose a new output directory for each matrix. It runs north and south at 1, 4
+and 16 environments and writes per-case reports, console logs and a summary.
+The reports include asset identities, contact results, height error, throughput,
+process memory and GPU memory sampled across the whole device.
 
-Each probe JSON records source/profile hashes, sample order, point
-quantization, ray error, first contact on every probe, wall-clock throughput
-and process memory. `PHYSX_CONTACT_PROBE_PASS` means all sphere probes reported
-contact with their expected collider according to raw sensor pairs, the
-terrain rays matched within 1 mm, and the fence rays identified the expected
-static boxes. The matrix runner scans console logs for PhysX/solver warnings
-and samples `nvidia-smi` during each case; the probe itself does not query
-process peak VRAM.
-It does not establish robot landing quality, MuJoCo/PhysX friction parity or
-large-scale training throughput. Retain the full field as the final policy
-evaluation scene.
+Terrain triangles retain the source heightfield diagonal. PhysX uses float32
+points and the source sliding-friction coefficient; MuJoCo torsional/rolling
+friction, `solref` and contact bits have no equivalent mapping in this probe.
+A successful matrix demonstrates the tested contact cases. It does not establish
+robot landing quality, friction-response equivalence or large-scale training
+throughput.
 
-The runtime authoring follows official [Omni Physics static triangle-mesh
-collision](https://docs.omniverse.nvidia.com/kit/docs/omni_physics/110.0/dev_guide/rigid_bodies_articulations/collision.html),
-[scene-query](https://docs.omniverse.nvidia.com/kit/docs/omni_physics/110.0/dev_guide/physics_umbrella/physics_umbrella_runtime.html),
-[Isaac Sim simulation stepping](https://docs.isaacsim.omniverse.nvidia.com/6.1.0/py/source/extensions/isaacsim.core.simulation_manager/docs/index.html)
-and [experimental contact sensor](https://docs.isaacsim.omniverse.nvidia.com/6.1.0/sensors/isaacsim_sensors_physics_contact.html)
-interfaces. Results remain bounded to the two v4 fly-ramp crops and neutral
-probes; they do not certify articulated robot behavior.
+Installation: [requirements](https://docs.isaacsim.omniverse.nvidia.com/6.1.0/installation/requirements.html)
+and [Python environment](https://docs.isaacsim.omniverse.nvidia.com/6.1.0/installation/install_python.html).

@@ -1,50 +1,33 @@
 # Asset policy
 
-The source distribution and wheel for `rmuc2026-mujoco` contain Python code
-and original documentation only. They must not contain the official STEP/PDF,
-meshes or heightfields derived from them, screenshots extracted from the
-rulebook, Fudan robot descriptions or meshes, RL checkpoints, or locally
-generated run evidence.
+The repository and releases contain code, documentation and original synthetic
+examples. Official CAD/rulebook sources and derived field assets stay local.
 
-## Allowed in the code repository
+## Repository contents
 
-- official download-page URLs, byte sizes, and cryptographic hashes;
-- schema examples with invented names and numbers;
-- small geometry and heightfields created entirely by the tests;
-- code that validates a user-supplied local asset directory.
+Allowed: source URLs and hashes, schemas, synthetic test geometry, and code that
+builds or loads user-supplied assets.
 
-## Not allowed without separate written redistribution permission
+Do not upload official STEP/PDF files or their meshes, heightfields, textures
+and screenshots without separate redistribution permission. External robots,
+policies, checkpoints and generated experiment reports are also excluded.
+This applies to Git, Git LFS, release attachments and Python packages.
 
-- `RMUC2026_V2.0.0.stp` or the official rulebook PDF;
-- OBJ, GLB, NPZ, PNG, texture, or screenshot files derived from those sources;
-- Fudan wheel-legged URDF/MJCF/mesh assets, checkpoints, policies, or ONNX files;
-- a GitHub Release archive or Git LFS object containing any of the above.
+`source` prints the pinned official identity. `download` requires the explicit
+reference-only acknowledgement; `setup` performs that download as part of local
+construction. Downloads are checked against the pinned size and SHA-256.
+These commands do not grant redistribution rights or accept third-party terms.
 
-The `source` command only prints the pinned official source identity. The
-separate `download` command is opt-in, requires an explicit reference-only
-acknowledgement, contacts only the official URL, and verifies the pinned size
-and SHA-256. It does not accept third-party terms on a user's behalf. Downloads
-and local derivatives stay outside the Python package and retain the same
-license boundary.
+CI uses synthetic fixtures. Release checks inspect source and wheel contents
+for generated assets and run directories.
 
-CI and package tests use synthetic fixtures only. Release verification must
-inspect both source and wheel contents and fail if common binary asset suffixes
-or generated run directories are present.
+## Physical scope
 
-## Runtime accuracy boundary
+The base collision model is a single-heightfield top-surface proxy. Source ray
+misses may be filled with ground height; experimental outer-edge masks use a
+finite void surrogate. Neither represents general holes, underpasses or stacked
+surfaces. Optional source-wall collision covers selected static parts only.
 
-The default schema-2 local asset manifest uses an unofficial 2.5-D
-top-surface heightfield proxy for collision. Downward-ray locations with no
-geometry hit are filled with ground height, and that pack has no validity
-mask distinguishing measured hits from filled samples. Experimental schema 3
-binds a source-miss mask at audited outer edges, but replaces those samples
-with a finite surrogate void rather than a true hole or safe robot exit. Neither
-model must be described as conservative. A single heightfield cannot represent overhangs, tunnels,
-stacked surfaces, vertical walls, moving mechanisms, or the open space below
-bridges, and it may seal a route that is visibly open in the CAD-derived mesh.
-A manifest whose validation scope is `DRAFT_BLOCKED` remains a draft even when
-every file hash passes.
-
-Hash verification means only that a local asset pack is the expected pack. It
-does not turn the pack into an official RoboMaster simulator, establish legal
-redistribution rights, or prove whole-field physical fidelity.
+`DRAFT_BLOCKED` means whole-field physical validation is incomplete. Matching
+file hashes establishes pack identity, not physical accuracy or official
+endorsement. See the [current scope](README.md#scenarios-and-current-scope).

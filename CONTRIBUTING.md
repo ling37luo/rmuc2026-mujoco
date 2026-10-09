@@ -1,42 +1,35 @@
 # Contributing
 
-Thank you for helping make this loader safer and easier to reuse. This is an
-unofficial community project, not an official RoboMaster simulator.
+This is an unofficial community field simulator. Contributions should improve
+reusable field geometry, interaction, diagnostics or documentation.
 
-## Development setup
+## Development
 
 ```bash
 python -m pip install -e '.[test]'
 python -m pytest
+python -m ruff check .
+python -m ruff format --check .
 ```
 
-Keep the runtime independent of RL-Lab, reinforcement-learning frameworks,
-robot policies, and project-specific absolute paths. Public APIs should accept
-ordinary paths and MuJoCo/Python objects.
+Keep the core independent of robot policies, RL frameworks and machine-specific
+paths. Public examples should use included synthetic models or clearly state
+which robot and controller the user must supply.
 
-## Asset-free contributions
+## Changes and validation
 
-Do not commit, attach to a pull request, or upload to a GitHub Release:
+- Test changed behavior with small synthetic fixtures. Documentation-only
+  changes need link and example checks, not a new physics campaign.
+- Preserve asset identity checks and compatibility with supported pack schemas.
+- Describe whether visuals, collision or public interfaces change. Record
+  user-visible changes in [CHANGELOG.md](CHANGELOG.md).
+- For collision changes, report the tested routes and results separately from
+  whole-field validation. Keep detailed local evidence under `runs/`.
 
-- official RMUC STEP or rulebook files;
-- OBJ, GLB, heightfield, texture, or screenshot derivatives;
-- Fudan robot assets, policies, or checkpoints;
-- training runs, videos, or other large generated evidence.
+Do not commit official sources, derived field assets, external robot/policy
+files or generated experiment reports. See [ASSET_POLICY.md](ASSET_POLICY.md).
+CI uses synthetic assets and does not download official material.
 
-Tests must generate their own tiny synthetic OBJ and heightfield fixture in a
-temporary directory. Never make CI download official or derived field assets.
-See [ASSET_POLICY.md](ASSET_POLICY.md) before changing an asset schema or
-download-related feature.
-
-## Change checklist
-
-1. Add or update a synthetic test that fails before the change.
-2. Preserve fail-closed path containment and SHA-256 verification.
-3. Run the complete test suite on a clean environment.
-4. Document user-visible API or manifest changes in `CHANGELOG.md`.
-5. State whether the change affects visual geometry, collision geometry, or
-   neither. Never infer physical validation from a successful file load.
-
-Bug reports should include the package and MuJoCo versions, operating system,
-the command used, and the full exception. For asset-specific failures, include
-the manifest SHA-256 and validation status, but do not attach restricted files.
+Bug reports should include versions, the command and exception, plus the pack
+manifest hash for asset-specific failures. Omit restricted assets and private
+paths from public reports.

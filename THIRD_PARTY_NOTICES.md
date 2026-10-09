@@ -18,14 +18,12 @@ upstream publication being publicly downloadable is not treated here as a
 redistribution license. Users and distributors are responsible for obtaining
 the relevant permissions and following upstream terms.
 
-Fudan wheel-legged robot material is a separate upstream work. This package
-does not include its URDF/MJCF files, meshes, training code, checkpoints,
-exported policies, or namespaced derivatives. A user's robot model is supplied
-independently when composing a scene and retains its own license.
+External robot models, meshes and policies are supplied independently when
+composing a scene and retain their own licenses.
 
 RoboMaster, RMUC, and DJI names and marks belong to their respective owners.
 This project is community-authored, unofficial, and is not endorsed by or
-affiliated with DJI, RoboMaster, the RMUC organizers, or Fudan University.
+affiliated with DJI, RoboMaster or the RMUC organizers.
 
 MuJoCo is an independent third-party dependency distributed under its own
 license. NumPy and the selected Python build backend likewise retain their own

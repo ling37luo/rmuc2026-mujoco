@@ -23,6 +23,7 @@ uv.lock
 .DS_Store
 
 # Local test/output state
+/LEARNING_LOG.md
 .cache/
 runs/
 artifacts/
